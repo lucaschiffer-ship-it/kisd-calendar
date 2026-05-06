@@ -1,4 +1,4 @@
-import 'dart:async' show Completer, TimeoutException;
+import 'dart:async' show Completer, TimeoutException, unawaited;
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -10,6 +10,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 class LoginService extends ChangeNotifier {
   static const _keyUser = 'kisd_username';
   static const _keyPass = 'kisd_password';
+  static const _keyCookies = 'kisd_cookies';
 
   final _storage = const FlutterSecureStorage();
 
@@ -62,7 +63,16 @@ class LoginService extends ChangeNotifier {
     _completer = Completer<bool>();
     notifyListeners();
 
-    // Clear existing session state so the IdP always shows the fresh credential form.
+    // Try to resume from a saved session before doing the full SAML flow.
+    if (await _tryRestoreSession()) {
+      _isLoggedIn = true;
+      _isLoading = false;
+      _completer!.complete(true);
+      notifyListeners();
+      return _completer!.future;
+    }
+
+    // Session expired or missing — clear cookies and run the full SAML flow.
     await CookieManager.instance().deleteAllCookies();
     print('[login] session cleared');
 
@@ -305,6 +315,7 @@ class LoginService extends ChangeNotifier {
     _webView?.dispose();
     _webView = null;
     if (!success) _loginFailed = true;
+    if (success) unawaited(_saveCookies());
     notifyListeners();
   }
 
@@ -333,9 +344,121 @@ class LoginService extends ChangeNotifier {
     );
   }
 
+  Future<bool> _tryRestoreSession() async {
+    final cookiesJson = await _storage.read(key: _keyCookies);
+    if (cookiesJson == null) {
+      print('[login] no saved session — running full login flow');
+      return false;
+    }
+
+    final list = json.decode(cookiesJson) as List;
+    print('[login] restoring ${list.length} saved cookies');
+
+    final mgr = CookieManager.instance();
+    for (final c in list) {
+      try {
+        await mgr.setCookie(
+          url: WebUri('https://spaces.kisd.de'),
+          name: c['name'] as String,
+          value: c['value'] as String,
+          domain: c['domain'] as String?,
+          path: (c['path'] as String?) ?? '/',
+          isSecure: c['isSecure'] as bool?,
+          isHttpOnly: c['isHttpOnly'] as bool?,
+        );
+      } catch (_) {}
+    }
+
+    final valid = await _checkSession();
+    if (valid) {
+      print('[login] session still valid — skipping login');
+    } else {
+      print('[login] session expired — running full login flow');
+    }
+    return valid;
+  }
+
+  Future<bool> _checkSession() async {
+    final completer = Completer<bool>();
+    HeadlessInAppWebView? checkView;
+
+    checkView = HeadlessInAppWebView(
+      initialUrlRequest: URLRequest(
+        url: WebUri(
+          'https://spaces.kisd.de/course-selection/?semester=2026-1&mycourses=on',
+        ),
+      ),
+      initialSettings: InAppWebViewSettings(
+        javaScriptEnabled: true,
+        sharedCookiesEnabled: true,
+      ),
+      onLoadStop: (ctrl, url) async {
+        if (completer.isCompleted) return;
+        final urlStr = url?.toString() ?? '';
+        var isValid = urlStr.contains('spaces.kisd.de/course-selection');
+        if (isValid) {
+          final result = await ctrl.callAsyncJavaScript(
+            functionBody: """
+              var classes = document.body ? document.body.className : '';
+              return classes.indexOf('logged-in') !== -1 || classes.indexOf('student') !== -1;
+            """,
+          );
+          isValid = result?.value == true;
+        }
+        checkView?.dispose();
+        checkView = null;
+        completer.complete(isValid);
+      },
+      onReceivedError: (ctrl, req, err) {
+        if (req.isForMainFrame == true && !completer.isCompleted) {
+          checkView?.dispose();
+          checkView = null;
+          completer.complete(false);
+        }
+      },
+    );
+
+    await checkView!.run();
+    return completer.future.timeout(
+      const Duration(seconds: 15),
+      onTimeout: () {
+        checkView?.dispose();
+        checkView = null;
+        return false;
+      },
+    );
+  }
+
+  Future<void> _saveCookies() async {
+    try {
+      final mgr = CookieManager.instance();
+      final cookies = await mgr.getCookies(
+        url: WebUri('https://spaces.kisd.de'),
+      );
+      final serialized = cookies
+          .map((c) => {
+                'name': c.name,
+                'value': c.value,
+                'domain': c.domain,
+                'path': c.path ?? '/',
+                'isSecure': c.isSecure ?? false,
+                'isHttpOnly': c.isHttpOnly ?? false,
+              })
+          .toList();
+      await _storage.write(
+        key: _keyCookies,
+        value: json.encode(serialized),
+      );
+      print('[login] saved ${cookies.length} cookies');
+    } catch (e) {
+      print('[login] cookie save failed: $e');
+    }
+  }
+
   Future<void> logout() async {
     await _storage.delete(key: _keyUser);
     await _storage.delete(key: _keyPass);
+    await _storage.delete(key: _keyCookies);
     _username = null;
     _password = null;
     _isLoggedIn = false;

@@ -93,6 +93,9 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: PageView(
         controller: _pageController,
+        physics: _currentPage == 2
+            ? const NeverScrollableScrollPhysics()
+            : const PageScrollPhysics(),
         onPageChanged: (index) {
           setState(() => _currentPage = index);
           print('[nav] navigated to ${_titles[index]}');

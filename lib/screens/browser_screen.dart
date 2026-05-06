@@ -34,9 +34,11 @@ class _BrowserScreenState extends State<BrowserScreen>
     final cs = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    return Column(
-      children: [
-        _Toolbar(
+    return SafeArea(
+      bottom: false,
+      child: Column(
+        children: [
+          _Toolbar(
           title: _title,
           canGoBack: _canGoBack,
           canGoForward: _canGoForward,
@@ -84,6 +86,7 @@ class _BrowserScreenState extends State<BrowserScreen>
           ),
         ),
       ],
+      ),
     );
   }
 }

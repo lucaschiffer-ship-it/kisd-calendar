@@ -19,6 +19,7 @@ class _HomeScreenState extends State<HomeScreen> {
   late final PageController _pageController;
   int _currentPage = _initialPage;
   bool _mailReloadDone = false;
+  bool _calendarReloadDone = false;
 
   static const List<String> _titles = ['Mail', 'Calendar', 'Browser'];
 
@@ -53,6 +54,17 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() => _mailReloadDone = true);
       Future.delayed(const Duration(seconds: 1), () {
         if (mounted) setState(() => _mailReloadDone = false);
+      });
+    });
+  }
+
+  void _onCalendarReloadPressed() {
+    if (loginService.isLoading) return;
+    loginService.loginWithStoredCredentials().then((_) {
+      if (!mounted) return;
+      setState(() => _calendarReloadDone = true);
+      Future.delayed(const Duration(seconds: 1), () {
+        if (mounted) setState(() => _calendarReloadDone = false);
       });
     });
   }
@@ -108,15 +120,23 @@ class _HomeScreenState extends State<HomeScreen> {
                     )
                   : _currentPage == 1
                       ? IconButton(
-                          icon: Icon(
-                            CupertinoIcons.arrow_clockwise,
-                            color: colorScheme.onSurface,
-                          ),
+                          icon: loginService.isLoading
+                              ? SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: colorScheme.onSurface,
+                                  ),
+                                )
+                              : _calendarReloadDone
+                                  ? Icon(Icons.check,
+                                      color: Colors.green.shade600)
+                                  : Icon(CupertinoIcons.arrow_clockwise,
+                                      color: colorScheme.onSurface),
                           onPressed: loginService.isLoading
                               ? null
-                              : () => loginService
-                                  .loginWithStoredCredentials()
-                                  .ignore(),
+                              : _onCalendarReloadPressed,
                         )
                       : null,
               title: Text(

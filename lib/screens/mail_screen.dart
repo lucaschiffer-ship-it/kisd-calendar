@@ -129,12 +129,11 @@ class _EmailCard extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final isUnread = !message.isSeen;
 
-    final senders = message.decodeSender();
-    final senderName = senders.isNotEmpty
-        ? (senders.first.hasPersonalName
-            ? senders.first.personalName!
-            : senders.first.email)
-        : 'Unknown';
+    final fromEmail = message.fromEmail;
+    final fromPersonal = message.from?.firstOrNull?.personalName;
+    final senderName = (fromPersonal != null && fromPersonal.isNotEmpty)
+        ? fromPersonal
+        : fromEmail ?? 'Unknown';
     final subject = message.decodeSubject() ?? '(No subject)';
     final preview = _extractPreview(message);
     final dateStr = _formatDate(message.decodeDate());

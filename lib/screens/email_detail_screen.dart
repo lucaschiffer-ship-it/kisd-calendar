@@ -48,13 +48,12 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     final msg = _full ?? widget.message;
-    final senders = msg.decodeSender();
-    final senderName = senders.isNotEmpty
-        ? (senders.first.hasPersonalName
-            ? senders.first.personalName!
-            : senders.first.email)
-        : 'Unknown';
-    final senderEmail = senders.isNotEmpty ? senders.first.email : '';
+    final fromEmail = msg.fromEmail ?? '';
+    final fromPersonal = msg.from?.firstOrNull?.personalName;
+    final senderName = (fromPersonal != null && fromPersonal.isNotEmpty)
+        ? fromPersonal
+        : fromEmail.isNotEmpty ? fromEmail : 'Unknown';
+    final senderEmail = fromEmail;
     final subject = msg.decodeSubject() ?? '(No subject)';
     final date = msg.decodeDate();
 

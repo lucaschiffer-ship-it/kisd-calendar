@@ -64,33 +64,35 @@ class _HomeScreenState extends State<HomeScreen> {
     final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: colorScheme.surface,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        surfaceTintColor: Colors.transparent,
-        centerTitle: true,
-        title: Text(
-          _titles[_currentPage],
-          style: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w600,
-            color: colorScheme.onSurface,
-          ),
-        ),
-        actions: [
-          IconButton(
-            icon: Icon(CupertinoIcons.settings, color: colorScheme.onSurface),
-            onPressed: _openSettings,
-          ),
-        ],
-        bottom: loginService.isLoading
-            ? const PreferredSize(
-                preferredSize: Size.fromHeight(2),
-                child: LinearProgressIndicator(),
-              )
-            : null,
-      ),
+      appBar: _currentPage == 2
+          ? null
+          : AppBar(
+              backgroundColor: colorScheme.surface,
+              elevation: 0,
+              scrolledUnderElevation: 0,
+              surfaceTintColor: Colors.transparent,
+              centerTitle: true,
+              title: Text(
+                _titles[_currentPage],
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                  color: colorScheme.onSurface,
+                ),
+              ),
+              actions: [
+                IconButton(
+                  icon: Icon(CupertinoIcons.settings, color: colorScheme.onSurface),
+                  onPressed: _openSettings,
+                ),
+              ],
+              bottom: loginService.isLoading
+                  ? const PreferredSize(
+                      preferredSize: Size.fromHeight(2),
+                      child: LinearProgressIndicator(),
+                    )
+                  : null,
+            ),
       body: PageView(
         controller: _pageController,
         physics: _currentPage == 2

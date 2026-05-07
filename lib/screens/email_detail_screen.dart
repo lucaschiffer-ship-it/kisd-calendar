@@ -180,7 +180,7 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
     if (html != null && html.isNotEmpty) {
       return InAppWebView(
         initialData: InAppWebViewInitialData(
-          data: _wrapHtml(html, isDark, cs),
+          data: _wrapHtml(html, isDark),
           mimeType: 'text/html',
           encoding: 'utf-8',
           baseUrl: WebUri('about:blank'),
@@ -201,7 +201,7 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
     );
   }
 
-  String _wrapHtml(String html, bool isDark, ColorScheme cs) {
+  String _wrapHtml(String html, bool isDark) {
     final bg = isDark ? '#1C1C1E' : '#FFFFFF';
     final fg = isDark ? '#EBEBF5' : '#1C1C1E';
     return '''<!DOCTYPE html><html><head>

@@ -74,6 +74,19 @@ class _HomeScreenState extends State<HomeScreen> {
               scrolledUnderElevation: 0,
               surfaceTintColor: Colors.transparent,
               centerTitle: true,
+              leading: _currentPage == 1
+                  ? IconButton(
+                      icon: Icon(
+                        CupertinoIcons.arrow_clockwise,
+                        color: colorScheme.onSurface,
+                      ),
+                      onPressed: loginService.isLoading
+                          ? null
+                          : () => loginService
+                              .loginWithStoredCredentials()
+                              .ignore(),
+                    )
+                  : null,
               title: Text(
                 _titles[_currentPage],
                 style: TextStyle(

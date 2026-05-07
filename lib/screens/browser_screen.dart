@@ -114,7 +114,7 @@ class _Toolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF2F2F7);
+    final bg = cs.surface;
     final border = isDark ? const Color(0xFF38383A) : const Color(0xFFD1D1D6);
     const inactive = Color(0xFF8E8E93);
 

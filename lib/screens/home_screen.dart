@@ -32,12 +32,14 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _pageController = PageController(initialPage: _initialPage);
     loginService.addListener(_rebuild);
+    mailService.addListener(_rebuild);
   }
 
   @override
   void dispose() {
     _pageController.dispose();
     loginService.removeListener(_rebuild);
+    mailService.removeListener(_rebuild);
     super.dispose();
   }
 
@@ -107,21 +109,27 @@ class _HomeScreenState extends State<HomeScreen> {
       bottomNavigationBar: _IosTabBar(
         currentIndex: _currentPage,
         onTap: _onTabTapped,
+        mailUnread: mailService.unreadCount,
       ),
     );
   }
 }
 
 class _IosTabBar extends StatelessWidget {
-  const _IosTabBar({required this.currentIndex, required this.onTap});
+  const _IosTabBar({
+    required this.currentIndex,
+    required this.onTap,
+    this.mailUnread = 0,
+  });
 
   final int currentIndex;
   final void Function(int) onTap;
+  final int mailUnread;
 
   static const _tabs = [
     (icon: CupertinoIcons.mail, label: 'Mail'),
     (icon: CupertinoIcons.calendar, label: 'Calendar'),
-    (icon: CupertinoIcons.globe, label: 'Browser'),
+    (icon: CupertinoIcons.globe, label: 'Spaces'),
   ];
 
   @override
@@ -147,6 +155,38 @@ class _IosTabBar extends StatelessWidget {
             children: List.generate(_tabs.length, (i) {
               final isActive = i == currentIndex;
               final color = isActive ? colorScheme.primary : inactiveColor;
+              Widget iconWidget = Icon(_tabs[i].icon, color: color, size: 22);
+              if (i == 0 && mailUnread > 0) {
+                iconWidget = Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    iconWidget,
+                    Positioned(
+                      right: -6,
+                      top: -4,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 4, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: colorScheme.error,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        constraints: const BoxConstraints(
+                            minWidth: 16, minHeight: 14),
+                        child: Text(
+                          mailUnread > 99 ? '99+' : '$mailUnread',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              }
               return Expanded(
                 child: GestureDetector(
                   onTap: () => onTap(i),
@@ -154,7 +194,7 @@ class _IosTabBar extends StatelessWidget {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(_tabs[i].icon, color: color, size: 22),
+                      iconWidget,
                       const SizedBox(height: 3),
                       Text(
                         _tabs[i].label,

@@ -153,12 +153,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPressed: _openSettings,
                 ),
               ],
-              bottom: loginService.isLoading
-                  ? const PreferredSize(
-                      preferredSize: Size.fromHeight(2),
-                      child: LinearProgressIndicator(),
-                    )
-                  : null,
             ),
       body: PageView(
         controller: _pageController,

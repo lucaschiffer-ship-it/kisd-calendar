@@ -69,10 +69,11 @@ class _MailScreenState extends State<MailScreen>
     return Stack(
       children: [
         RefreshIndicator(
-          onRefresh: () => mailService.fetchInbox(),
+          onRefresh: () => mailService.reloadInbox(),
           child: hasMessages
               ? ListView.builder(
                   padding: EdgeInsets.zero,
+                  physics: const AlwaysScrollableScrollPhysics(),
                   itemCount: mailService.messages.length,
                   itemBuilder: (ctx, i) {
                     final msg = mailService.messages[i];
@@ -94,7 +95,15 @@ class _MailScreenState extends State<MailScreen>
                     );
                   },
                 )
-              : const _EmptyState(),
+              : LayoutBuilder(
+                  builder: (ctx, constraints) => SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    child: SizedBox(
+                      height: constraints.maxHeight,
+                      child: const _EmptyState(),
+                    ),
+                  ),
+                ),
         ),
         Positioned(
           bottom: 20,

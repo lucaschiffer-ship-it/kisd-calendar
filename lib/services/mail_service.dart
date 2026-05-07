@@ -77,6 +77,12 @@ class MailService extends ChangeNotifier {
     }
   }
 
+  Future<void> reloadInbox() async {
+    print('[mail] manual reload triggered');
+    await fetchInbox();
+    print('[mail] fetched ${_messages.length} messages after reload');
+  }
+
   Future<List<MimeMessage>> fetchInbox({int limit = 50}) async {
     if (!_isConnected) {
       final ok = await _ensureConnected();

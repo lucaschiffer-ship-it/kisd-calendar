@@ -22,12 +22,15 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // Page order: Mail=0, Calendar=1, List=2
   static const int _initialPage = 1;
 
   late final PageController _pageController;
-  late final DraggableScrollableController _sheetController;
+  // AnimationController drives sheet height: 0.0 = closed, 1.0 = full screen.
+  // Replaces DraggableScrollableController which never attached because the
+  // scrollController arg from DraggableScrollableSheet.builder was ignored.
+  late final AnimationController _sheetAnim;
   final _browserKey = GlobalKey<BrowserSheetState>();
 
   int _currentPage = _initialPage;
@@ -46,10 +49,12 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: _initialPage);
-    _sheetController = DraggableScrollableController();
+    _sheetAnim = AnimationController(vsync: this, lowerBound: 0, upperBound: 1);
     loginService.addListener(_rebuild);
     mailService.addListener(_rebuild);
     SpacesBrowser._open = (url) {
+      print('[sheet] open(url) called with: $url');
+      print('[sheet] browserKey state=${_browserKey.currentState != null ? 'present' : 'null'}');
       _browserKey.currentState?.navigateTo(url);
       _openSheet();
     };
@@ -58,7 +63,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     SpacesBrowser._open = null;
-    _sheetController.dispose();
+    _sheetAnim.dispose();
     _pageController.dispose();
     loginService.removeListener(_rebuild);
     mailService.removeListener(_rebuild);
@@ -68,8 +73,8 @@ class _HomeScreenState extends State<HomeScreen> {
   void _rebuild() => setState(() {});
 
   void _openSheet() {
-    if (!_sheetController.isAttached) return;
-    _sheetController.animateTo(
+    print('[sheet] opening sheet, anim value=${_sheetAnim.value.toStringAsFixed(2)}');
+    _sheetAnim.animateTo(
       1.0,
       duration: const Duration(milliseconds: 380),
       curve: Curves.easeOut,
@@ -77,8 +82,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _closeSheet() {
-    if (!_sheetController.isAttached) return;
-    _sheetController.animateTo(
+    _sheetAnim.animateTo(
       0.0,
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeIn,
@@ -200,17 +204,21 @@ class _HomeScreenState extends State<HomeScreen> {
             currentPage: _currentPage,
             onTap: _onTabTapped,
             mailUnread: mailService.unreadCount,
-            onOpenSheet: _openSheet,
+            onOpenSheet: () {
+              print('[sheet] handle tapped');
+              _openSheet();
+            },
             onHandleDragUpdate: (d) {
-              if (!_sheetController.isAttached) return;
+              print('[sheet] handle drag dy=${d.delta.dy.toStringAsFixed(1)}, '
+                  'anim=${_sheetAnim.value.toStringAsFixed(2)}');
               final delta = -d.delta.dy / screenHeight;
-              _sheetController.jumpTo(
-                  (_sheetController.size + delta).clamp(0.0, 1.0));
+              _sheetAnim.value = (_sheetAnim.value + delta).clamp(0.0, 1.0);
             },
             onHandleDragEnd: (d) {
-              if (!_sheetController.isAttached) return;
+              print('[sheet] handle drag ended, vel=${d.primaryVelocity?.toStringAsFixed(0)}, '
+                  'size=${_sheetAnim.value.toStringAsFixed(2)}');
               final vel = d.primaryVelocity ?? 0;
-              final size = _sheetController.size;
+              final size = _sheetAnim.value;
               if (vel < -300 || (size > 0.1 && vel <= 200)) {
                 _openSheet();
               } else {
@@ -221,28 +229,29 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
 
         // ── Spaces browser sheet (full-screen overlay) ──────────────────────
-        // IgnorePointer while closed so touches fall through to the scaffold.
-        ListenableBuilder(
-          listenable: _sheetController,
-          builder: (context, child) {
-            final closed = !_sheetController.isAttached ||
-                _sheetController.size < 0.02;
-            return IgnorePointer(ignoring: closed, child: child!);
-          },
-          child: DraggableScrollableSheet(
-            controller: _sheetController,
-            initialChildSize: 0,
-            minChildSize: 0,
-            maxChildSize: 1,
-            snap: true,
-            snapSizes: const [0.0, 1.0],
-            builder: (context, _) => BrowserSheet(
-              key: _browserKey,
-              sheetController: _sheetController,
-              screenHeight: screenHeight,
-              onClose: _closeSheet,
-            ),
+        // AnimatedBuilder + Align/SizedBox avoids the DraggableScrollableSheet
+        // scrollController attachment requirement that was keeping isAttached=false.
+        AnimatedBuilder(
+          animation: _sheetAnim,
+          child: BrowserSheet(
+            key: _browserKey,
+            sheetAnim: _sheetAnim,
+            onClose: _closeSheet,
           ),
+          builder: (context, child) {
+            final size = _sheetAnim.value;
+            return Align(
+              alignment: Alignment.bottomCenter,
+              child: SizedBox(
+                width: double.infinity,
+                height: size * screenHeight,
+                child: IgnorePointer(
+                  ignoring: size < 0.02,
+                  child: child!,
+                ),
+              ),
+            );
+          },
         ),
       ],
     );

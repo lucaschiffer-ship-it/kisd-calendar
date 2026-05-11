@@ -5,13 +5,11 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 class BrowserSheet extends StatefulWidget {
   const BrowserSheet({
     super.key,
-    required this.sheetController,
-    required this.screenHeight,
+    required this.sheetAnim,
     required this.onClose,
   });
 
-  final DraggableScrollableController sheetController;
-  final double screenHeight;
+  final AnimationController sheetAnim;
   final VoidCallback onClose;
 
   @override
@@ -28,6 +26,7 @@ class BrowserSheetState extends State<BrowserSheet> {
   bool _canGoForward = false;
 
   void navigateTo(String url) {
+    print('[sheet] WebView loading: $url (ctrl=${_ctrl != null ? 'ready' : 'null'})');
     _ctrl?.loadUrl(urlRequest: URLRequest(url: WebUri(url)));
   }
 
@@ -38,28 +37,25 @@ class BrowserSheetState extends State<BrowserSheet> {
   }
 
   void _onHandleDragUpdate(DragUpdateDetails details) {
-    if (!widget.sheetController.isAttached) return;
-    final delta = -details.delta.dy / widget.screenHeight;
-    widget.sheetController.jumpTo(
-      (widget.sheetController.size + delta).clamp(0.0, 1.0),
-    );
+    final screenHeight = MediaQuery.of(context).size.height;
+    final delta = -details.delta.dy / screenHeight;
+    widget.sheetAnim.value = (widget.sheetAnim.value + delta).clamp(0.0, 1.0);
   }
 
   void _onHandleDragEnd(DragEndDetails details) {
-    if (!widget.sheetController.isAttached) return;
     final velocity = details.primaryVelocity ?? 0;
-    final size = widget.sheetController.size;
-    // Close on fast downward swipe or if barely open with no strong upward intent
+    final size = widget.sheetAnim.value;
     if (velocity > 400 || (size < 0.5 && velocity > -400)) {
       widget.onClose();
     } else {
-      widget.sheetController.animateTo(1.0,
+      widget.sheetAnim.animateTo(1.0,
           duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    print('[sheet] sheet built, anim value=${widget.sheetAnim.value.toStringAsFixed(2)}');
     final cs = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final borderColor =

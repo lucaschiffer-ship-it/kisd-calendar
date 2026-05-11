@@ -2,15 +2,23 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
-class BrowserScreen extends StatefulWidget {
-  const BrowserScreen({super.key});
+class BrowserSheet extends StatefulWidget {
+  const BrowserSheet({
+    super.key,
+    required this.sheetController,
+    required this.screenHeight,
+    required this.onClose,
+  });
+
+  final DraggableScrollableController sheetController;
+  final double screenHeight;
+  final VoidCallback onClose;
 
   @override
-  State<BrowserScreen> createState() => _BrowserScreenState();
+  State<BrowserSheet> createState() => BrowserSheetState();
 }
 
-class _BrowserScreenState extends State<BrowserScreen>
-    with AutomaticKeepAliveClientMixin {
+class BrowserSheetState extends State<BrowserSheet> {
   static final _homeUri = WebUri('https://spaces.kisd.de');
 
   InAppWebViewController? _ctrl;
@@ -19,8 +27,9 @@ class _BrowserScreenState extends State<BrowserScreen>
   bool _canGoBack = false;
   bool _canGoForward = false;
 
-  @override
-  bool get wantKeepAlive => true;
+  void navigateTo(String url) {
+    _ctrl?.loadUrl(urlRequest: URLRequest(url: WebUri(url)));
+  }
 
   Future<void> _updateNavState() async {
     final back = await _ctrl?.canGoBack() ?? false;
@@ -28,64 +37,115 @@ class _BrowserScreenState extends State<BrowserScreen>
     if (mounted) setState(() { _canGoBack = back; _canGoForward = fwd; });
   }
 
+  void _onHandleDragUpdate(DragUpdateDetails details) {
+    if (!widget.sheetController.isAttached) return;
+    final delta = -details.delta.dy / widget.screenHeight;
+    widget.sheetController.jumpTo(
+      (widget.sheetController.size + delta).clamp(0.0, 1.0),
+    );
+  }
+
+  void _onHandleDragEnd(DragEndDetails details) {
+    if (!widget.sheetController.isAttached) return;
+    final velocity = details.primaryVelocity ?? 0;
+    final size = widget.sheetController.size;
+    if (velocity > 400 || (size < 0.35 && velocity > -200)) {
+      widget.onClose();
+    } else if (size > 0.75 || velocity < -300) {
+      widget.sheetController.animateTo(1.0,
+          duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    } else {
+      widget.sheetController.animateTo(0.5,
+          duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    super.build(context);
     final cs = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final borderColor =
+        isDark ? const Color(0xFF38383A) : const Color(0xFFD1D1D6);
 
-    return SafeArea(
-      bottom: false,
-      child: Column(
-        children: [
-          _Toolbar(
-          title: _title,
-          canGoBack: _canGoBack,
-          canGoForward: _canGoForward,
-          isDark: isDark,
-          cs: cs,
-          onBack: () => _ctrl?.goBack(),
-          onForward: () => _ctrl?.goForward(),
-          onHome: () => _ctrl?.loadUrl(urlRequest: URLRequest(url: _homeUri)),
-        ),
-        if (_loading)
-          LinearProgressIndicator(
-            minHeight: 2,
-            color: cs.primary,
-            backgroundColor: Colors.transparent,
-          ),
-        Expanded(
-          child: InAppWebView(
-            initialUrlRequest: URLRequest(url: _homeUri),
-            initialSettings: InAppWebViewSettings(
-              javaScriptEnabled: true,
-              domStorageEnabled: true,
-              sharedCookiesEnabled: true,
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+      child: Material(
+        color: cs.surface,
+        child: Column(
+          children: [
+            GestureDetector(
+              onVerticalDragUpdate: _onHandleDragUpdate,
+              onVerticalDragEnd: _onHandleDragEnd,
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                height: 28,
+                decoration: BoxDecoration(
+                  color: cs.surface,
+                  border:
+                      Border(bottom: BorderSide(color: borderColor, width: 0.5)),
+                ),
+                child: Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: borderColor,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+              ),
             ),
-            onWebViewCreated: (ctrl) => _ctrl = ctrl,
-            onLoadStart: (ctrl, url) {
-              print('[browser] loading: $url');
-              if (mounted) setState(() => _loading = true);
-            },
-            onLoadStop: (ctrl, url) async {
-              print('[browser] loaded: $url');
-              await _updateNavState();
-              if (mounted) setState(() => _loading = false);
-            },
-            onReceivedError: (ctrl, req, err) {
-              if (req.isForMainFrame == true) {
-                print('[browser] error: ${err.description}');
-                if (mounted) setState(() => _loading = false);
-              }
-            },
-            onTitleChanged: (ctrl, title) {
-              if (title != null && title.isNotEmpty && mounted) {
-                setState(() => _title = title);
-              }
-            },
-          ),
+            _Toolbar(
+              title: _title,
+              canGoBack: _canGoBack,
+              canGoForward: _canGoForward,
+              isDark: isDark,
+              cs: cs,
+              onBack: () => _ctrl?.goBack(),
+              onForward: () => _ctrl?.goForward(),
+              onHome: () =>
+                  _ctrl?.loadUrl(urlRequest: URLRequest(url: _homeUri)),
+            ),
+            if (_loading)
+              LinearProgressIndicator(
+                minHeight: 2,
+                color: cs.primary,
+                backgroundColor: Colors.transparent,
+              ),
+            Expanded(
+              child: InAppWebView(
+                initialUrlRequest: URLRequest(url: _homeUri),
+                initialSettings: InAppWebViewSettings(
+                  javaScriptEnabled: true,
+                  domStorageEnabled: true,
+                  sharedCookiesEnabled: true,
+                ),
+                onWebViewCreated: (ctrl) => _ctrl = ctrl,
+                onLoadStart: (ctrl, url) {
+                  print('[browser] loading: $url');
+                  if (mounted) setState(() => _loading = true);
+                },
+                onLoadStop: (ctrl, url) async {
+                  print('[browser] loaded: $url');
+                  await _updateNavState();
+                  if (mounted) setState(() => _loading = false);
+                },
+                onReceivedError: (ctrl, req, err) {
+                  if (req.isForMainFrame == true) {
+                    print('[browser] error: ${err.description}');
+                    if (mounted) setState(() => _loading = false);
+                  }
+                },
+                onTitleChanged: (ctrl, title) {
+                  if (title != null && title.isNotEmpty && mounted) {
+                    setState(() => _title = title);
+                  }
+                },
+              ),
+            ),
+          ],
         ),
-      ],
       ),
     );
   }
@@ -114,14 +174,13 @@ class _Toolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = cs.surface;
     final border = isDark ? const Color(0xFF38383A) : const Color(0xFFD1D1D6);
     const inactive = Color(0xFF8E8E93);
 
     return Container(
       height: 44,
       decoration: BoxDecoration(
-        color: bg,
+        color: cs.surface,
         border: Border(bottom: BorderSide(color: border, width: 0.5)),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 4),

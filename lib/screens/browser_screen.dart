@@ -49,14 +49,12 @@ class BrowserSheetState extends State<BrowserSheet> {
     if (!widget.sheetController.isAttached) return;
     final velocity = details.primaryVelocity ?? 0;
     final size = widget.sheetController.size;
-    if (velocity > 400 || (size < 0.35 && velocity > -200)) {
+    // Close on fast downward swipe or if barely open with no strong upward intent
+    if (velocity > 400 || (size < 0.5 && velocity > -400)) {
       widget.onClose();
-    } else if (size > 0.75 || velocity < -300) {
-      widget.sheetController.animateTo(1.0,
-          duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
     } else {
-      widget.sheetController.animateTo(0.5,
-          duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+      widget.sheetController.animateTo(1.0,
+          duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
     }
   }
 
@@ -71,7 +69,10 @@ class BrowserSheetState extends State<BrowserSheet> {
       borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
       child: Material(
         color: cs.surface,
-        child: Column(
+        child: SafeArea(
+          top: true,
+          bottom: false,
+          child: Column(
           children: [
             GestureDetector(
               onVerticalDragUpdate: _onHandleDragUpdate,
@@ -145,6 +146,7 @@ class BrowserSheetState extends State<BrowserSheet> {
               ),
             ),
           ],
+          ),
         ),
       ),
     );

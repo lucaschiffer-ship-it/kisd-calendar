@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../services/service_locator.dart';
+import 'home_screen.dart';
 
 class EmailDetailScreen extends StatefulWidget {
   const EmailDetailScreen({
@@ -189,6 +190,18 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
           javaScriptEnabled: false,
           transparentBackground: true,
         ),
+        shouldOverrideUrlLoading: (controller, action) async {
+          final url = action.request.url;
+          if (url != null &&
+              (url.scheme == 'http' || url.scheme == 'https')) {
+            // Pop the detail screen first — the Spaces sheet lives in
+            // HomeScreen's layer and is hidden behind navigator routes.
+            if (context.mounted) Navigator.of(context).pop();
+            SpacesBrowser.open(url.toString());
+            return NavigationActionPolicy.CANCEL;
+          }
+          return NavigationActionPolicy.ALLOW;
+        },
       );
     }
     final plain = msg.decodeTextPlainPart() ?? '';

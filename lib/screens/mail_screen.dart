@@ -91,7 +91,6 @@ class _MailScreenState extends State<MailScreen>
                           ),
                         );
                       },
-                      onDelete: () => mailService.deleteMessage(msg),
                     );
                   },
                 )
@@ -125,12 +124,10 @@ class _EmailCard extends StatelessWidget {
     super.key,
     required this.message,
     required this.onTap,
-    required this.onDelete,
   });
 
   final MimeMessage message;
   final VoidCallback onTap;
-  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -156,19 +153,9 @@ class _EmailCard extends StatelessWidget {
             : cs.primary.withAlpha(13))
         : Colors.transparent;
 
-    return Dismissible(
-      key: ValueKey('dismiss_${message.uid}_${message.sequenceId}'),
-      direction: DismissDirection.endToStart,
-      background: Container(
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.symmetric(horizontal: 24),
-        color: Colors.red,
-        child: const Icon(Icons.delete_outline, color: Colors.white, size: 26),
-      ),
-      onDismissed: (_) => onDelete(),
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
+    return InkWell(
+      onTap: onTap,
+      child: Container(
           color: bgColor,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
           child: Row(
@@ -265,7 +252,6 @@ class _EmailCard extends StatelessWidget {
             ],
           ),
         ),
-      ),
     );
   }
 

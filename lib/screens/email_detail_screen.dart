@@ -192,10 +192,10 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
         ),
         shouldOverrideUrlLoading: (controller, action) async {
           final url = action.request.url;
+          print('[mail-link] tapped url: $url (scheme=${url?.scheme})');
           if (url != null &&
               (url.scheme == 'http' || url.scheme == 'https')) {
-            // Pop the detail screen first — the Spaces sheet lives in
-            // HomeScreen's layer and is hidden behind navigator routes.
+            print('[mail-link] SpacesBrowser.open called');
             if (context.mounted) Navigator.of(context).pop();
             SpacesBrowser.open(url.toString());
             return NavigationActionPolicy.CANCEL;

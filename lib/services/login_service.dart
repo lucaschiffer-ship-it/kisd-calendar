@@ -139,6 +139,7 @@ class LoginService extends ChangeNotifier {
         urlRequest: URLRequest(url: WebUri('https://spaces.kisd.de/course-selection/')),
       );
     } else if (s.contains('spaces.kisd.de') && !_samlClicked) {
+      print('[login] reached spaces.kisd.de: true');
       _samlClicked = true;
       await ctrl.evaluateJavascript(source: """
         (function() {

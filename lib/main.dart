@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/service_locator.dart';
@@ -52,11 +53,25 @@ class _AppRootState extends State<AppRoot> {
   void initState() {
     super.initState();
     loginService.addListener(_rebuild);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (loginService.hasStoredCredentials && !loginService.isLoggedIn) {
-        loginService.loginWithStoredCredentials().ignore();
-      }
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final hasCreds = loginService.hasStoredCredentials;
+      final cookieCount = await _countCookies();
+      final willRun = hasCreds && !loginService.isLoggedIn;
+      print('[startup] credentials present in secure storage: $hasCreds');
+      print('[startup] cookies restored: $cookieCount cookies');
+      print('[startup] running login flow: $willRun');
+      if (willRun) loginService.loginWithStoredCredentials().ignore();
     });
+  }
+
+  Future<int> _countCookies() async {
+    try {
+      final cookies = await CookieManager.instance()
+          .getCookies(url: WebUri('https://spaces.kisd.de'));
+      return cookies.length;
+    } catch (_) {
+      return -1;
+    }
   }
 
   @override

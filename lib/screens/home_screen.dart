@@ -196,16 +196,18 @@ class _HomeScreenState extends State<HomeScreen> {
             },
             children: _pages,
           ),
-          bottomNavigationBar: GestureDetector(
-            // Vertical drag on the nav bar pulls the Spaces sheet up.
-            // Horizontal swipes fall through to the PageView.
-            onVerticalDragUpdate: (d) {
+          bottomNavigationBar: _IosTabBar(
+            currentPage: _currentPage,
+            onTap: _onTabTapped,
+            mailUnread: mailService.unreadCount,
+            onOpenSheet: _openSheet,
+            onHandleDragUpdate: (d) {
               if (!_sheetController.isAttached) return;
               final delta = -d.delta.dy / screenHeight;
               _sheetController.jumpTo(
                   (_sheetController.size + delta).clamp(0.0, 1.0));
             },
-            onVerticalDragEnd: (d) {
+            onHandleDragEnd: (d) {
               if (!_sheetController.isAttached) return;
               final vel = d.primaryVelocity ?? 0;
               final size = _sheetController.size;
@@ -215,11 +217,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 _closeSheet();
               }
             },
-            child: _IosTabBar(
-              currentPage: _currentPage,
-              onTap: _onTabTapped,
-              mailUnread: mailService.unreadCount,
-            ),
           ),
         ),
 
@@ -258,11 +255,17 @@ class _IosTabBar extends StatelessWidget {
   const _IosTabBar({
     required this.currentPage,
     required this.onTap,
+    required this.onOpenSheet,
+    required this.onHandleDragUpdate,
+    required this.onHandleDragEnd,
     this.mailUnread = 0,
   });
 
   final int currentPage;
   final void Function(int) onTap;
+  final VoidCallback onOpenSheet;
+  final void Function(DragUpdateDetails) onHandleDragUpdate;
+  final void Function(DragEndDetails) onHandleDragEnd;
   final int mailUnread;
 
   static const _tabs = [
@@ -291,14 +294,24 @@ class _IosTabBar extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Subtle swipe-up hint
-            SizedBox(
-              height: 14,
-              child: Center(
-                child: Icon(
-                  CupertinoIcons.chevron_compact_up,
-                  size: 14,
-                  color: inactiveColor.withValues(alpha: 0.55),
+            // Drag handle — tap or swipe up to open the Spaces sheet.
+            // Own GestureDetector so tab buttons below don't swallow events.
+            GestureDetector(
+              onTap: onOpenSheet,
+              onVerticalDragUpdate: onHandleDragUpdate,
+              onVerticalDragEnd: onHandleDragEnd,
+              behavior: HitTestBehavior.opaque,
+              child: SizedBox(
+                height: 20,
+                child: Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: dividerColor,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
                 ),
               ),
             ),

@@ -4,6 +4,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../services/cache_service.dart';
 import '../services/service_locator.dart';
+import 'course_shell_test_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -60,6 +61,22 @@ class SettingsScreen extends StatelessWidget {
       body: ListView(
         children: [
           const SizedBox(height: 32),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: ListTile(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              tileColor: colorScheme.surfaceContainerHigh,
+              leading: Icon(CupertinoIcons.rectangle_stack, color: colorScheme.onSurface),
+              title: const Text('Course Shells', style: TextStyle(fontWeight: FontWeight.w500)),
+              subtitle: const Text('Dev preview'),
+              trailing: const Icon(CupertinoIcons.chevron_right, size: 16),
+              onTap: () => Navigator.push(
+                context,
+                CupertinoPageRoute(builder: (_) => const CourseShellTestScreen()),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: ListTile(

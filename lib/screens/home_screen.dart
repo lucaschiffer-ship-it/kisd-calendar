@@ -6,14 +6,9 @@ import 'mail_screen.dart';
 import 'browser_screen.dart';
 import 'settings_screen.dart';
 import '../services/service_locator.dart';
+import '../services/spaces_browser.dart';
 
-/// Opens the Spaces browser sheet and navigates to [url].
-/// Safe to call from anywhere once HomeScreen is mounted.
-class SpacesBrowser {
-  static void Function(String url)? _open;
-
-  static void open(String url) => _open?.call(url);
-}
+export '../services/spaces_browser.dart' show SpacesBrowser;
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -52,17 +47,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _sheetAnim = AnimationController(vsync: this, lowerBound: 0, upperBound: 1);
     loginService.addListener(_rebuild);
     mailService.addListener(_rebuild);
-    SpacesBrowser._open = (url) {
+    SpacesBrowser.register((url) {
       print('[sheet] open(url) called with: $url');
       print('[sheet] browserKey state=${_browserKey.currentState != null ? 'present' : 'null'}');
       _browserKey.currentState?.navigateTo(url);
       _openSheet();
-    };
+    });
   }
 
   @override
   void dispose() {
-    SpacesBrowser._open = null;
+    SpacesBrowser.unregister();
     _sheetAnim.dispose();
     _pageController.dispose();
     loginService.removeListener(_rebuild);

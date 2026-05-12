@@ -2,8 +2,23 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class CacheService {
-  static const _keyCourses = 'kisd_courses';
-  static const _keyUpdated = 'kisd_courses_updated';
+  static const _keyCourses  = 'kisd_courses';
+  static const _keyUpdated  = 'kisd_courses_updated';
+  static const _keyVersion  = 'kisd_courses_version';
+
+  // Bump this whenever the scraper output format changes so that stale
+  // cached data is automatically discarded on the next app launch.
+  static const _currentVersion = 2;
+
+  Future<bool> isCurrentVersion() async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getInt(_keyVersion) ?? 0) == _currentVersion;
+  }
+
+  Future<void> markCurrentVersion() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_keyVersion, _currentVersion);
+  }
 
   Future<void> saveCourses(List<Map<String, dynamic>> courses) async {
     final prefs = await SharedPreferences.getInstance();

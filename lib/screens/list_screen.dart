@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../models/course_shell.dart';
+import '../services/cache_service.dart';
 import '../services/service_locator.dart';
 import '../theme/app_theme.dart';
 import '../widgets/course_shell_card.dart';
@@ -30,6 +31,14 @@ class _ListScreenState extends State<ListScreen>
   }
 
   Future<void> _init() async {
+    // Discard cache if the scraper schema changed (version mismatch)
+    final cache = CacheService();
+    if (!await cache.isCurrentVersion()) {
+      print('[list] cache schema outdated — clearing');
+      await cache.clearCourses();
+      await cache.markCurrentVersion();
+    }
+
     try {
       final cached = await scraperService.loadCached();
       if (cached.isNotEmpty) {

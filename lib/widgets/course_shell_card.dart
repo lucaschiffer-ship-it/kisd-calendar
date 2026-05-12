@@ -1,8 +1,17 @@
+import 'dart:ui';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import '../models/course_shell.dart';
 import '../services/spaces_browser.dart';
+
+// ─── sizing constants used by both the page and the menu ─────────────────────
+const double _kMenuWidth = 240.0;
+const double _kItemHeight = 44.0;
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 class CourseShellCard extends StatefulWidget {
   const CourseShellCard({
@@ -24,9 +33,7 @@ class CourseShellCard extends StatefulWidget {
 }
 
 class _CourseShellCardState extends State<CourseShellCard> {
-  // Shared across all card instances so getInstance() is called at most once.
   static SharedPreferences? _prefs;
-
   late bool _liked;
 
   static String _key(String id) => 'shell_liked_$id';
@@ -55,7 +62,8 @@ class _CourseShellCardState extends State<CourseShellCard> {
 
   String get _timesText => widget.shell.meetingTimes
       .map((m) =>
-          '${m.weekday.label} ${CourseShellCard.fmtTime(m.startTime)}–${CourseShellCard.fmtTime(m.endTime)}')
+          '${m.weekday.label} ${CourseShellCard.fmtTime(m.startTime)}'
+          '–${CourseShellCard.fmtTime(m.endTime)}')
       .join(', ');
 
   void _openPrimary() {
@@ -63,27 +71,24 @@ class _CourseShellCardState extends State<CourseShellCard> {
     SpacesBrowser.open(widget.shell.links.first.url);
   }
 
-  void _showModal(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    showModalBottomSheet(
+  void _showContextMenu(BuildContext context, Offset tapPosition) {
+    final shell = widget.shell;
+    showGeneralDialog<void>(
       context: context,
-      useSafeArea: true,
-      backgroundColor: isDark ? const Color(0xFF2C2C2E) : Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) => _ModalContent(
-        shell: widget.shell,
-        cs: cs,
-        isDark: isDark,
+      barrierDismissible: false,
+      barrierLabel: '',
+      barrierColor: Colors.transparent,
+      transitionDuration: const Duration(milliseconds: 230),
+      pageBuilder: (ctx, anim, _) => _GlassMenuPage(
+        shell: shell,
+        tapPosition: tapPosition,
+        anim: anim,
         onEdit: () {
-          Navigator.pop(ctx);
+          Navigator.of(ctx).pop();
           widget.onEdit();
         },
         onDelete: () {
-          Navigator.pop(ctx);
+          Navigator.of(ctx).pop();
           widget.onDelete();
         },
       ),
@@ -98,7 +103,7 @@ class _CourseShellCardState extends State<CourseShellCard> {
 
     return GestureDetector(
       onTap: _openPrimary,
-      onLongPress: () => _showModal(context),
+      onLongPressStart: (d) => _showContextMenu(context, d.globalPosition),
       child: Container(
         decoration: BoxDecoration(
           color: isDark ? const Color(0xFF2C2C2E) : Colors.white,
@@ -121,7 +126,7 @@ class _CourseShellCardState extends State<CourseShellCard> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Text content ──────────────────────────────────────────────
+            // ── Text content ────────────────────────────────────────────────
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -146,18 +151,13 @@ class _CourseShellCardState extends State<CourseShellCard> {
                     const SizedBox(height: 3),
                     Row(
                       children: [
-                        Icon(
-                          CupertinoIcons.location,
-                          size: 11,
-                          color: cs.onSurface.withAlpha(120),
-                        ),
+                        Icon(CupertinoIcons.location,
+                            size: 11, color: cs.onSurface.withAlpha(120)),
                         const SizedBox(width: 3),
                         Text(
                           shell.location!,
                           style: TextStyle(
-                            fontSize: 12,
-                            color: cs.onSurface.withAlpha(140),
-                          ),
+                              fontSize: 12, color: cs.onSurface.withAlpha(140)),
                         ),
                       ],
                     ),
@@ -166,7 +166,7 @@ class _CourseShellCardState extends State<CourseShellCard> {
               ),
             ),
 
-            // ── Right column: heart + link indicator ──────────────────────
+            // ── Right column: heart + link indicator ────────────────────────
             const SizedBox(width: 10),
             Column(
               mainAxisSize: MainAxisSize.min,
@@ -177,19 +177,20 @@ class _CourseShellCardState extends State<CourseShellCard> {
                   child: Padding(
                     padding: const EdgeInsets.all(2),
                     child: Icon(
-                      _liked ? CupertinoIcons.heart_fill : CupertinoIcons.heart,
+                      _liked
+                          ? CupertinoIcons.heart_fill
+                          : CupertinoIcons.heart,
                       size: 18,
-                      color: _liked ? Colors.red.shade400 : cs.onSurface.withAlpha(90),
+                      color: _liked
+                          ? Colors.red.shade400
+                          : cs.onSurface.withAlpha(90),
                     ),
                   ),
                 ),
                 if (shell.links.length > 1) ...[
                   const SizedBox(height: 6),
-                  Icon(
-                    CupertinoIcons.link,
-                    size: 13,
-                    color: cs.primary.withAlpha(160),
-                  ),
+                  Icon(CupertinoIcons.link,
+                      size: 13, color: cs.primary.withAlpha(160)),
                 ],
               ],
             ),
@@ -200,80 +201,256 @@ class _CourseShellCardState extends State<CourseShellCard> {
   }
 }
 
+// ─── Glass context menu route ─────────────────────────────────────────────────
+
+class _GlassMenuPage extends StatelessWidget {
+  const _GlassMenuPage({
+    required this.shell,
+    required this.tapPosition,
+    required this.anim,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final CourseShell shell;
+  final Offset tapPosition;
+  final Animation<double> anim;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final screen = MediaQuery.of(context).size;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // Estimate height: items + 0.5-px dividers + 8 px top + 8 px bottom pad
+    final itemCount =
+        shell.links.length + 1 + (shell.isManual ? 1 : 0);
+    final estimatedH = itemCount * _kItemHeight + 16.0;
+
+    // Vertical: flip above the tap if it would overflow the bottom
+    final bool above =
+        tapPosition.dy + estimatedH + 24 > screen.height - 80;
+    double top = above
+        ? tapPosition.dy - estimatedH - 12
+        : tapPosition.dy + 12;
+
+    // Horizontal: centre on tap, clamped to safe margins
+    double left = tapPosition.dx - _kMenuWidth / 2;
+    left = left.clamp(16.0, screen.width - _kMenuWidth - 16.0);
+    top = top.clamp(80.0, screen.height - estimatedH - 60.0);
+
+    final scaleOrigin =
+        above ? Alignment.bottomCenter : Alignment.topCenter;
+
+    return Material(
+      type: MaterialType.transparency,
+      child: Stack(
+        children: [
+          // ── Scrim — tapping it dismisses the menu ───────────────────────
+          Positioned.fill(
+            child: FadeTransition(
+              opacity: anim,
+              child: GestureDetector(
+                onTap: () => Navigator.of(context).pop(),
+                child: Container(
+                  color: Colors.black.withAlpha(isDark ? 90 : 55),
+                ),
+              ),
+            ),
+          ),
+
+          // ── Floating glass menu ─────────────────────────────────────────
+          Positioned(
+            left: left,
+            top: top,
+            child: FadeTransition(
+              opacity: anim,
+              child: ScaleTransition(
+                scale: Tween<double>(begin: 0.80, end: 1.0).animate(
+                  CurvedAnimation(
+                    parent: anim,
+                    curve: Curves.easeOutBack,
+                  ),
+                ),
+                alignment: scaleOrigin,
+                child: _GlassMenu(
+                  shell: shell,
+                  isDark: isDark,
+                  onEdit: onEdit,
+                  onDelete: onDelete,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _ModalContent extends StatelessWidget {
-  const _ModalContent({
+class _GlassMenu extends StatelessWidget {
+  const _GlassMenu({
     required this.shell,
-    required this.cs,
     required this.isDark,
     required this.onEdit,
     required this.onDelete,
   });
 
   final CourseShell shell;
-  final ColorScheme cs;
   final bool isDark;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
+  static IconData _linkIcon(String url) =>
+      url.contains('spaces.kisd.de')
+          ? CupertinoIcons.rectangle_stack
+          : CupertinoIcons.globe;
+
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          margin: const EdgeInsets.symmetric(vertical: 12),
-          width: 36,
-          height: 4,
-          decoration: BoxDecoration(
-            color: cs.onSurface.withAlpha(60),
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              shell.title,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-            ),
-          ),
-        ),
-        if (shell.links.isNotEmpty) ...[
-          Divider(height: 1, color: cs.onSurface.withAlpha(30)),
-          ...shell.links.map(
-            (link) => ListTile(
-              leading: Icon(CupertinoIcons.link, size: 19, color: cs.primary),
-              title: Text(link.label, style: const TextStyle(fontSize: 15)),
-              subtitle: Text(
-                link.url,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12, color: cs.onSurface.withAlpha(130)),
-              ),
-              onTap: () {
-                Navigator.pop(context);
-                SpacesBrowser.open(link.url);
-              },
-            ),
+    final cs = Theme.of(context).colorScheme;
+
+    final fillColor = isDark
+        ? Colors.black.withValues(alpha: 0.58)
+        : Colors.white.withValues(alpha: 0.82);
+    final borderColor = isDark
+        ? Colors.white.withValues(alpha: 0.13)
+        : Colors.black.withValues(alpha: 0.07);
+    final divColor = isDark
+        ? Colors.white.withValues(alpha: 0.09)
+        : Colors.black.withValues(alpha: 0.09);
+
+    // Build item list interleaved with dividers
+    final rows = <Widget>[];
+
+    void addItem(Widget item) {
+      if (rows.isNotEmpty) {
+        rows.add(_GlassDivider(color: divColor));
+      }
+      rows.add(item);
+    }
+
+    for (final link in shell.links) {
+      addItem(_GlassMenuItem(
+        icon: _linkIcon(link.url),
+        label: link.label,
+        cs: cs,
+        onTap: () {
+          Navigator.of(context).pop();
+          SpacesBrowser.open(link.url);
+        },
+      ));
+    }
+
+    addItem(_GlassMenuItem(
+      icon: CupertinoIcons.pencil,
+      label: 'Edit shell',
+      cs: cs,
+      onTap: onEdit,
+    ));
+
+    if (shell.isManual) {
+      addItem(_GlassMenuItem(
+        icon: CupertinoIcons.trash,
+        label: 'Delete',
+        cs: cs,
+        isDestructive: true,
+        onTap: onDelete,
+      ));
+    }
+
+    return Container(
+      width: _kMenuWidth,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: borderColor, width: 0.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.14),
+            blurRadius: 28,
+            spreadRadius: 0,
+            offset: const Offset(0, 8),
           ),
         ],
-        Divider(height: 1, color: cs.onSurface.withAlpha(30)),
-        ListTile(
-          leading: Icon(CupertinoIcons.pencil, size: 19, color: cs.onSurface),
-          title: const Text('Edit shell', style: TextStyle(fontSize: 15)),
-          onTap: onEdit,
-        ),
-        if (shell.isManual)
-          ListTile(
-            leading: Icon(CupertinoIcons.trash, size: 19, color: cs.error),
-            title: Text('Delete', style: TextStyle(fontSize: 15, color: cs.error)),
-            onTap: onDelete,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(13.5),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+          child: Container(
+            color: fillColor,
+            child: Material(
+              type: MaterialType.transparency,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: rows,
+              ),
+            ),
           ),
-        const SizedBox(height: 8),
-      ],
+        ),
+      ),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _GlassMenuItem extends StatelessWidget {
+  const _GlassMenuItem({
+    required this.icon,
+    required this.label,
+    required this.cs,
+    required this.onTap,
+    this.isDestructive = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final ColorScheme cs;
+  final VoidCallback onTap;
+  final bool isDestructive;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isDestructive ? cs.error : cs.onSurface;
+    return SizedBox(
+      height: _kItemHeight,
+      child: InkWell(
+        onTap: onTap,
+        splashColor: color.withAlpha(18),
+        highlightColor: color.withAlpha(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              Icon(icon, size: 17, color: color.withAlpha(isDestructive ? 255 : 210)),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 15,
+                    color: color,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GlassDivider extends StatelessWidget {
+  const _GlassDivider({required this.color});
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) =>
+      Container(height: 0.5, color: color);
 }

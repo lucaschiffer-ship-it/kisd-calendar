@@ -42,7 +42,7 @@ class AppColors {
 class AppSpacing {
   AppSpacing._();
 
-  static const double cardPadding    = 24.0;
+  static const double cardPadding    = 28.0;
   static const double cardRadius     = 24.0;
   static const double cardGap        = 12.0; // tighter list feel
   static const double screenPadding  = 16.0;
@@ -112,6 +112,33 @@ class AppTextStyle {
         color: AppColors.accent,
         letterSpacing: 2.0,
         height: 1.3,
+      );
+
+  // ── Large display number — the start time on a card
+  static TextStyle get displayTime => GoogleFonts.spaceGrotesk(
+        fontSize: 38,
+        fontWeight: FontWeight.w700,
+        color: AppColors.textPrimary,
+        letterSpacing: -2.0,
+        height: 1.0,
+      );
+
+  // ── Card-level title — dominant, ~3× the body
+  static TextStyle get cardTitle => GoogleFonts.spaceGrotesk(
+        fontSize: 30,
+        fontWeight: FontWeight.w700,
+        color: AppColors.textPrimary,
+        letterSpacing: -0.8,
+        height: 1.0,
+      );
+
+  // ── Full-page/screen title
+  static TextStyle get pageTitle => GoogleFonts.spaceGrotesk(
+        fontSize: 38,
+        fontWeight: FontWeight.w700,
+        color: AppColors.textPrimary,
+        letterSpacing: -1.2,
+        height: 1.0,
       );
 }
 
@@ -275,7 +302,7 @@ ThemeData buildDarkTheme() {
       elevation: 0,
       scrolledUnderElevation: 0,
       surfaceTintColor: Colors.transparent,
-      centerTitle: true,
+      centerTitle: false,
       titleTextStyle: AppTextStyle.navTitle,
       systemOverlayStyle: const SystemUiOverlayStyle(
         statusBarBrightness: Brightness.dark,

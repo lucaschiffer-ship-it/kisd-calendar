@@ -33,9 +33,15 @@ class CourseShellCard extends StatefulWidget {
   State<CourseShellCard> createState() => _CourseShellCardState();
 }
 
-class _CourseShellCardState extends State<CourseShellCard> {
+class _CourseShellCardState extends State<CourseShellCard>
+    with SingleTickerProviderStateMixin {
   static SharedPreferences? _prefs;
   late bool _liked;
+  bool _pressing = false;
+
+  // Heart bounce animation
+  late final AnimationController _heartCtrl;
+  late final Animation<double> _heartScale;
 
   static String _key(String id) => 'shell_liked_$id';
 
@@ -44,6 +50,20 @@ class _CourseShellCardState extends State<CourseShellCard> {
     super.initState();
     _liked = widget.shell.isLiked;
     _loadLiked();
+    _heartCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 160),
+      reverseDuration: const Duration(milliseconds: 110),
+    );
+    _heartScale = Tween<double>(begin: 1.0, end: 1.40).animate(
+      CurvedAnimation(parent: _heartCtrl, curve: Curves.easeOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _heartCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _loadLiked() async {
@@ -57,20 +77,28 @@ class _CourseShellCardState extends State<CourseShellCard> {
   Future<void> _toggleLike() async {
     final next = !_liked;
     setState(() => _liked = next);
+    // Bounce: scale up then back
+    _heartCtrl.forward(from: 0.0).then((_) => _heartCtrl.reverse());
     _prefs ??= await SharedPreferences.getInstance();
     await _prefs!.setBool(_key(widget.shell.id), next);
   }
 
-  String get _timesText => widget.shell.meetingTimes
-      .map((m) =>
-          '${CourseShellCard.fmtTime(m.startTime)} – '
-          '${CourseShellCard.fmtTime(m.endTime)}')
-      .join('  ·  ');
+  // ── Helpers for the primary (first) meeting ─────────────────────────────────
+  MeetingTime? get _primary => widget.shell.meetingTimes.firstOrNull;
 
-  // "MON · WED" — used as ALL-CAPS day strip above the title
-  String get _weekdayLabel => widget.shell.meetingTimes
-      .map((m) => m.weekday.label.toUpperCase())
-      .join(' · ');
+  String get _primaryDay =>
+      _primary?.weekday.label.toUpperCase() ?? '';
+
+  String get _primaryStart =>
+      _primary != null ? CourseShellCard.fmtTime(_primary!.startTime) : '';
+
+  String get _primaryEnd =>
+      _primary != null ? CourseShellCard.fmtTime(_primary!.endTime) : '';
+
+  List<MeetingTime> get _extraMeetings =>
+      widget.shell.meetingTimes.length > 1
+          ? widget.shell.meetingTimes.skip(1).toList()
+          : [];
 
   void _openPrimary() {
     if (widget.shell.links.isEmpty) return;
@@ -104,114 +132,135 @@ class _CourseShellCardState extends State<CourseShellCard> {
   @override
   Widget build(BuildContext context) {
     final shell = widget.shell;
+    final hasMeetings = shell.meetingTimes.isNotEmpty;
 
-    return GestureDetector(
-      onTap: _openPrimary,
-      onLongPressStart: (d) => _showContextMenu(context, d.globalPosition),
-      child: AppCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ── Weekday strip — ALL-CAPS accent label ───────────────────────
-            if (shell.meetingTimes.isNotEmpty) ...[
-              Text(_weekdayLabel, style: AppTextStyle.accentLabel),
-              const SizedBox(height: 14),
-            ],
-
-            // ── Title row: gradient bar | title text   heart ────────────────
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    return AnimatedScale(
+      scale: _pressing ? 0.97 : 1.0,
+      duration: const Duration(milliseconds: 90),
+      curve: Curves.easeOut,
+      child: GestureDetector(
+        onTap: _openPrimary,
+        onTapDown: (_) => setState(() => _pressing = true),
+        onTapUp: (_) => setState(() => _pressing = false),
+        onTapCancel: () => setState(() => _pressing = false),
+        onLongPressStart: (d) {
+          setState(() => _pressing = false);
+          _showContextMenu(context, d.globalPosition);
+        },
+        child: AppCard(
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Gradient vertical accent bar matching title height
+                // ── Left column: day label + large start time ─────────────
+                if (hasMeetings) ...[
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(_primaryDay, style: AppTextStyle.accentLabel),
+                      const SizedBox(height: 6),
+                      Text(_primaryStart, style: AppTextStyle.displayTime),
+                    ],
+                  ),
+                  // Subtle vertical divider
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 22),
+                    child: Container(
+                      width: 0.5,
+                      color: AppColors.cardBorder,
+                    ),
+                  ),
+                ],
+
+                // ── Right column: title + details ─────────────────────────
                 Expanded(
-                  child: IntrinsicHeight(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Container(
-                          width: 3,
-                          margin: const EdgeInsets.only(right: 13),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [
-                                AppColors.accent,
-                                AppColors.accent.withValues(alpha: 0.18),
-                              ],
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Title + heart on same row
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              shell.title,
+                              style: AppTextStyle.cardTitle,
                             ),
-                            borderRadius: BorderRadius.circular(2),
                           ),
+                          // Animated heart
+                          GestureDetector(
+                            onTap: _toggleLike,
+                            behavior: HitTestBehavior.opaque,
+                            child: Padding(
+                              padding: const EdgeInsets.only(left: 14, top: 3),
+                              child: ScaleTransition(
+                                scale: _heartScale,
+                                child: Icon(
+                                  _liked
+                                      ? CupertinoIcons.heart_fill
+                                      : CupertinoIcons.heart,
+                                  size: 22,
+                                  color: _liked
+                                      ? AppColors.heartActive
+                                      : AppColors.textTertiary,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 16),
+
+                      // End time + extra meetings + location
+                      if (hasMeetings)
+                        Text(
+                          '– $_primaryEnd',
+                          style: AppTextStyle.body,
                         ),
-                        Expanded(
-                          child: Text(
-                            shell.title,
-                            style: AppTextStyle.headline,
+                      ..._extraMeetings.map((m) => Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              '${m.weekday.label.toUpperCase()}  '
+                              '${CourseShellCard.fmtTime(m.startTime)} – '
+                              '${CourseShellCard.fmtTime(m.endTime)}',
+                              style: AppTextStyle.body,
+                            ),
+                          )),
+                      if (shell.location != null) ...[
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            const Icon(CupertinoIcons.location,
+                                size: 10, color: AppColors.textTertiary),
+                            const SizedBox(width: 4),
+                            Text(
+                              shell.location!.toUpperCase(),
+                              style: AppTextStyle.label,
+                            ),
+                          ],
+                        ),
+                      ],
+
+                      // Multi-link indicator
+                      if (shell.links.length > 1) ...[
+                        const SizedBox(height: 10),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: Icon(
+                            CupertinoIcons.link,
+                            size: 12,
+                            color: AppColors.accent.withValues(alpha: 0.5),
                           ),
                         ),
                       ],
-                    ),
-                  ),
-                ),
-                // Heart toggle — larger and more prominent
-                GestureDetector(
-                  onTap: _toggleLike,
-                  behavior: HitTestBehavior.opaque,
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 12, top: 1),
-                    child: Icon(
-                      _liked
-                          ? CupertinoIcons.heart_fill
-                          : CupertinoIcons.heart,
-                      size: 22,
-                      color: _liked
-                          ? AppColors.heartActive
-                          : AppColors.textTertiary,
-                    ),
+                    ],
                   ),
                 ),
               ],
             ),
-
-            // ── Body details indented to align with title text ───────────────
-            const SizedBox(height: 10),
-            Padding(
-              padding: const EdgeInsets.only(left: 16), // 3 bar + 13 margin
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(_timesText, style: AppTextStyle.body),
-                  if (shell.location != null) ...[
-                    const SizedBox(height: 5),
-                    Row(
-                      children: [
-                        const Icon(CupertinoIcons.location,
-                            size: 11, color: AppColors.textTertiary),
-                        const SizedBox(width: 4),
-                        Text(
-                          shell.location!.toUpperCase(),
-                          style: AppTextStyle.label,
-                        ),
-                      ],
-                    ),
-                  ],
-                ],
-              ),
-            ),
-
-            // ── Multi-link indicator bottom-right ────────────────────────────
-            if (shell.links.length > 1) ...[
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerRight,
-                child: Icon(
-                  CupertinoIcons.link,
-                  size: 12,
-                  color: AppColors.accent.withValues(alpha: 0.55),
-                ),
-              ),
-            ],
-          ],
+          ),
         ),
       ),
     );

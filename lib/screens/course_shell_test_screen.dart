@@ -1,7 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import '../models/course_shell.dart';
-import '../theme/app_theme.dart' show AppSpacing;
+import '../theme/app_theme.dart';
 import '../widgets/course_shell_card.dart';
 import 'course_shell_edit_screen.dart';
 
@@ -116,41 +116,61 @@ class _CourseShellTestScreenState extends State<CourseShellTestScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: cs.surface,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        surfaceTintColor: Colors.transparent,
-        centerTitle: true,
-        title: const Text(
-          'Course Shells',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
-        ),
-      ),
-      body: _shells.isEmpty
-          ? Center(
-              child: Text(
-                'No shells',
-                style: TextStyle(color: cs.onSurface.withAlpha(120)),
+      // No title — large page header lives in the scroll content.
+      // The back chevron appears automatically from CupertinoPageRoute.
+      appBar: AppBar(backgroundColor: AppColors.background),
+      body: CustomScrollView(
+        slivers: [
+          // ── Large left-aligned page title ──────────────────────────────────
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 32),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Course\nShells', style: AppTextStyle.pageTitle),
+                  const SizedBox(height: 10),
+                  Text(
+                    '${_shells.length} COURSE${_shells.length == 1 ? '' : 'S'}',
+                    style: AppTextStyle.label,
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // ── Card list ───────────────────────────────────────────────────────
+          if (_shells.isEmpty)
+            SliverFillRemaining(
+              child: Center(
+                child: Text('No shells', style: AppTextStyle.body),
               ),
             )
-          : ListView.separated(
-              padding: const EdgeInsets.all(AppSpacing.screenPadding),
-              itemCount: _shells.length,
-              separatorBuilder: (_, index) =>
-                  const SizedBox(height: AppSpacing.cardGap),
-              itemBuilder: (_, i) {
-                final shell = _shells[i];
-                return CourseShellCard(
-                  shell: shell,
-                  onEdit: () => _openEdit(shell),
-                  onDelete: () => _delete(shell),
-                );
-              },
+          else
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.screenPadding,
+                0,
+                AppSpacing.screenPadding,
+                40,
+              ),
+              sliver: SliverList.separated(
+                itemCount: _shells.length,
+                separatorBuilder: (_, index) =>
+                    const SizedBox(height: AppSpacing.cardGap),
+                itemBuilder: (_, i) {
+                  final shell = _shells[i];
+                  return CourseShellCard(
+                    shell: shell,
+                    onEdit: () => _openEdit(shell),
+                    onDelete: () => _delete(shell),
+                  );
+                },
+              ),
             ),
+        ],
+      ),
     );
   }
 }

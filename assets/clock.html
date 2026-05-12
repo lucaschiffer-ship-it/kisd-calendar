@@ -7,15 +7,21 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
       width: 100%; height: 100%;
-      background: transparent;
+      background: rgba(200, 0, 0, 0.5); /* DEBUG: red = page loaded */
       overflow: hidden;
     }
     canvas { display: block; }
   </style>
 </head>
 <body>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <script>console.log('[clock] html: script block reached');</script>
+  <script
+    src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"
+    onload="console.log('[clock] p5.js: loaded ok, typeof p5 =', typeof p5)"
+    onerror="console.log('[clock] p5.js: FAILED to load from CDN')"
+  ></script>
   <script>
+console.log('[clock] p5 available after script tag:', typeof p5);
 let lastSec = -1;
 let secJitterT = -9999;
 
@@ -27,6 +33,7 @@ function setup() {
   createCanvas(windowWidth, windowHeight);
   pixelDensity(displayDensity());
   strokeCap(SQUARE);
+  console.log('[clock] setup(): canvas', width, 'x', height, 'density', pixelDensity());
 }
 
 function windowResized() {
@@ -34,6 +41,7 @@ function windowResized() {
 }
 
 function draw() {
+  if (frameCount === 1) console.log('[clock] draw(): first frame running');
   // transparent — the Flutter dark background shows through, matching background(0)
   clear();
 

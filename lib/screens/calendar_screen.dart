@@ -18,6 +18,9 @@ class _CalendarScreenState extends State<CalendarScreen>
   @override
   bool get wantKeepAlive => true;
 
+  // ignore: unused_field — kept so we can call _clockCtrl?.reload() if needed
+  InAppWebViewController? _clockCtrl;
+
   static const _weekdays = [
     'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN',
   ];
@@ -53,15 +56,25 @@ class _CalendarScreenState extends State<CalendarScreen>
                     width: 280,
                     height: 280,
                     child: InAppWebView(
-                      initialFile: 'assets/clock.html',
                       initialSettings: InAppWebViewSettings(
                         transparentBackground: true,
                         disableVerticalScroll: true,
                         disableHorizontalScroll: true,
-                        // Allow local HTML to load CDN scripts (Android)
                         allowFileAccessFromFileURLs: true,
                         allowUniversalAccessFromFileURLs: true,
                       ),
+                      onWebViewCreated: (ctrl) {
+                        _clockCtrl = ctrl;
+                        ctrl.loadFile(
+                            assetFilePath: 'assets/clock.html');
+                        print('[clock] WebView created, loadFile called');
+                      },
+                      onLoadStop: (ctrl, url) =>
+                          print('[clock] onLoadStop: $url'),
+                      onReceivedError: (ctrl, req, err) =>
+                          print('[clock] onReceivedError: ${err.description} (${req.url})'),
+                      onConsoleMessage: (ctrl, msg) =>
+                          print('[clock] console: ${msg.message}'),
                     ),
                   ),
                 ),

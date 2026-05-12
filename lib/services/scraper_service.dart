@@ -153,7 +153,9 @@ class ScraperService extends ChangeNotifier {
       final loc = (map['location'] as String?)?.trim();
       final slug = (map['spaceSlug'] as String?)?.trim();
       final spaceUrl = (slug != null && slug.isNotEmpty)
-          ? 'https://spaces.kisd.de/$slug/'
+          ? (slug.startsWith('http')
+              ? slug
+              : 'https://spaces.kisd.de/$slug/')
           : null;
       return (location: loc?.isEmpty == true ? null : loc, spaceUrl: spaceUrl);
     } catch (e) {

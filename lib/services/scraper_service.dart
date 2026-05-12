@@ -108,12 +108,23 @@ class ScraperService extends ChangeNotifier {
         json.decode(raw!.value.toString()) as List<dynamic>;
     print('[scraper] found ${cards.length} course cards');
 
-    // Log raw HTML of first card so we can identify the actual meeting-time DOM
+    // Debug: log first card's text content + all elements containing HH:MM
     if (cards.isNotEmpty) {
       final first = cards.first as Map<String, dynamic>;
-      final html = first['debugHtml'];
-      if (html != null) {
-        print('[scraper] === FIRST CARD HTML (≤4000 chars) ===\n$html\n=== END ===');
+
+      final text = first['debugText'];
+      if (text != null) {
+        print('[scraper] === FIRST CARD TEXT ===\n$text\n===');
+      }
+
+      final timeEls = first['debugTimeEls'];
+      if (timeEls is List) {
+        print('[scraper] === ELEMENTS WITH TIME PATTERN (${timeEls.length}) ===');
+        for (final el in timeEls) {
+          final m = el as Map<String, dynamic>;
+          print('  <${m['tag']}> cls="${m['cls']}" → "${m['text']}"');
+        }
+        print('[scraper] ===');
       }
     }
 
@@ -257,9 +268,30 @@ class ScraperService extends ChangeNotifier {
         el.getAttribute('datetime') || cleanText(el)
       );
 
-      // Raw HTML of the first card — logged in Dart to reveal actual DOM structure
       const result = { title, description, meetingTexts, location, dateTexts, spacesUrl, detailUrl, links };
-      if (idx === 0) result.debugHtml = card.innerHTML.substring(0, 4000);
+
+      // First card only: log text + every element containing a time pattern
+      if (idx === 0) {
+        // Condensed plain text of the whole card (usually << 2000 chars)
+        result.debugText = (card.innerText || card.textContent || '')
+          .replace(/\s+/g, ' ').trim().substring(0, 3000);
+
+        // Every element whose text matches HH:MM — tells us exactly which
+        // element type / class holds the schedule data
+        const timeEls = [];
+        Array.from(card.querySelectorAll('*')).forEach(function(el) {
+          const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+          if (timeRe.test(t) && t.length > 2 && t.length < 200) {
+            timeEls.push({
+              tag: el.tagName,
+              cls: el.className,
+              text: t.substring(0, 120)
+            });
+          }
+        });
+        result.debugTimeEls = timeEls.slice(0, 30);
+      }
+
       return result;
     });
 

@@ -298,13 +298,14 @@ class ScraperService extends ChangeNotifier {
       const pageText = (doc.body ? doc.body.innerText || doc.body.textContent : '')
         .replace(/\s+/g, ' ').trim().substring(0, 3000);
 
-      // All elements containing "location" or "raum" in class or text
+      // All elements whose class or text mentions location/raum/room
+      // Use getAttribute('class') — className can be SVGAnimatedString on SVG nodes
       const locEls = [];
       doc.querySelectorAll('*').forEach(el => {
-        const cls = el.className || '';
+        const cls = el.getAttribute('class') || '';
         const txt = (el.textContent || '').replace(/\s+/g, ' ').trim();
         if ((cls.toLowerCase().includes('location') || cls.toLowerCase().includes('raum') ||
-             /meeting.?location|raum|room/i.test(txt)) && txt.length < 200) {
+             /meeting.?location|raum|room/i.test(txt)) && txt.length > 0 && txt.length < 200) {
           locEls.push({ tag: el.tagName, cls: cls.substring(0, 80), txt: txt.substring(0, 100) });
         }
       });

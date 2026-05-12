@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
@@ -24,9 +26,19 @@ class _ListScreenState extends State<ListScreen>
   bool _loading = false;
   String? _error;
 
+  DateTime _now = DateTime.now();
+  late final Timer _clock;
+
+  static const _weekdays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+  static const _months   = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+                             'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
   @override
   void initState() {
     super.initState();
+    _clock = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _now = DateTime.now());
+    });
     _init();
   }
 
@@ -60,6 +72,12 @@ class _ListScreenState extends State<ListScreen>
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _loading = false; });
     }
+  }
+
+  @override
+  void dispose() {
+    _clock.cancel();
+    super.dispose();
   }
 
   void _openEdit(CourseShell shell) {
@@ -98,6 +116,34 @@ class _ListScreenState extends State<ListScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // ── Date left · Time right ──────────────────────────────
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      RichText(
+                        text: TextSpan(
+                          style: AppTextStyle.cardTitle.copyWith(fontSize: 32),
+                          children: [
+                            TextSpan(
+                              text: _weekdays[_now.weekday - 1],
+                              style: const TextStyle(color: AppColors.accent),
+                            ),
+                            TextSpan(
+                              text: ', ${_months[_now.month - 1]} ${_now.day}',
+                            ),
+                          ],
+                        ),
+                      ),
+                      Text(
+                        '${_now.hour.toString().padLeft(2, '0')}:'
+                        '${_now.minute.toString().padLeft(2, '0')}',
+                        style: AppTextStyle.cardTitle.copyWith(fontSize: 32),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
                   Text('My\nCourses', style: AppTextStyle.pageTitle),
                   const SizedBox(height: 10),
                   Text(

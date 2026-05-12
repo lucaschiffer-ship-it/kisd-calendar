@@ -1,6 +1,10 @@
+import 'dart:collection';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+
+import '../services/spaces_dark_mode.dart';
 
 class BrowserSheet extends StatefulWidget {
   const BrowserSheet({
@@ -113,6 +117,9 @@ class BrowserSheetState extends State<BrowserSheet> {
             Expanded(
               child: InAppWebView(
                 initialUrlRequest: URLRequest(url: _homeUri),
+                initialUserScripts: UnmodifiableListView([
+                  spacesDarkModeScript,
+                ]),
                 initialSettings: InAppWebViewSettings(
                   javaScriptEnabled: true,
                   domStorageEnabled: true,

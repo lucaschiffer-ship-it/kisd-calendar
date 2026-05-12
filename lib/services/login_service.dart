@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'spaces_dark_mode.dart';
+
 class LoginService extends ChangeNotifier {
   static const _keyUser = 'kisd_username';
   static const _keyPass = 'kisd_password';
@@ -86,6 +88,7 @@ class LoginService extends ChangeNotifier {
         sharedCookiesEnabled: true,
       ),
       initialUserScripts: UnmodifiableListView([
+        spacesDarkModeScript,
         UserScript(
           source: '''
             const _orig = HTMLFormElement.prototype.submit;
@@ -389,6 +392,7 @@ class LoginService extends ChangeNotifier {
           'https://spaces.kisd.de/course-selection/?semester=2026-1&mycourses=on',
         ),
       ),
+      initialUserScripts: UnmodifiableListView([spacesDarkModeScript]),
       initialSettings: InAppWebViewSettings(
         javaScriptEnabled: true,
         sharedCookiesEnabled: true,

@@ -198,7 +198,8 @@ class _CourseShellCardState extends State<CourseShellCard>
               // ── 2. Meeting times ─────────────────────────────────────────
               if (shell.meetingTimes.isNotEmpty) ...[
                 const SizedBox(height: 10),
-                Text(_allMeetingsText, style: AppTextStyle.body),
+                Text(_allMeetingsText,
+                    style: AppTextStyle.body.copyWith(color: AppColors.accent)),
               ],
 
               // ── 3. Location ──────────────────────────────────────────────

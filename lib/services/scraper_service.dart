@@ -143,7 +143,9 @@ class ScraperService extends ChangeNotifier {
       if (val == null || val.toString() == 'null' || val.toString().isEmpty) {
         return null;
       }
-      return val.toString().trim();
+      final loc = val.toString().trim();
+      print('[scraper] detail location for $detailUrl → "$loc"');
+      return loc;
     } catch (e) {
       print('[scraper] detail fetch failed for $detailUrl: $e');
       return null;
@@ -228,16 +230,26 @@ class ScraperService extends ChangeNotifier {
         }
       }
 
-      // Location: look for "Meeting Location" label
+      // Location: try .meeting_location class first (mirrors .meeting_times),
+      // then fall back to label-text matching.
       let location = '';
-      card.querySelectorAll('dt, th, strong, label, .field-label, .meta-label').forEach(el => {
-        if (/meeting.?location|raum|room|location/i.test(el.textContent)) {
-          const sib =
-            el.nextElementSibling ||
-            (el.parentElement && el.parentElement.nextElementSibling);
-          if (sib) location = cleanText(sib);
-        }
-      });
+      const locationContainer = card.querySelector('.meeting_location');
+      if (locationContainer) {
+        const contentEl = locationContainer.querySelector('.info-content') || locationContainer;
+        location = (contentEl.innerText || contentEl.textContent || '').replace(/\s+/g, ' ').trim();
+        // Strip leading label text like "Meeting Location"
+        location = location.replace(/^meeting\s*location\s*/i, '').trim();
+      }
+      if (!location) {
+        card.querySelectorAll('dt, th, strong, label, .field-label, .meta-label').forEach(el => {
+          if (/meeting.?location|raum|room/i.test(el.textContent)) {
+            const sib =
+              el.nextElementSibling ||
+              (el.parentElement && el.parentElement.nextElementSibling);
+            if (sib) location = cleanText(sib);
+          }
+        });
+      }
 
       // Dates: <time datetime="..."> or elements with date-like classes
       const dateEls = Array.from(card.querySelectorAll(
@@ -260,6 +272,17 @@ class ScraperService extends ChangeNotifier {
       const resp = await fetch(url, { credentials: 'include' });
       const html  = await resp.text();
       const doc   = new DOMParser().parseFromString(html, 'text/html');
+
+      // Try .meeting_location class (same convention as .meeting_times)
+      const locContainer = doc.querySelector('.meeting_location');
+      if (locContainer) {
+        const contentEl = locContainer.querySelector('.info-content') || locContainer;
+        const raw = (contentEl.innerText || contentEl.textContent || '')
+          .replace(/^meeting\s*location\s*/i, '').replace(/\s+/g, ' ').trim();
+        if (raw) return raw;
+      }
+
+      // Fallback: label-text scan
       let location = null;
       doc.querySelectorAll('dt, th, strong, label, .field-label').forEach(el => {
         if (/meeting.?location|raum|room/i.test(el.textContent)) {

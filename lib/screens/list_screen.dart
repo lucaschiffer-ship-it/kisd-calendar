@@ -30,12 +30,11 @@ class _ListScreenState extends State<ListScreen>
   }
 
   Future<void> _init() async {
-    // Serve cached data immediately, then silently refresh if stale
     try {
       final cached = await scraperService.loadCached();
       if (cached.isNotEmpty) {
         if (mounted) setState(() => _shells = cached);
-        return; // pull-to-refresh triggers a fresh scrape
+        return;
       }
     } catch (e) {
       print('[list] cache load: $e');
@@ -45,10 +44,7 @@ class _ListScreenState extends State<ListScreen>
 
   Future<void> _scrape() async {
     if (!mounted) return;
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    setState(() { _loading = true; _error = null; });
     try {
       final shells = await scraperService.scrape();
       if (mounted) setState(() { _shells = shells; _loading = false; });
@@ -86,11 +82,10 @@ class _ListScreenState extends State<ListScreen>
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
-          // ── Page header ─────────────────────────────────────────────────
+          // ── Header — same padding as course_shell_test_screen ────────────
           SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(
-                20, AppSpacing.screenTopPad, 20, 24),
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 32),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -107,7 +102,7 @@ class _ListScreenState extends State<ListScreen>
             ),
           ),
 
-          // ── Loading ──────────────────────────────────────────────────────
+          // ── Loading (first fetch, no cached data yet) ────────────────────
           if (_loading && _shells.isEmpty)
             SliverFillRemaining(
               child: Center(
@@ -127,18 +122,15 @@ class _ListScreenState extends State<ListScreen>
                       Text('Could not load courses',
                           style: AppTextStyle.headline),
                       const SizedBox(height: 10),
-                      Text(
-                        _error!,
-                        style: AppTextStyle.body,
-                        textAlign: TextAlign.center,
-                        maxLines: 4,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      Text(_error!,
+                          style: AppTextStyle.body,
+                          textAlign: TextAlign.center,
+                          maxLines: 4,
+                          overflow: TextOverflow.ellipsis),
                       const SizedBox(height: 28),
                       FilledButton(
-                        onPressed: _scrape,
-                        child: const Text('Retry'),
-                      ),
+                          onPressed: _scrape,
+                          child: const Text('Retry')),
                     ],
                   ),
                 ),
@@ -157,14 +149,12 @@ class _ListScreenState extends State<ListScreen>
               ),
             )
 
-          // ── Course cards ─────────────────────────────────────────────────
+          // ── Cards — identical layout to course_shell_test_screen ─────────
           else
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(
-                AppSpacing.screenPadding,
-                0,
-                AppSpacing.screenPadding,
-                40,
+                AppSpacing.screenPadding, 0,
+                AppSpacing.screenPadding, 40,
               ),
               sliver: SliverList.separated(
                 itemCount: _shells.length,

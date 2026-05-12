@@ -107,6 +107,9 @@ class _CourseShellCardState extends State<CourseShellCard>
 
   void _showContextMenu(BuildContext context, Offset tapPosition) {
     final shell = widget.shell;
+    // Capture the card's context before the dialog opens so _showInfoSheet
+    // can use it after the dialog is popped.
+    final cardContext = context;
     showGeneralDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -117,6 +120,10 @@ class _CourseShellCardState extends State<CourseShellCard>
         shell: shell,
         tapPosition: tapPosition,
         anim: anim,
+        onInfo: () {
+          Navigator.of(ctx).pop();
+          _showInfoSheet(cardContext);
+        },
         onEdit: () {
           Navigator.of(ctx).pop();
           widget.onEdit();
@@ -125,6 +132,24 @@ class _CourseShellCardState extends State<CourseShellCard>
           Navigator.of(ctx).pop();
           widget.onDelete();
         },
+      ),
+    );
+  }
+
+  void _showInfoSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius:
+            BorderRadius.vertical(top: Radius.circular(AppSpacing.cardRadius)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          child: _InfoSheet(shell: widget.shell),
+        ),
       ),
     );
   }
@@ -274,6 +299,7 @@ class _GlassMenuPage extends StatelessWidget {
     required this.shell,
     required this.tapPosition,
     required this.anim,
+    required this.onInfo,
     required this.onEdit,
     required this.onDelete,
   });
@@ -281,6 +307,7 @@ class _GlassMenuPage extends StatelessWidget {
   final CourseShell shell;
   final Offset tapPosition;
   final Animation<double> anim;
+  final VoidCallback onInfo;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
@@ -289,9 +316,9 @@ class _GlassMenuPage extends StatelessWidget {
     final screen = MediaQuery.of(context).size;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // Estimate height: items + 0.5-px dividers + 8 px top + 8 px bottom pad
+    // Info + links + edit + (delete if manual)
     final itemCount =
-        shell.links.length + 1 + (shell.isManual ? 1 : 0);
+        1 + shell.links.length + 1 + (shell.isManual ? 1 : 0);
     final estimatedH = itemCount * _kItemHeight + 16.0;
 
     // Vertical: flip above the tap if it would overflow the bottom
@@ -343,6 +370,7 @@ class _GlassMenuPage extends StatelessWidget {
                 child: _GlassMenu(
                   shell: shell,
                   isDark: isDark,
+                  onInfo: onInfo,
                   onEdit: onEdit,
                   onDelete: onDelete,
                 ),
@@ -361,12 +389,14 @@ class _GlassMenu extends StatelessWidget {
   const _GlassMenu({
     required this.shell,
     required this.isDark,
+    required this.onInfo,
     required this.onEdit,
     required this.onDelete,
   });
 
   final CourseShell shell;
   final bool isDark;
+  final VoidCallback onInfo;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
@@ -398,6 +428,14 @@ class _GlassMenu extends StatelessWidget {
       }
       rows.add(item);
     }
+
+    // Info — always first
+    addItem(_GlassMenuItem(
+      icon: CupertinoIcons.info_circle,
+      label: 'Info',
+      cs: cs,
+      onTap: onInfo,
+    ));
 
     for (final link in shell.links) {
       addItem(_GlassMenuItem(
@@ -519,4 +557,116 @@ class _GlassDivider extends StatelessWidget {
   @override
   Widget build(BuildContext context) =>
       Container(height: 0.5, color: color);
+}
+
+// ─── Info sheet ───────────────────────────────────────────────────────────────
+
+class _InfoSheet extends StatelessWidget {
+  const _InfoSheet({required this.shell});
+  final CourseShell shell;
+
+  static String _fmtDate(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}.'
+      '${d.month.toString().padLeft(2, '0')}.'
+      '${d.year}';
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Handle bar
+          Center(
+            child: Container(
+              margin: const EdgeInsets.symmetric(vertical: 14),
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.textTertiary,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+
+          // Title
+          Text(shell.title, style: AppTextStyle.headline),
+
+          // Description
+          if (shell.description.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Text(shell.description, style: AppTextStyle.body),
+          ],
+
+          // Schedule
+          if (shell.meetingTimes.isNotEmpty) ...[
+            const SizedBox(height: 24),
+            Text('SCHEDULE', style: AppTextStyle.label),
+            const SizedBox(height: 8),
+            ...shell.meetingTimes.map((m) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '${m.weekday.label}  '
+                    '${CourseShellCard.fmtTime(m.startTime)} – '
+                    '${CourseShellCard.fmtTime(m.endTime)}',
+                    style: AppTextStyle.body,
+                  ),
+                )),
+          ],
+
+          // Location
+          if (shell.location != null) ...[
+            const SizedBox(height: 24),
+            Text('LOCATION', style: AppTextStyle.label),
+            const SizedBox(height: 8),
+            Text(shell.location!, style: AppTextStyle.body),
+          ],
+
+          // Period
+          const SizedBox(height: 24),
+          Text('PERIOD', style: AppTextStyle.label),
+          const SizedBox(height: 8),
+          Text(
+            '${_fmtDate(shell.startDate)} – ${_fmtDate(shell.endDate)}',
+            style: AppTextStyle.body,
+          ),
+
+          // Links
+          if (shell.links.isNotEmpty) ...[
+            const SizedBox(height: 24),
+            Text('LINKS', style: AppTextStyle.label),
+            const SizedBox(height: 8),
+            ...shell.links.map((l) => GestureDetector(
+                  onTap: () {
+                    Navigator.pop(context);
+                    SpacesBrowser.open(l.url);
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(
+                      children: [
+                        Icon(
+                          l.url.contains('spaces.kisd.de')
+                              ? CupertinoIcons.rectangle_stack
+                              : CupertinoIcons.globe,
+                          size: 14,
+                          color: AppColors.accent,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          l.label,
+                          style: AppTextStyle.body
+                              .copyWith(color: AppColors.accent),
+                        ),
+                      ],
+                    ),
+                  ),
+                )),
+          ],
+        ],
+      ),
+    );
+  }
 }

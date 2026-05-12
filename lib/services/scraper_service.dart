@@ -141,32 +141,11 @@ class ScraperService extends ChangeNotifier {
       ).timeout(const Duration(seconds: 15));
       final val = result?.value;
       if (val == null || val.toString() == 'null' || val.toString().isEmpty) {
-        print('[scraper] detail fetch returned null for $detailUrl');
         return null;
       }
-
-      // Diagnostic: parse and print what the detail page contains
-      try {
-        final map = json.decode(val.toString()) as Map<String, dynamic>;
-        if (map.containsKey('error')) {
-          print('[scraper] detail fetch JS error: ${map['error']}');
-          return null;
-        }
-        print('[scraper] === DETAIL PAGE TEXT ($detailUrl) ===\n${map['pageText']}\n===');
-        final locEls = map['locEls'] as List<dynamic>;
-        if (locEls.isNotEmpty) {
-          print('[scraper] === LOCATION ELEMENTS (${locEls.length}) ===');
-          for (final el in locEls) {
-            final m = el as Map<String, dynamic>;
-            print('  <${m['tag']}> cls="${m['cls']}" → "${m['txt']}"');
-          }
-          print('[scraper] ===');
-        } else {
-          print('[scraper] no location/raum elements found on detail page');
-        }
-      } catch (_) {}
-
-      return null; // diagnostic run — real extraction added after we see the structure
+      final loc = val.toString().trim();
+      print('[scraper] location for ${Uri.parse(detailUrl).queryParameters['course'] ?? detailUrl} → "$loc"');
+      return loc;
     } catch (e) {
       print('[scraper] detail fetch failed for $detailUrl: $e');
       return null;
@@ -251,26 +230,18 @@ class ScraperService extends ChangeNotifier {
         }
       }
 
-      // Location: try .meeting_location class first (mirrors .meeting_times),
-      // then fall back to label-text matching.
+      // Location: .info-label "Meeting Location" + sibling .info-content (confirmed on detail page)
       let location = '';
-      const locationContainer = card.querySelector('.meeting_location');
-      if (locationContainer) {
-        const contentEl = locationContainer.querySelector('.info-content') || locationContainer;
-        location = (contentEl.innerText || contentEl.textContent || '').replace(/\s+/g, ' ').trim();
-        // Strip leading label text like "Meeting Location"
-        location = location.replace(/^meeting\s*location\s*/i, '').trim();
-      }
-      if (!location) {
-        card.querySelectorAll('dt, th, strong, label, .field-label, .meta-label').forEach(el => {
-          if (/meeting.?location|raum|room/i.test(el.textContent)) {
-            const sib =
-              el.nextElementSibling ||
-              (el.parentElement && el.parentElement.nextElementSibling);
-            if (sib) location = cleanText(sib);
+      card.querySelectorAll('.info-label').forEach(function(label) {
+        if (!location && /meeting.?location/i.test(label.textContent)) {
+          const sib = label.nextElementSibling;
+          if (sib) location = (sib.textContent || '').replace(/\s+/g, ' ').trim();
+          if (!location && label.parentElement) {
+            const content = label.parentElement.querySelector('.info-content');
+            if (content) location = (content.textContent || '').replace(/\s+/g, ' ').trim();
           }
-        });
-      }
+        }
+      });
 
       // Dates: <time datetime="..."> or elements with date-like classes
       const dateEls = Array.from(card.querySelectorAll(
@@ -294,25 +265,28 @@ class ScraperService extends ChangeNotifier {
       const html  = await resp.text();
       const doc   = new DOMParser().parseFromString(html, 'text/html');
 
-      // Debug: condensed text of the entire detail page (first 3000 chars)
-      const pageText = (doc.body ? doc.body.innerText || doc.body.textContent : '')
-        .replace(/\s+/g, ' ').trim().substring(0, 3000);
-
-      // All elements whose class or text mentions location/raum/room
-      // Use getAttribute('class') — className can be SVGAnimatedString on SVG nodes
-      const locEls = [];
-      doc.querySelectorAll('*').forEach(el => {
-        const cls = el.getAttribute('class') || '';
-        const txt = (el.textContent || '').replace(/\s+/g, ' ').trim();
-        if ((cls.toLowerCase().includes('location') || cls.toLowerCase().includes('raum') ||
-             /meeting.?location|raum|room/i.test(txt)) && txt.length > 0 && txt.length < 200) {
-          locEls.push({ tag: el.tagName, cls: cls.substring(0, 80), txt: txt.substring(0, 100) });
+      // DOM confirmed: .info-label holds the field name, sibling/.info-content holds the value
+      // e.g. <div class="info-label">Meeting Location</div>
+      //      <div class="info-content">408 (C-Seminar)</div>
+      let location = null;
+      doc.querySelectorAll('.info-label').forEach(function(label) {
+        if (!location && /meeting.?location/i.test(label.textContent)) {
+          // Try next element sibling first
+          const sib = label.nextElementSibling;
+          if (sib) {
+            const val = sib.textContent.replace(/\s+/g, ' ').trim();
+            if (val) location = val;
+          }
+          // Fallback: look for .info-content anywhere in the parent
+          if (!location && label.parentElement) {
+            const content = label.parentElement.querySelector('.info-content');
+            if (content) location = content.textContent.replace(/\s+/g, ' ').trim();
+          }
         }
       });
-
-      return JSON.stringify({ pageText, locEls: locEls.slice(0, 20) });
+      return location;
     } catch (e) {
-      return JSON.stringify({ error: e.toString() });
+      return null;
     }
   """;
 

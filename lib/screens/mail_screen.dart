@@ -146,29 +146,21 @@ class _EmailCard extends StatelessWidget {
     final avatarColor = _senderColor(senderName);
     final initial = senderName.isNotEmpty ? senderName[0].toUpperCase() : '?';
 
-    // Unread cards get a subtle accent tint on the background
-    final cardColor = isUnread
-        ? AppColors.surface.withValues(alpha: 1.0) // same surface but border highlights it
-        : AppColors.surface;
-    final borderColor = isUnread ? AppColors.accent.withValues(alpha: 0.35) : AppColors.cardBorder;
-
     return AppCard(
-      color: cardColor,
+      borderColor: isUnread
+          ? AppColors.accent.withValues(alpha: 0.45)
+          : null,
+      borderWidth: isUnread ? 1.0 : 0.5,
       padding: EdgeInsets.zero,
-      child: Container(
-        decoration: BoxDecoration(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          highlightColor: AppColors.accent.withValues(alpha: 0.06),
+          splashColor: AppColors.accent.withValues(alpha: 0.04),
           borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
-          border: Border.all(color: borderColor, width: isUnread ? 1.0 : 0.5),
-        ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: onTap,
-            highlightColor: AppColors.accent.withValues(alpha: 0.06),
-            splashColor: AppColors.accent.withValues(alpha: 0.04),
-            borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
-            child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.cardPadding),
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.cardPadding),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -255,7 +247,6 @@ class _EmailCard extends StatelessWidget {
             ),
           ),
         ),
-      ),
     );
   }
 
@@ -431,7 +422,7 @@ class _EmptyState extends StatelessWidget {
           Text('No messages',
               style: AppTextStyle.headline.copyWith(fontSize: 17)),
           const SizedBox(height: 6),
-          const Text('Your inbox is empty.', style: AppTextStyle.body),
+          Text('Your inbox is empty.', style: AppTextStyle.body),
         ],
       ),
     );

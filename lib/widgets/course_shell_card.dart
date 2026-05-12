@@ -63,9 +63,14 @@ class _CourseShellCardState extends State<CourseShellCard> {
 
   String get _timesText => widget.shell.meetingTimes
       .map((m) =>
-          '${m.weekday.label} ${CourseShellCard.fmtTime(m.startTime)}'
-          '–${CourseShellCard.fmtTime(m.endTime)}')
-      .join(', ');
+          '${CourseShellCard.fmtTime(m.startTime)} – '
+          '${CourseShellCard.fmtTime(m.endTime)}')
+      .join('  ·  ');
+
+  // "MON · WED" — used as ALL-CAPS day strip above the title
+  String get _weekdayLabel => widget.shell.meetingTimes
+      .map((m) => m.weekday.label.toUpperCase())
+      .join(' · ');
 
   void _openPrimary() {
     if (widget.shell.links.isEmpty) return;
@@ -104,25 +109,89 @@ class _CourseShellCardState extends State<CourseShellCard> {
       onTap: _openPrimary,
       onLongPressStart: (d) => _showContextMenu(context, d.globalPosition),
       child: AppCard(
-        child: Row(
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Text content ────────────────────────────────────────────────
-            Expanded(
+            // ── Weekday strip — ALL-CAPS accent label ───────────────────────
+            if (shell.meetingTimes.isNotEmpty) ...[
+              Text(_weekdayLabel, style: AppTextStyle.accentLabel),
+              const SizedBox(height: 14),
+            ],
+
+            // ── Title row: gradient bar | title text   heart ────────────────
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Gradient vertical accent bar matching title height
+                Expanded(
+                  child: IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Container(
+                          width: 3,
+                          margin: const EdgeInsets.only(right: 13),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                AppColors.accent,
+                                AppColors.accent.withValues(alpha: 0.18),
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            shell.title,
+                            style: AppTextStyle.headline,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                // Heart toggle — larger and more prominent
+                GestureDetector(
+                  onTap: _toggleLike,
+                  behavior: HitTestBehavior.opaque,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 12, top: 1),
+                    child: Icon(
+                      _liked
+                          ? CupertinoIcons.heart_fill
+                          : CupertinoIcons.heart,
+                      size: 22,
+                      color: _liked
+                          ? AppColors.heartActive
+                          : AppColors.textTertiary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            // ── Body details indented to align with title text ───────────────
+            const SizedBox(height: 10),
+            Padding(
+              padding: const EdgeInsets.only(left: 16), // 3 bar + 13 margin
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(shell.title, style: AppTextStyle.headline),
-                  const SizedBox(height: 5),
                   Text(_timesText, style: AppTextStyle.body),
                   if (shell.location != null) ...[
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 5),
                     Row(
                       children: [
                         const Icon(CupertinoIcons.location,
                             size: 11, color: AppColors.textTertiary),
-                        const SizedBox(width: 3),
-                        Text(shell.location!, style: AppTextStyle.label),
+                        const SizedBox(width: 4),
+                        Text(
+                          shell.location!.toUpperCase(),
+                          style: AppTextStyle.label,
+                        ),
                       ],
                     ),
                   ],
@@ -130,34 +199,18 @@ class _CourseShellCardState extends State<CourseShellCard> {
               ),
             ),
 
-            // ── Right column: heart + link indicator ────────────────────────
-            const SizedBox(width: 12),
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                GestureDetector(
-                  onTap: _toggleLike,
-                  behavior: HitTestBehavior.opaque,
-                  child: Padding(
-                    padding: const EdgeInsets.all(2),
-                    child: Icon(
-                      _liked
-                          ? CupertinoIcons.heart_fill
-                          : CupertinoIcons.heart,
-                      size: 18,
-                      color: _liked
-                          ? AppColors.heartActive
-                          : AppColors.textTertiary,
-                    ),
-                  ),
+            // ── Multi-link indicator bottom-right ────────────────────────────
+            if (shell.links.length > 1) ...[
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Icon(
+                  CupertinoIcons.link,
+                  size: 12,
+                  color: AppColors.accent.withValues(alpha: 0.55),
                 ),
-                if (shell.links.length > 1) ...[
-                  const SizedBox(height: 6),
-                  const Icon(CupertinoIcons.link,
-                      size: 13, color: AppColors.accent),
-                ],
-              ],
-            ),
+              ),
+            ],
           ],
         ),
       ),

@@ -108,25 +108,6 @@ class ScraperService extends ChangeNotifier {
         json.decode(raw!.value.toString()) as List<dynamic>;
     print('[scraper] found ${cards.length} course cards');
 
-    // Debug: log first card's text content + all elements containing HH:MM
-    if (cards.isNotEmpty) {
-      final first = cards.first as Map<String, dynamic>;
-
-      final text = first['debugText'];
-      if (text != null) {
-        print('[scraper] === FIRST CARD TEXT ===\n$text\n===');
-      }
-
-      final timeEls = first['debugTimeEls'];
-      if (timeEls is List) {
-        print('[scraper] === ELEMENTS WITH TIME PATTERN (${timeEls.length}) ===');
-        for (final el in timeEls) {
-          final m = el as Map<String, dynamic>;
-          print('  <${m['tag']}> cls="${m['cls']}" → "${m['text']}"');
-        }
-        print('[scraper] ===');
-      }
-    }
 
     final shells = <CourseShell>[];
     for (final card in cards) {
@@ -231,23 +212,21 @@ class ScraperService extends ChangeNotifier {
       );
       const detailUrl = detailAttr || (detailLink ? detailLink.url : '') || '';
 
-      // ── Meeting times: walk every element in the card ─────────────────────
-      // Intentionally broad — we don't know the exact class names used by Spaces.
-      // For each element: keep it only if it's short (not a container aggregation),
-      // contains both a day name and a time, and is not a duplicate of a child.
+      // ── Meeting times ──────────────────────────────────────────────────────
+      // .meeting_times > .info-content contains concatenated entries like
+      // "Tue 13:00 — 16:00Thu 13:00 — 16:00" (em-dash, no entry separator).
       const meetingTexts = [];
-      const seenTexts = new Set();
-      Array.from(card.querySelectorAll('*')).forEach(function(el) {
-        const t = cleanText(el);
-        if (t.length < 5 || t.length > 120 || seenTexts.has(t)) return;
-        if (!dayTimeRe.test(t) || !timeRe.test(t)) return;
-        // Skip if this text is just the concatenation of its children
-        const isChildDupe = Array.from(el.children).some(c => cleanText(c) === t);
-        if (!isChildDupe) {
-          seenTexts.add(t);
-          meetingTexts.push(t);
+      const meetingContainer = card.querySelector('.meeting_times');
+      if (meetingContainer) {
+        const contentEl = meetingContainer.querySelector('.info-content') || meetingContainer;
+        const raw = (contentEl.innerText || contentEl.textContent || '').replace(/\s+/g, ' ').trim();
+        // Extract each "Day HH:MM [—–-] HH:MM" entry
+        const entryRe = /(Mon|Tue|Wed|Thu|Fri|Sat|Sun|Mo|Di|Mi|Do|Fr|Sa|So)\s+\d{1,2}:\d{2}\s*[—–\-]\s*\d{1,2}:\d{2}/gi;
+        let match;
+        while ((match = entryRe.exec(raw)) !== null) {
+          meetingTexts.push(match[0].trim());
         }
-      });
+      }
 
       // Location: look for "Meeting Location" label
       let location = '';
@@ -268,31 +247,7 @@ class ScraperService extends ChangeNotifier {
         el.getAttribute('datetime') || cleanText(el)
       );
 
-      const result = { title, description, meetingTexts, location, dateTexts, spacesUrl, detailUrl, links };
-
-      // First card only: log text + every element containing a time pattern
-      if (idx === 0) {
-        // Condensed plain text of the whole card (usually << 2000 chars)
-        result.debugText = (card.innerText || card.textContent || '')
-          .replace(/\s+/g, ' ').trim().substring(0, 3000);
-
-        // Every element whose text matches HH:MM — tells us exactly which
-        // element type / class holds the schedule data
-        const timeEls = [];
-        Array.from(card.querySelectorAll('*')).forEach(function(el) {
-          const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
-          if (timeRe.test(t) && t.length > 2 && t.length < 200) {
-            timeEls.push({
-              tag: el.tagName,
-              cls: el.className,
-              text: t.substring(0, 120)
-            });
-          }
-        });
-        result.debugTimeEls = timeEls.slice(0, 30);
-      }
-
-      return result;
+      return { title, description, meetingTexts, location, dateTexts, spacesUrl, detailUrl, links };
     });
 
     return JSON.stringify(results);
@@ -358,9 +313,12 @@ class ScraperService extends ChangeNotifier {
       ));
     }
     if (detailUrl.isNotEmpty && detailUrl != spacesUrl) {
+      // When no separate course page was found, the ?course= URL IS the Spaces
+      // page for this course — label it accordingly so it appears as primary link.
+      final label = spacesUrl.isEmpty ? 'Spaces page' : 'Course selection';
       links.add(const CourseLink(url: '', label: '').copyWithValues(
         url: detailUrl,
-        label: 'Course selection',
+        label: label,
       ));
     }
 

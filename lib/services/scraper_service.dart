@@ -108,6 +108,15 @@ class ScraperService extends ChangeNotifier {
         json.decode(raw!.value.toString()) as List<dynamic>;
     print('[scraper] found ${cards.length} course cards');
 
+    // Log raw HTML of first card so we can identify the actual meeting-time DOM
+    if (cards.isNotEmpty) {
+      final first = cards.first as Map<String, dynamic>;
+      final html = first['debugHtml'];
+      if (html != null) {
+        print('[scraper] === FIRST CARD HTML (≤4000 chars) ===\n$html\n=== END ===');
+      }
+    }
+
     final shells = <CourseShell>[];
     for (final card in cards) {
       final map = card as Map<String, dynamic>;
@@ -171,7 +180,10 @@ class ScraperService extends ChangeNotifier {
       'article.card.course, article.course, .course-item'
     ));
 
-    const results = cards.map(function(card) {
+    const dayTimeRe = /monday|tuesday|wednesday|thursday|friday|saturday|sunday|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag|\bmo\b|\bdi\b|\bmi\b|\bdo\b|\bfr\b|\bsa\b|\bso\b/i;
+    const timeRe    = /\d{1,2}:\d{2}/;
+
+    const results = cards.map(function(card, idx) {
       // Title
       const titleEl = card.querySelector(
         'h1, h2, h3, h4, .entry-title, .course-title, .card-title, .title'
@@ -208,29 +220,23 @@ class ScraperService extends ChangeNotifier {
       );
       const detailUrl = detailAttr || (detailLink ? detailLink.url : '') || '';
 
-      // Meeting times: scan <li>, <td>, .schedule elements for day+time text
-      const dayTimeRe = /monday|tuesday|wednesday|thursday|friday|saturday|sunday|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag|\bmo\b|\bdi\b|\bmi\b|\bdo\b|\bfr\b|\bsa\b|\bso\b/i;
-      const timeRe    = /\d{1,2}:\d{2}/;
+      // ── Meeting times: walk every element in the card ─────────────────────
+      // Intentionally broad — we don't know the exact class names used by Spaces.
+      // For each element: keep it only if it's short (not a container aggregation),
+      // contains both a day name and a time, and is not a duplicate of a child.
       const meetingTexts = [];
-
-      card.querySelectorAll(
-        '.meeting-time, .schedule, .time-slot, tr, li, .meta-item'
-      ).forEach(el => {
+      const seenTexts = new Set();
+      Array.from(card.querySelectorAll('*')).forEach(function(el) {
         const t = cleanText(el);
-        if (dayTimeRe.test(t) && timeRe.test(t)) meetingTexts.push(t);
+        if (t.length < 5 || t.length > 120 || seenTexts.has(t)) return;
+        if (!dayTimeRe.test(t) || !timeRe.test(t)) return;
+        // Skip if this text is just the concatenation of its children
+        const isChildDupe = Array.from(el.children).some(c => cleanText(c) === t);
+        if (!isChildDupe) {
+          seenTexts.add(t);
+          meetingTexts.push(t);
+        }
       });
-
-      // Fallback: scan dt/th labels for "time" or "termin"
-      if (meetingTexts.length === 0) {
-        card.querySelectorAll('dt, th').forEach(label => {
-          if (/time|meeting|termin|zeit|woche|tag/i.test(label.textContent)) {
-            const sib = label.nextElementSibling;
-            if (sib && timeRe.test(sib.textContent)) {
-              meetingTexts.push(cleanText(sib));
-            }
-          }
-        });
-      }
 
       // Location: look for "Meeting Location" label
       let location = '';
@@ -251,7 +257,10 @@ class ScraperService extends ChangeNotifier {
         el.getAttribute('datetime') || cleanText(el)
       );
 
-      return { title, description, meetingTexts, location, dateTexts, spacesUrl, detailUrl, links };
+      // Raw HTML of the first card — logged in Dart to reveal actual DOM structure
+      const result = { title, description, meetingTexts, location, dateTexts, spacesUrl, detailUrl, links };
+      if (idx === 0) result.debugHtml = card.innerHTML.substring(0, 4000);
+      return result;
     });
 
     return JSON.stringify(results);
@@ -282,7 +291,11 @@ class ScraperService extends ChangeNotifier {
   // ─── Build CourseShell from extracted map ─────────────────────────────────
 
   CourseShell? _buildShell(Map<String, dynamic> map, String? location) {
-    final title = (map['title'] as String?)?.trim() ?? '';
+    final rawTitle = (map['title'] as String?)?.trim() ?? '';
+    // Strip bilingual suffix: "English | Deutsch" → "English"
+    final title = rawTitle.contains(' | ')
+        ? rawTitle.split(' | ').first.trim()
+        : rawTitle;
     if (title.isEmpty) return null;
 
     final meetingTexts = (map['meetingTexts'] as List<dynamic>?)

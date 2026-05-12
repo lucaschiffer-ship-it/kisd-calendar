@@ -171,7 +171,12 @@ class _CourseShellCardState extends State<CourseShellCard>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: Text(shell.title, style: AppTextStyle.cardTitle),
+                    child: Text(
+                      shell.title,
+                      style: AppTextStyle.cardTitle.copyWith(fontSize: 29),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                   GestureDetector(
                     onTap: _toggleLike,

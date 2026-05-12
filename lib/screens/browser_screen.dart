@@ -134,6 +134,9 @@ class BrowserSheetState extends State<BrowserSheet> {
                   print('[browser] loaded: $url');
                   await _updateNavState();
                   if (mounted) setState(() => _loading = false);
+                  await ctrl.evaluateJavascript(
+                    source: "document.documentElement.setAttribute('data-theme', 'dark');",
+                  );
                 },
                 onReceivedError: (ctrl, req, err) {
                   if (req.isForMainFrame == true) {

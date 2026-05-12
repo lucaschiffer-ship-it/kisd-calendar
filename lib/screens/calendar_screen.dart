@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../services/service_locator.dart';
+import '../theme/app_theme.dart';
 import 'course_shell_test_screen.dart';
 
 class CalendarScreen extends StatelessWidget {
@@ -9,8 +10,8 @@ class CalendarScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     return RefreshIndicator(
+      color: AppColors.accent,
       onRefresh: () => loginService.loginWithStoredCredentials(),
       child: LayoutBuilder(
         builder: (ctx, constraints) => SingleChildScrollView(
@@ -21,7 +22,12 @@ class CalendarScreen extends StatelessWidget {
               children: [
                 // Temporary dev entry — remove once shell list is wired in
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.screenPadding,
+                    AppSpacing.screenPadding,
+                    AppSpacing.screenPadding,
+                    0,
+                  ),
                   child: SizedBox(
                     width: double.infinity,
                     child: FilledButton.tonal(
@@ -31,24 +37,21 @@ class CalendarScreen extends StatelessWidget {
                           builder: (_) => const CourseShellTestScreen(),
                         ),
                       ),
-                      child: Row(
+                      child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(
-                            CupertinoIcons.rectangle_stack,
-                            size: 16,
-                            color: cs.onSecondaryContainer,
-                          ),
-                          const SizedBox(width: 8),
-                          const Text('Test Shells'),
+                          Icon(CupertinoIcons.rectangle_stack, size: 16),
+                          SizedBox(width: 8),
+                          Text('Test Shells'),
                         ],
                       ),
                     ),
                   ),
                 ),
-                const Expanded(
+                Expanded(
                   child: Center(
-                    child: Text('Calendar', style: TextStyle(fontSize: 20)),
+                    child: Text('Calendar',
+                        style: AppTextStyle.headline.copyWith(fontSize: 20)),
                   ),
                 ),
               ],

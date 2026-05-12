@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/course_shell.dart';
 import '../services/spaces_browser.dart';
+import '../theme/app_theme.dart';
 
 // ─── sizing constants used by both the page and the menu ─────────────────────
 const double _kMenuWidth = 240.0;
@@ -97,32 +98,12 @@ class _CourseShellCardState extends State<CourseShellCard> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final shell = widget.shell;
 
     return GestureDetector(
       onTap: _openPrimary,
       onLongPressStart: (d) => _showContextMenu(context, d.globalPosition),
-      child: Container(
-        decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF2C2C2E) : Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: isDark ? const Color(0xFF38383A) : const Color(0xFFE5E5EA),
-            width: 0.5,
-          ),
-          boxShadow: isDark
-              ? null
-              : [
-                  BoxShadow(
-                    color: Colors.black.withAlpha(15),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-        ),
-        padding: const EdgeInsets.all(14),
+      child: AppCard(
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -131,34 +112,17 @@ class _CourseShellCardState extends State<CourseShellCard> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    shell.title,
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: cs.onSurface,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _timesText,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: cs.onSurface.withAlpha(180),
-                    ),
-                  ),
+                  Text(shell.title, style: AppTextStyle.headline),
+                  const SizedBox(height: 5),
+                  Text(_timesText, style: AppTextStyle.body),
                   if (shell.location != null) ...[
-                    const SizedBox(height: 3),
+                    const SizedBox(height: 4),
                     Row(
                       children: [
-                        Icon(CupertinoIcons.location,
-                            size: 11, color: cs.onSurface.withAlpha(120)),
+                        const Icon(CupertinoIcons.location,
+                            size: 11, color: AppColors.textTertiary),
                         const SizedBox(width: 3),
-                        Text(
-                          shell.location!,
-                          style: TextStyle(
-                              fontSize: 12, color: cs.onSurface.withAlpha(140)),
-                        ),
+                        Text(shell.location!, style: AppTextStyle.label),
                       ],
                     ),
                   ],
@@ -167,7 +131,7 @@ class _CourseShellCardState extends State<CourseShellCard> {
             ),
 
             // ── Right column: heart + link indicator ────────────────────────
-            const SizedBox(width: 10),
+            const SizedBox(width: 12),
             Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -182,15 +146,15 @@ class _CourseShellCardState extends State<CourseShellCard> {
                           : CupertinoIcons.heart,
                       size: 18,
                       color: _liked
-                          ? Colors.red.shade400
-                          : cs.onSurface.withAlpha(90),
+                          ? AppColors.heartActive
+                          : AppColors.textTertiary,
                     ),
                   ),
                 ),
                 if (shell.links.length > 1) ...[
                   const SizedBox(height: 6),
-                  Icon(CupertinoIcons.link,
-                      size: 13, color: cs.primary.withAlpha(160)),
+                  const Icon(CupertinoIcons.link,
+                      size: 13, color: AppColors.accent),
                 ],
               ],
             ),

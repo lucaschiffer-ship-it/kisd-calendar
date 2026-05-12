@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import '../models/course_shell.dart';
+import '../theme/app_theme.dart' show AppSpacing;
 import '../widgets/course_shell_card.dart';
 import 'course_shell_edit_screen.dart';
 
@@ -137,9 +138,10 @@ class _CourseShellTestScreenState extends State<CourseShellTestScreen> {
               ),
             )
           : ListView.separated(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(AppSpacing.screenPadding),
               itemCount: _shells.length,
-              separatorBuilder: (_, index) => const SizedBox(height: 12),
+              separatorBuilder: (_, index) =>
+                  const SizedBox(height: AppSpacing.cardGap),
               itemBuilder: (_, i) {
                 final shell = _shells[i];
                 return CourseShellCard(

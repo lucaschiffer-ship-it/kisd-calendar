@@ -3,6 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../services/service_locator.dart';
+import '../theme/app_theme.dart';
 import 'compose_screen.dart';
 import 'email_detail_screen.dart';
 
@@ -71,10 +72,12 @@ class _MailScreenState extends State<MailScreen>
         RefreshIndicator(
           onRefresh: () => mailService.reloadInbox(),
           child: hasMessages
-              ? ListView.builder(
-                  padding: EdgeInsets.zero,
+              ? ListView.separated(
+                  padding: const EdgeInsets.all(AppSpacing.screenPadding),
                   physics: const AlwaysScrollableScrollPhysics(),
                   itemCount: mailService.messages.length,
+                  separatorBuilder: (context, index) =>
+                      const SizedBox(height: AppSpacing.cardGap),
                   itemBuilder: (ctx, i) {
                     final msg = mailService.messages[i];
                     return _EmailCard(
@@ -131,127 +134,128 @@ class _EmailCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final isUnread = !message.isSeen;
 
-    final fromEmail = message.fromEmail;
     final fromPersonal = message.from?.firstOrNull?.personalName;
     final senderName = (fromPersonal != null && fromPersonal.isNotEmpty)
         ? fromPersonal
-        : fromEmail ?? 'Unknown';
+        : message.fromEmail ?? 'Unknown';
     final subject = message.decodeSubject() ?? '(No subject)';
     final preview = _extractPreview(message);
     final dateStr = _formatDate(message.decodeDate());
-
-    final avatarColor = _senderColor(senderName, cs);
+    final avatarColor = _senderColor(senderName);
     final initial = senderName.isNotEmpty ? senderName[0].toUpperCase() : '?';
 
-    final bgColor = isUnread
-        ? (isDark
-            ? cs.primary.withAlpha(23)
-            : cs.primary.withAlpha(13))
-        : Colors.transparent;
+    // Unread cards get a subtle accent tint on the background
+    final cardColor = isUnread
+        ? AppColors.surface.withValues(alpha: 1.0) // same surface but border highlights it
+        : AppColors.surface;
+    final borderColor = isUnread ? AppColors.accent.withValues(alpha: 0.35) : AppColors.cardBorder;
 
-    return InkWell(
-      onTap: onTap,
+    return AppCard(
+      color: cardColor,
+      padding: EdgeInsets.zero,
       child: Container(
-          color: bgColor,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              CircleAvatar(
-                radius: 22,
-                backgroundColor: avatarColor,
-                child: Text(
-                  initial,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            senderName,
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: isUnread
-                                  ? FontWeight.w700
-                                  : FontWeight.w400,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          dateStr,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: isUnread
-                                ? cs.primary
-                                : cs.onSurface.withAlpha(127),
-                            fontWeight: isUnread
-                                ? FontWeight.w600
-                                : FontWeight.w400,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 3),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            subject,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: isUnread
-                                  ? FontWeight.w600
-                                  : FontWeight.w400,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        if (isUnread)
-                          Container(
-                            width: 9,
-                            height: 9,
-                            margin: const EdgeInsets.only(left: 6),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: cs.primary,
-                            ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      preview,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: cs.onSurface.withAlpha(127),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
+          border: Border.all(color: borderColor, width: isUnread ? 1.0 : 0.5),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            highlightColor: AppColors.accent.withValues(alpha: 0.06),
+            splashColor: AppColors.accent.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
+            child: Padding(
+              padding: const EdgeInsets.all(AppSpacing.cardPadding),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CircleAvatar(
+                    radius: 20,
+                    backgroundColor: avatarColor,
+                    child: Text(
+                      initial,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                     ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                senderName,
+                                style: isUnread
+                                    ? AppTextStyle.headlineBold
+                                    : AppTextStyle.headline,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              dateStr,
+                              style: AppTextStyle.label.copyWith(
+                                color: isUnread
+                                    ? AppColors.accent
+                                    : AppColors.textTertiary,
+                                fontWeight: isUnread
+                                    ? FontWeight.w600
+                                    : FontWeight.w400,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                subject,
+                                style: isUnread
+                                    ? AppTextStyle.bodyBold
+                                    : AppTextStyle.body,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (isUnread)
+                              Container(
+                                width: 7,
+                                height: 7,
+                                margin: const EdgeInsets.only(left: 8),
+                                decoration: const BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: AppColors.accent,
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          preview,
+                          style: AppTextStyle.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
+      ),
     );
   }
 
@@ -273,7 +277,7 @@ class _EmailCard extends StatelessWidget {
     return '';
   }
 
-  Color _senderColor(String name, ColorScheme cs) {
+  Color _senderColor(String name) {
     const palette = [
       Color(0xFF1A73E8),
       Color(0xFFD93025),
@@ -315,11 +319,13 @@ class _SkeletonList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView.builder(
-      padding: EdgeInsets.zero,
+    return ListView.separated(
+      padding: const EdgeInsets.all(AppSpacing.screenPadding),
       physics: const NeverScrollableScrollPhysics(),
-      itemCount: 10,
-      itemBuilder: (_, i) => const _SkeletonCard(),
+      itemCount: 6,
+      separatorBuilder: (context, index) =>
+          const SizedBox(height: AppSpacing.cardGap),
+      itemBuilder: (context, index) => const _SkeletonCard(),
     );
   }
 }
@@ -370,36 +376,35 @@ class _SkeletonCardState extends State<_SkeletonCard>
   }
 
   Widget _buildSkeleton(Color base) {
-    Widget box(double w, double h, {double radius = 4}) => Container(
+    Widget box(double w, double h, {double radius = 6}) => Container(
           width: w,
           height: h,
           decoration: BoxDecoration(
-            color: base.withAlpha(31),
+            color: base.withAlpha(22),
             borderRadius: BorderRadius.circular(radius),
           ),
         );
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+    return AppCard(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          box(44, 44, radius: 22),
-          const SizedBox(width: 12),
+          box(40, 40, radius: 20),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
-                    box(120, 13),
+                    box(110, 13),
                     const Spacer(),
-                    box(32, 11),
+                    box(30, 11),
                   ],
                 ),
-                const SizedBox(height: 8),
-                box(200, 12),
-                const SizedBox(height: 6),
+                const SizedBox(height: 9),
+                box(180, 12),
+                const SizedBox(height: 7),
                 box(double.infinity, 11),
               ],
             ),
@@ -417,33 +422,16 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            CupertinoIcons.tray,
-            size: 64,
-            color: cs.onSurface.withAlpha(64),
-          ),
+          const Icon(CupertinoIcons.tray, size: 56, color: AppColors.textTertiary),
           const SizedBox(height: 16),
-          Text(
-            'No messages',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w500,
-              color: cs.onSurface.withAlpha(102),
-            ),
-          ),
+          Text('No messages',
+              style: AppTextStyle.headline.copyWith(fontSize: 17)),
           const SizedBox(height: 6),
-          Text(
-            'Your inbox is empty.',
-            style: TextStyle(
-              fontSize: 14,
-              color: cs.onSurface.withAlpha(77),
-            ),
-          ),
+          const Text('Your inbox is empty.', style: AppTextStyle.body),
         ],
       ),
     );

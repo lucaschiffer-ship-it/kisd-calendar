@@ -7,6 +7,7 @@ import 'browser_screen.dart';
 import 'settings_screen.dart';
 import '../services/service_locator.dart';
 import '../services/spaces_browser.dart';
+import '../theme/app_theme.dart';
 
 export '../services/spaces_browser.dart' show SpacesBrowser;
 
@@ -137,7 +138,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     strokeWidth: 2, color: cs.onSurface),
               )
             : done
-                ? Icon(Icons.check, color: Colors.green.shade600)
+                ? const Icon(Icons.check, color: Color(0xFF30D158))
                 : Icon(CupertinoIcons.arrow_clockwise, color: cs.onSurface),
         onPressed: loading ? null : onPressed,
       );
@@ -152,11 +153,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         // ── Main scaffold ──────────────────────────────────────────────────
         Scaffold(
           appBar: AppBar(
-            backgroundColor: colorScheme.surface,
-            elevation: 0,
-            scrolledUnderElevation: 0,
-            surfaceTintColor: Colors.transparent,
-            centerTitle: true,
             leading: _currentPage == 0
                 ? _reloadButton(
                     loading: mailService.isFetching,
@@ -172,17 +168,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         onPressed: _onCalendarReloadPressed,
                       )
                     : null,
-            title: Text(
-              _titles[_currentPage],
-              style: TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w600,
-                color: colorScheme.onSurface,
-              ),
-            ),
+            title: Text(_titles[_currentPage], style: AppTextStyle.navTitle),
             actions: [
               IconButton(
-                icon: Icon(CupertinoIcons.settings, color: colorScheme.onSurface),
+                icon: const Icon(CupertinoIcons.settings,
+                    color: AppColors.textPrimary),
                 onPressed: _openSettings,
               ),
             ],
@@ -283,10 +273,9 @@ class _IosTabBar extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final bgColor = isDark ? const Color(0xFF1C1C1E) : const Color(0xFFF9F9F9);
-    final dividerColor =
-        isDark ? const Color(0xFF38383A) : const Color(0xFFD1D1D6);
-    const inactiveColor = Color(0xFF8E8E93);
+    final bgColor = isDark ? AppColors.tabBar : const Color(0xFFF9F9F9);
+    final dividerColor = isDark ? AppColors.divider : const Color(0xFFD1D1D6);
+    final inactiveColor = isDark ? AppColors.tabInactive : const Color(0xFF8E8E93);
 
     return Container(
       decoration: BoxDecoration(
@@ -370,12 +359,12 @@ class _IosTabBar extends StatelessWidget {
                           const SizedBox(height: 3),
                           Text(
                             _tabs[i].label,
-                            style: TextStyle(
+                            style: AppTextStyle.label.copyWith(
                               color: color,
                               fontSize: 10,
                               fontWeight: isActive
                                   ? FontWeight.w600
-                                  : FontWeight.normal,
+                                  : FontWeight.w500,
                             ),
                           ),
                         ],

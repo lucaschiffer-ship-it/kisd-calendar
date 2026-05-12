@@ -50,6 +50,7 @@ class CourseShell {
   final String? location;
   final List<CourseLink> links;
   final bool isManual;
+  final bool isLiked;
 
   const CourseShell({
     required this.id,
@@ -61,5 +62,6 @@ class CourseShell {
     this.location,
     required this.links,
     required this.isManual,
+    this.isLiked = false,
   });
 }

@@ -1,9 +1,10 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/course_shell.dart';
 import '../services/spaces_browser.dart';
 
-class CourseShellCard extends StatelessWidget {
+class CourseShellCard extends StatefulWidget {
   const CourseShellCard({
     super.key,
     required this.shell,
@@ -18,13 +19,48 @@ class CourseShellCard extends StatelessWidget {
   static String fmtTime(TimeOfDay t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 
-  String get _timesText => shell.meetingTimes
-      .map((m) => '${m.weekday.label} ${fmtTime(m.startTime)}–${fmtTime(m.endTime)}')
+  @override
+  State<CourseShellCard> createState() => _CourseShellCardState();
+}
+
+class _CourseShellCardState extends State<CourseShellCard> {
+  // Shared across all card instances so getInstance() is called at most once.
+  static SharedPreferences? _prefs;
+
+  late bool _liked;
+
+  static String _key(String id) => 'shell_liked_$id';
+
+  @override
+  void initState() {
+    super.initState();
+    _liked = widget.shell.isLiked;
+    _loadLiked();
+  }
+
+  Future<void> _loadLiked() async {
+    _prefs ??= await SharedPreferences.getInstance();
+    final saved = _prefs!.getBool(_key(widget.shell.id));
+    if (saved != null && saved != _liked && mounted) {
+      setState(() => _liked = saved);
+    }
+  }
+
+  Future<void> _toggleLike() async {
+    final next = !_liked;
+    setState(() => _liked = next);
+    _prefs ??= await SharedPreferences.getInstance();
+    await _prefs!.setBool(_key(widget.shell.id), next);
+  }
+
+  String get _timesText => widget.shell.meetingTimes
+      .map((m) =>
+          '${m.weekday.label} ${CourseShellCard.fmtTime(m.startTime)}–${CourseShellCard.fmtTime(m.endTime)}')
       .join(', ');
 
   void _openPrimary() {
-    if (shell.links.isEmpty) return;
-    SpacesBrowser.open(shell.links.first.url);
+    if (widget.shell.links.isEmpty) return;
+    SpacesBrowser.open(widget.shell.links.first.url);
   }
 
   void _showModal(BuildContext context) {
@@ -39,16 +75,16 @@ class CourseShellCard extends StatelessWidget {
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (ctx) => _ModalContent(
-        shell: shell,
+        shell: widget.shell,
         cs: cs,
         isDark: isDark,
         onEdit: () {
           Navigator.pop(ctx);
-          onEdit();
+          widget.onEdit();
         },
         onDelete: () {
           Navigator.pop(ctx);
-          onDelete();
+          widget.onDelete();
         },
       ),
     );
@@ -58,6 +94,7 @@ class CourseShellCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final shell = widget.shell;
 
     return GestureDetector(
       onTap: _openPrimary,
@@ -84,6 +121,7 @@ class CourseShellCard extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ── Text content ──────────────────────────────────────────────
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -127,23 +165,42 @@ class CourseShellCard extends StatelessWidget {
                 ],
               ),
             ),
-            if (shell.links.length > 1) ...[
-              const SizedBox(width: 8),
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Icon(
-                  CupertinoIcons.link,
-                  size: 13,
-                  color: cs.primary.withAlpha(160),
+
+            // ── Right column: heart + link indicator ──────────────────────
+            const SizedBox(width: 10),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                GestureDetector(
+                  onTap: _toggleLike,
+                  behavior: HitTestBehavior.opaque,
+                  child: Padding(
+                    padding: const EdgeInsets.all(2),
+                    child: Icon(
+                      _liked ? CupertinoIcons.heart_fill : CupertinoIcons.heart,
+                      size: 18,
+                      color: _liked ? Colors.red.shade400 : cs.onSurface.withAlpha(90),
+                    ),
+                  ),
                 ),
-              ),
-            ],
+                if (shell.links.length > 1) ...[
+                  const SizedBox(height: 6),
+                  Icon(
+                    CupertinoIcons.link,
+                    size: 13,
+                    color: cs.primary.withAlpha(160),
+                  ),
+                ],
+              ],
+            ),
           ],
         ),
       ),
     );
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _ModalContent extends StatelessWidget {
   const _ModalContent({

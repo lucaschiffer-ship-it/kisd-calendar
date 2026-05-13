@@ -113,21 +113,24 @@ class ScraperService extends ChangeNotifier {
     for (final card in cards) {
       final map = card as Map<String, dynamic>;
 
-      // Always fetch the detail page — needed for Space URL (priority-1 link)
-      // and location (absent from the listing card).
+      // Always fetch the detail page — Space URL (priority-1 link),
+      // location, and description all live there, not in the listing card.
       String? location = (map['location'] as String?)?.trim();
       String? spaceUrl;
+      String? description;
       final detailUrl = (map['detailUrl'] as String?)?.trim() ?? '';
       if (detailUrl.isNotEmpty) {
         final detail = await _fetchDetailData(ctrl, detailUrl);
         if (location == null || location.isEmpty) location = detail.location;
-        spaceUrl = detail.spaceUrl;
+        spaceUrl    = detail.spaceUrl;
+        description = detail.description;
       }
 
       final shell = _buildShell(
         map,
         location?.trim().isEmpty == true ? null : location?.trim(),
-        spaceUrl: spaceUrl,
+        spaceUrl:    spaceUrl,
+        detailDesc:  description,
       );
       if (shell != null) {
         shells.add(shell);
@@ -138,8 +141,8 @@ class ScraperService extends ChangeNotifier {
     return shells;
   }
 
-  Future<({String? location, String? spaceUrl})> _fetchDetailData(
-      InAppWebViewController ctrl, String detailUrl) async {
+  Future<({String? location, String? spaceUrl, String? description})>
+      _fetchDetailData(InAppWebViewController ctrl, String detailUrl) async {
     try {
       final result = await ctrl.callAsyncJavaScript(
         functionBody: _kDetailScript,
@@ -147,20 +150,23 @@ class ScraperService extends ChangeNotifier {
       ).timeout(const Duration(seconds: 15));
       final val = result?.value;
       if (val == null || val.toString() == 'null' || val.toString().isEmpty) {
-        return (location: null, spaceUrl: null);
+        return (location: null, spaceUrl: null, description: null);
       }
       final map = json.decode(val.toString()) as Map<String, dynamic>;
-      final loc = (map['location'] as String?)?.trim();
-      final slug = (map['spaceSlug'] as String?)?.trim();
+      final loc  = (map['location']    as String?)?.trim();
+      final slug = (map['spaceSlug']   as String?)?.trim();
+      final desc = (map['description'] as String?)?.trim();
       final spaceUrl = (slug != null && slug.isNotEmpty)
-          ? (slug.startsWith('http')
-              ? slug
-              : 'https://spaces.kisd.de/$slug/')
+          ? (slug.startsWith('http') ? slug : 'https://spaces.kisd.de/$slug/')
           : null;
-      return (location: loc?.isEmpty == true ? null : loc, spaceUrl: spaceUrl);
+      return (
+        location:    loc?.isEmpty  == true ? null : loc,
+        spaceUrl:    spaceUrl,
+        description: desc?.isEmpty == true ? null : desc,
+      );
     } catch (e) {
       print('[scraper] detail fetch failed for $detailUrl: $e');
-      return (location: null, spaceUrl: null);
+      return (location: null, spaceUrl: null, description: null);
     }
   }
 
@@ -304,16 +310,38 @@ class ScraperService extends ChangeNotifier {
 
       const location  = valForLabel(/meeting.?location/i);
       const spaceSlug = valForLabel(/space\s*url/i);
-      return JSON.stringify({ location, spaceSlug });
+
+      // Description: try label, then common content containers, then any long <p>
+      let description = valForLabel(/^description$/i);
+      if (!description) {
+        const descEl = doc.querySelector(
+          '.entry-content, .post-content, .course-description, .section_body, [class*="description"]'
+        );
+        if (descEl) {
+          const paras = Array.from(descEl.querySelectorAll('p'))
+            .map(p => p.textContent.replace(/\s+/g, ' ').trim())
+            .filter(t => t.length > 20);
+          description = paras.length > 0
+            ? paras.join(' ')
+            : descEl.textContent.replace(/\s+/g, ' ').trim() || null;
+        }
+      }
+      if (!description) {
+        const longP = Array.from(doc.querySelectorAll('p'))
+          .find(p => p.textContent.trim().length > 60);
+        if (longP) description = longP.textContent.replace(/\s+/g, ' ').trim();
+      }
+
+      return JSON.stringify({ location, spaceSlug, description });
     } catch (e) {
-      return JSON.stringify({ location: null, spaceSlug: null });
+      return JSON.stringify({ location: null, spaceSlug: null, description: null });
     }
   """;
 
   // ─── Build CourseShell from extracted map ─────────────────────────────────
 
   CourseShell? _buildShell(Map<String, dynamic> map, String? location,
-      {String? spaceUrl}) {
+      {String? spaceUrl, String? detailDesc}) {
     final rawTitle = (map['title'] as String?)?.trim() ?? '';
     // Strip bilingual suffix: "English | Deutsch" → "English"
     final title = rawTitle.contains(' | ')
@@ -339,7 +367,11 @@ class ScraperService extends ChangeNotifier {
 
     final spacesUrl = (map['spacesUrl'] as String?)?.trim() ?? '';
     final detailUrl = (map['detailUrl'] as String?)?.trim() ?? '';
-    final description = (map['description'] as String?)?.trim() ?? '';
+    // Prefer the detail-page description (richer); fall back to listing excerpt
+    final listingDesc = (map['description'] as String?)?.trim() ?? '';
+    final description = (detailDesc != null && detailDesc.isNotEmpty)
+        ? detailDesc
+        : listingDesc;
 
     final links = <CourseLink>[];
 

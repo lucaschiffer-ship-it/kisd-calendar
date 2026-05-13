@@ -545,10 +545,22 @@ class _InfoSheet extends StatelessWidget {
           // Title
           Text(shell.title, style: AppTextStyle.headline),
 
-          // Description
+          // Description — collapsible
           if (shell.description.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            Text(shell.description, style: AppTextStyle.body),
+            const SizedBox(height: 8),
+            Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: const EdgeInsets.only(bottom: 16),
+                iconColor: AppColors.accent,
+                collapsedIconColor: AppColors.textTertiary,
+                title: Text('DESCRIPTION', style: AppTextStyle.label),
+                children: [
+                  Text(shell.description, style: AppTextStyle.body),
+                ],
+              ),
+            ),
           ],
 
           // Schedule

@@ -311,25 +311,54 @@ class ScraperService extends ChangeNotifier {
       const location  = valForLabel(/meeting.?location/i);
       const spaceSlug = valForLabel(/space\s*url/i);
 
-      // Description: try label, then common content containers, then any long <p>
-      let description = valForLabel(/^description$/i);
-      if (!description) {
-        const descEl = doc.querySelector(
-          '.entry-content, .post-content, .course-description, .section_body, [class*="description"]'
-        );
-        if (descEl) {
-          const paras = Array.from(descEl.querySelectorAll('p'))
-            .map(p => p.textContent.replace(/\s+/g, ' ').trim())
-            .filter(t => t.length > 20);
-          description = paras.length > 0
-            ? paras.join(' ')
-            : descEl.textContent.replace(/\s+/g, ' ').trim() || null;
+      // Description: the page has a "Description - EN" accordion/collapsible.
+      // Search heading-like elements (h1-h6, summary, .info-label, etc.) for
+      // one whose text contains "description" + "EN", then grab the sibling content.
+      let description = null;
+
+      function textAfter(el) {
+        // Walk next siblings looking for substantive text
+        let sib = el.nextElementSibling;
+        while (sib) {
+          const t = sib.textContent.replace(/\s+/g, ' ').trim();
+          if (t.length > 30) return t;
+          sib = sib.nextElementSibling;
+        }
+        // Try parent's next sibling (accordion where heading and body share a wrapper)
+        if (el.parentElement) {
+          sib = el.parentElement.nextElementSibling;
+          if (sib) { const t = sib.textContent.replace(/\s+/g, ' ').trim(); if (t.length > 30) return t; }
+          // One more level up
+          const gp = el.parentElement.parentElement;
+          if (gp) {
+            sib = el.parentElement.nextElementSibling || gp.nextElementSibling;
+            if (sib) { const t = sib.textContent.replace(/\s+/g, ' ').trim(); if (t.length > 30) return t; }
+          }
+        }
+        return null;
+      }
+
+      const candidates = Array.from(doc.querySelectorAll(
+        'h1, h2, h3, h4, h5, h6, summary, .info-label, [class*="header"], [class*="title"], [class*="accordion"]'
+      ));
+
+      // Pass 1: "Description - EN" or "Description EN"
+      for (const el of candidates) {
+        const t = el.textContent.trim();
+        if (/description/i.test(t) && /\ben\b/i.test(t)) {
+          const content = textAfter(el);
+          if (content) { description = content; break; }
         }
       }
+      // Pass 2: any "Description" heading that isn't navigation
       if (!description) {
-        const longP = Array.from(doc.querySelectorAll('p'))
-          .find(p => p.textContent.trim().length > 60);
-        if (longP) description = longP.textContent.replace(/\s+/g, ' ').trim();
+        for (const el of candidates) {
+          const t = el.textContent.trim();
+          if (/description/i.test(t) && !/back|home|nav|menu/i.test(t)) {
+            const content = textAfter(el);
+            if (content) { description = content; break; }
+          }
+        }
       }
 
       return JSON.stringify({ location, spaceSlug, description });

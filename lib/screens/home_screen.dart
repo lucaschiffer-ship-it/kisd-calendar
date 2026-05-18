@@ -33,12 +33,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _mailReloadDone = false;
   bool _calendarReloadDone = false;
 
-  static const _titles = ['Mail', 'Calendar', 'List'];
+  static const _titles = ['Mail', 'List', 'Calendar'];
 
   static const List<Widget> _pages = [
     MailScreen(),
-    CalendarScreen(),
     ListScreen(),
+    CalendarScreen(),
   ];
 
   @override
@@ -160,7 +160,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     cs: colorScheme,
                     onPressed: _onMailReloadPressed,
                   )
-                : _currentPage == 1
+                : _currentPage == 2
                     ? _reloadButton(
                         loading: loginService.isLoading,
                         done: _calendarReloadDone,
@@ -179,6 +179,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
           body: PageView(
             controller: _pageController,
+            physics: const NeverScrollableScrollPhysics(),
             onPageChanged: (index) {
               setState(() => _currentPage = index);
               print('[nav] navigated to ${_titles[index]}');
@@ -264,8 +265,8 @@ class _IosTabBar extends StatelessWidget {
 
   static const _tabs = [
     (icon: CupertinoIcons.mail, label: 'Mail'),
-    (icon: CupertinoIcons.calendar, label: 'Calendar'),
     (icon: CupertinoIcons.list_bullet, label: 'List'),
+    (icon: CupertinoIcons.calendar, label: 'Calendar'),
   ];
 
   @override

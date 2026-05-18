@@ -94,13 +94,26 @@ class CalendarService {
       final calId = await _calendarId();
       if (calId == null) return;
 
-      // Delete previously written events by stored IDs.
       final prefs = await SharedPreferences.getInstance();
-      final oldIds = prefs.getStringList(_kKeyEvtIds) ?? [];
-      for (final id in oldIds) {
-        try { await _plugin.deleteEvent(calId, id); } catch (_) {}
-      }
 
+      // ── a. Load stored event IDs from the previous write run ──────────────
+      final storedIds = prefs.getStringList(_kKeyEvtIds) ?? [];
+      print('[calendar] writeCourses: loaded ${storedIds.length} stored event IDs');
+
+      // ── b. Delete each stored ID one by one, sequentially ─────────────────
+      var deleteCount = 0;
+      for (final id in storedIds) {
+        try {
+          await _plugin.deleteEvent(calId, id);
+          deleteCount++;
+        } catch (_) {}
+      }
+      print('[calendar] writeCourses: called delete on $deleteCount event IDs');
+
+      // ── c. Clear stored IDs immediately after deletion ────────────────────
+      await prefs.remove(_kKeyEvtIds);
+
+      // ── d & e. Write new events, collect returned IDs ─────────────────────
       final newIds = <String>[];
       final loc = tz.local;
 
@@ -108,8 +121,7 @@ class CalendarService {
         final desc = shell.links.isNotEmpty ? shell.links.first.url : null;
 
         for (final mt in shell.meetingTimes) {
-          // Advance startDate to the first occurrence of this weekday.
-          final targetWd = mt.weekday.index + 1; // 1=Mon … 7=Sun (DateTime)
+          final targetWd = mt.weekday.index + 1; // 1=Mon … 7=Sun
           final base = DateTime(
               shell.startDate.year, shell.startDate.month, shell.startDate.day);
           final skip = (targetWd - base.weekday + 7) % 7;
@@ -122,7 +134,6 @@ class CalendarService {
           final evtEnd = tz.TZDateTime(loc,
               first.year, first.month, first.day,
               mt.endTime.hour, mt.endTime.minute);
-          // endDate at 23:59 so the last weekday in the range is included.
           final ruleEnd = DateTime(
               shell.endDate.year, shell.endDate.month, shell.endDate.day, 23, 59, 59);
 
@@ -136,12 +147,15 @@ class CalendarService {
                 RecurrenceRule(RecurrenceFrequency.Weekly, endDate: ruleEnd);
 
           final r = await _plugin.createOrUpdateEvent(event);
-          if (r != null && r.isSuccess && r.data != null) newIds.add(r.data!);
+          if (r != null && r.isSuccess && r.data != null) {
+            newIds.add(r.data!);
+          }
         }
       }
 
+      // ── f. Save new event IDs ─────────────────────────────────────────────
       await prefs.setStringList(_kKeyEvtIds, newIds);
-      print('[calendar] wrote ${newIds.length} recurring events');
+      print('[calendar] writeCourses: saved ${newIds.length} new event IDs');
     } catch (e) {
       print('[calendar] writeCourses: $e');
     }

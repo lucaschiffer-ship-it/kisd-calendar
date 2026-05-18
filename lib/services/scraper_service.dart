@@ -7,6 +7,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../models/course_shell.dart';
 import 'cache_service.dart';
+import 'calendar_service.dart';
 import 'spaces_dark_mode.dart';
 
 class ScraperService extends ChangeNotifier {
@@ -37,6 +38,8 @@ class ScraperService extends ChangeNotifier {
     try {
       final shells = await _scrapeShells();
       await saveToCache(shells);
+      // Write to device calendar in the background — don't block the scrape result.
+      CalendarService.instance.writeCourses(shells).ignore();
       _isLoading = false;
       notifyListeners();
       return shells;

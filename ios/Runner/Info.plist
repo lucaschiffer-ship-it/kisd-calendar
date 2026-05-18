@@ -49,6 +49,10 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSCalendarsUsageDescription</key>
+	<string>KISD Calendar möchte Kurstermine in deinen Kalender eintragen.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>KISD Calendar benötigt vollen Kalenderzugriff, um Kurstermine zu schreiben und zu verwalten.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>

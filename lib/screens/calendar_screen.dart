@@ -1,17 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../models/course_shell.dart';
-import '../services/service_locator.dart';
+import '../services/calendar_service.dart';
 import '../theme/app_theme.dart';
-
-// ─── Internal helpers ─────────────────────────────────────────────────────────
-
-class _Occurrence {
-  final CourseShell shell;
-  final MeetingTime time;
-  const _Occurrence(this.shell, this.time);
-}
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -41,7 +32,9 @@ class _CalendarScreenState extends State<CalendarScreen>
   late DateTime _displayedMonth;
   late DateTime _selectedDate;
 
-  Map<DateTime, List<_Occurrence>> _dateMap = {};
+  // Device-calendar state — replaces the old CourseShell _dateMap.
+  Set<DateTime> _eventDays = {};
+  List<DeviceCalendarEvent> _selectedEvents = [];
 
   @override
   void initState() {
@@ -50,44 +43,33 @@ class _CalendarScreenState extends State<CalendarScreen>
     _today = DateTime(n.year, n.month, n.day);
     _displayedMonth = DateTime(_today.year, _today.month);
     _selectedDate = _today;
-    _loadShells();
+    _loadMonthDays(_displayedMonth);
+    _loadDayEvents(_today);
   }
 
-  Future<void> _loadShells() async {
-    try {
-      final shells = await scraperService.loadCached();
-      if (!mounted) return;
-      setState(() => _dateMap = _buildDateMap(shells));
-    } catch (_) {}
+  Future<void> _loadMonthDays(DateTime month) async {
+    final days = await CalendarService.instance.getEventDaysForMonth(month);
+    if (!mounted) return;
+    setState(() => _eventDays = days);
   }
 
-  static Map<DateTime, List<_Occurrence>> _buildDateMap(
-      List<CourseShell> shells) {
-    final map = <DateTime, List<_Occurrence>>{};
-    for (final shell in shells) {
-      for (final mt in shell.meetingTimes) {
-        // Weekday.mon.index = 0, DateTime.weekday Mon = 1
-        final targetWd = mt.weekday.index + 1;
-        final startDay = DateTime(
-            shell.startDate.year, shell.startDate.month, shell.startDate.day);
-        final endDay = DateTime(
-            shell.endDate.year, shell.endDate.month, shell.endDate.day);
-        final daysToFirst = (targetWd - startDay.weekday + 7) % 7;
-        var date = startDay.add(Duration(days: daysToFirst));
-        while (!date.isAfter(endDay)) {
-          (map[date] ??= []).add(_Occurrence(shell, mt));
-          date = date.add(const Duration(days: 7));
-        }
-      }
-    }
-    return map;
+  Future<void> _loadDayEvents(DateTime day) async {
+    final events = await CalendarService.instance.getEventsForDay(day);
+    if (!mounted) return;
+    setState(() => _selectedEvents = events);
   }
 
-  void _prevMonth() => setState(() =>
-      _displayedMonth = DateTime(_displayedMonth.year, _displayedMonth.month - 1));
+  void _prevMonth() {
+    final m = DateTime(_displayedMonth.year, _displayedMonth.month - 1);
+    setState(() => _displayedMonth = m);
+    _loadMonthDays(m);
+  }
 
-  void _nextMonth() => setState(() =>
-      _displayedMonth = DateTime(_displayedMonth.year, _displayedMonth.month + 1));
+  void _nextMonth() {
+    final m = DateTime(_displayedMonth.year, _displayedMonth.month + 1);
+    setState(() => _displayedMonth = m);
+    _loadMonthDays(m);
+  }
 
   String _formatSelectedDate() {
     final d = _selectedDate;
@@ -98,8 +80,6 @@ class _CalendarScreenState extends State<CalendarScreen>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-
-    final occurrences = _dateMap[_selectedDate] ?? [];
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -114,7 +94,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                 children: [
                   GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onTap: () {}, // year view — no-op
+                    onTap: () {},
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -138,8 +118,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                     onTap: () {},
                     child: const Padding(
                       padding: EdgeInsets.symmetric(horizontal: 8),
-                      child: Icon(Icons.search,
-                          color: AppColors.accent, size: 22),
+                      child: Icon(Icons.search, color: AppColors.accent, size: 22),
                     ),
                   ),
                   const SizedBox(width: 4),
@@ -148,8 +127,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                     onTap: () {},
                     child: const Padding(
                       padding: EdgeInsets.symmetric(horizontal: 4),
-                      child: Icon(Icons.add,
-                          color: AppColors.accent, size: 26),
+                      child: Icon(Icons.add, color: AppColors.accent, size: 26),
                     ),
                   ),
                 ],
@@ -222,16 +200,16 @@ class _CalendarScreenState extends State<CalendarScreen>
 
             // ── Month grid ─────────────────────────────────────────────────
             LayoutBuilder(builder: (ctx, box) {
-              final cellW = box.maxWidth / 7;
+              final cellW   = box.maxWidth / 7;
               final circleD = cellW * 0.74;
-              final rowH = cellW + 10.0;
+              final rowH    = cellW + 10.0;
               return SizedBox(
                 height: 6 * rowH,
                 child: _MonthGrid(
                   month: _displayedMonth,
                   today: _today,
                   selectedDate: _selectedDate,
-                  dateMap: _dateMap,
+                  eventDays: _eventDays,
                   cellWidth: cellW,
                   circleSize: circleD,
                   rowHeight: rowH,
@@ -241,14 +219,16 @@ class _CalendarScreenState extends State<CalendarScreen>
                       if (date.year != _displayedMonth.year ||
                           date.month != _displayedMonth.month) {
                         _displayedMonth = DateTime(date.year, date.month);
+                        _loadMonthDays(_displayedMonth);
                       }
                     });
+                    _loadDayEvents(date);
                   },
                 ),
               );
             }),
 
-            // ── Separator + date label + course content — centred ──────────
+            // ── Separator + date label + events — centred in remaining space
             Expanded(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -267,7 +247,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                       ),
                     ),
                   ),
-                  if (occurrences.isEmpty)
+                  if (_selectedEvents.isEmpty)
                     Center(
                       child: Text(
                         'Keine Ereignisse',
@@ -278,10 +258,10 @@ class _CalendarScreenState extends State<CalendarScreen>
                       ),
                     )
                   else
-                    for (final occ in occurrences)
+                    for (final evt in _selectedEvents)
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: _CourseRow(occurrence: occ),
+                        child: _EventRow(event: evt),
                       ),
                 ],
               ),
@@ -300,7 +280,7 @@ class _MonthGrid extends StatelessWidget {
     required this.month,
     required this.today,
     required this.selectedDate,
-    required this.dateMap,
+    required this.eventDays,
     required this.cellWidth,
     required this.circleSize,
     required this.rowHeight,
@@ -310,7 +290,7 @@ class _MonthGrid extends StatelessWidget {
   final DateTime month;
   final DateTime today;
   final DateTime selectedDate;
-  final Map<DateTime, List<_Occurrence>> dateMap;
+  final Set<DateTime> eventDays;
   final double cellWidth;
   final double circleSize;
   final double rowHeight;
@@ -319,8 +299,7 @@ class _MonthGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final firstDay = DateTime(month.year, month.month, 1);
-    // offset so the grid starts on Monday (weekday=1 → offset 0)
-    final startOffset = (firstDay.weekday - 1) % 7;
+    final startOffset = (firstDay.weekday - 1) % 7; // 0 = Monday
     final gridStart = firstDay.subtract(Duration(days: startOffset));
 
     return Column(
@@ -331,45 +310,36 @@ class _MonthGrid extends StatelessWidget {
             children: List.generate(7, (col) {
               final date = gridStart.add(Duration(days: row * 7 + col));
               final isCurrentMonth = date.month == month.month;
-              final isToday = date == today;
+              final isToday    = date == today;
               final isSelected = date == selectedDate;
-              final isWeekend = date.weekday >= 6;
-              final hasEvent = dateMap.containsKey(date);
+              final isWeekend  = date.weekday >= 6;
+              final hasEvent   = eventDays.contains(date);
 
-              // ── Text colour
               final Color textColor;
               if (isToday) {
                 textColor = Colors.white;
               } else if (!isCurrentMonth) {
-                textColor = const Color(0xFF3A3835); // very faded
+                textColor = const Color(0xFF3A3835);
               } else if (isWeekend) {
                 textColor = AppColors.textTertiary;
               } else {
                 textColor = AppColors.textPrimary;
               }
 
-              // ── Circle decoration
               final BoxDecoration circleDeco;
               if (isToday) {
                 circleDeco = const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppColors.accent,
-                );
+                  shape: BoxShape.circle, color: AppColors.accent);
               } else if (isSelected) {
                 circleDeco = BoxDecoration(
                   shape: BoxShape.circle,
-                  border: Border.all(
-                    color: AppColors.textSecondary,
-                    width: 1,
-                  ),
-                );
+                  border: Border.all(color: AppColors.textSecondary, width: 1));
               } else {
                 circleDeco = const BoxDecoration(shape: BoxShape.circle);
               }
 
-              // ── Dot colour
               final dotColor = isToday
-                  ? const Color(0xCCFFFFFF) // white-ish when inside orange circle
+                  ? const Color(0xCCFFFFFF)
                   : AppColors.accent;
 
               return GestureDetector(
@@ -423,12 +393,12 @@ class _MonthGrid extends StatelessWidget {
   }
 }
 
-// ─── Course row ───────────────────────────────────────────────────────────────
+// ─── Event row ────────────────────────────────────────────────────────────────
 
-class _CourseRow extends StatelessWidget {
-  const _CourseRow({required this.occurrence});
+class _EventRow extends StatelessWidget {
+  const _EventRow({required this.event});
 
-  final _Occurrence occurrence;
+  final DeviceCalendarEvent event;
 
   static String _fmt(TimeOfDay t) =>
       '${t.hour.toString().padLeft(2, '0')}:'
@@ -436,7 +406,6 @@ class _CourseRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final mt = occurrence.time;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
       child: Row(
@@ -446,7 +415,7 @@ class _CourseRow extends StatelessWidget {
             width: 4,
             height: 46,
             decoration: BoxDecoration(
-              color: AppColors.accent,
+              color: event.calendarColor,
               borderRadius: BorderRadius.circular(2),
             ),
           ),
@@ -457,7 +426,7 @@ class _CourseRow extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  occurrence.shell.title,
+                  event.title,
                   style: GoogleFonts.inter(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
@@ -468,7 +437,7 @@ class _CourseRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '${_fmt(mt.startTime)} – ${_fmt(mt.endTime)}',
+                  '${_fmt(event.start)} – ${_fmt(event.end)}',
                   style: GoogleFonts.inter(
                     fontSize: 12,
                     color: AppColors.textSecondary,

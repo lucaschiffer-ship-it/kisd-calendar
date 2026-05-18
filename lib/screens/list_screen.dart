@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../models/course_shell.dart';
 import '../services/cache_service.dart';
+import '../services/calendar_service.dart';
 import '../services/service_locator.dart';
 import '../theme/app_theme.dart';
 import '../widgets/course_shell_card.dart';
@@ -23,6 +24,7 @@ class _ListScreenState extends State<ListScreen>
   bool get wantKeepAlive => true;
 
   List<CourseShell> _shells = [];
+  List<DeviceCalendarEvent> _todayEvents = [];
   bool _loading = false;
   String? _error;
 
@@ -40,6 +42,7 @@ class _ListScreenState extends State<ListScreen>
       if (mounted) setState(() => _now = DateTime.now());
     });
     _init();
+    _loadTodayEvents();
   }
 
   Future<void> _init() async {
@@ -61,6 +64,11 @@ class _ListScreenState extends State<ListScreen>
       print('[list] cache load: $e');
     }
     await _scrape();
+  }
+
+  Future<void> _loadTodayEvents() async {
+    final events = await CalendarService.instance.getTodayEvents();
+    if (mounted) setState(() => _todayEvents = events);
   }
 
   Future<void> _scrape() async {
@@ -157,6 +165,22 @@ class _ListScreenState extends State<ListScreen>
             ),
           ),
 
+          // ── Today's events from device calendar ─────────────────────────
+          if (_todayEvents.isNotEmpty)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('HEUTE', style: AppTextStyle.label),
+                    const SizedBox(height: 10),
+                    for (final evt in _todayEvents) _TodayEventRow(event: evt),
+                  ],
+                ),
+              ),
+            ),
+
           // ── Loading (first fetch, no cached data yet) ────────────────────
           if (_loading && _shells.isEmpty)
             SliverFillRemaining(
@@ -225,6 +249,58 @@ class _ListScreenState extends State<ListScreen>
                 },
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Today event row ──────────────────────────────────────────────────────────
+
+class _TodayEventRow extends StatelessWidget {
+  const _TodayEventRow({required this.event});
+
+  final DeviceCalendarEvent event;
+
+  static String _fmt(TimeOfDay t) =>
+      '${t.hour.toString().padLeft(2, '0')}:'
+      '${t.minute.toString().padLeft(2, '0')}';
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 4,
+            height: 46,
+            decoration: BoxDecoration(
+              color: event.calendarColor,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  event.title,
+                  style: AppTextStyle.bodyBold,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${_fmt(event.start)} – ${_fmt(event.end)}',
+                  style: AppTextStyle.body,
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

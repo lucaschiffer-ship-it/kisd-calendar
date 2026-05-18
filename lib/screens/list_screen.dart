@@ -74,6 +74,7 @@ class _ListScreenState extends State<ListScreen>
   Future<void> _scrape() async {
     if (!mounted) return;
     setState(() { _loading = true; _error = null; });
+    _loadTodayEvents();
     try {
       final shells = await scraperService.scrape();
       if (mounted) setState(() { _shells = shells; _loading = false; });
@@ -151,6 +152,10 @@ class _ListScreenState extends State<ListScreen>
                       ),
                     ],
                   ),
+                  if (_todayEvents.isNotEmpty) ...[
+                    const SizedBox(height: 20),
+                    for (final evt in _todayEvents) _TodayEventRow(event: evt),
+                  ],
                   const SizedBox(height: 20),
                   Text('My\nCourses', style: AppTextStyle.pageTitle),
                   const SizedBox(height: 10),
@@ -164,22 +169,6 @@ class _ListScreenState extends State<ListScreen>
               ),
             ),
           ),
-
-          // ── Today's events from device calendar ─────────────────────────
-          if (_todayEvents.isNotEmpty)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('HEUTE', style: AppTextStyle.label),
-                    const SizedBox(height: 10),
-                    for (final evt in _todayEvents) _TodayEventRow(event: evt),
-                  ],
-                ),
-              ),
-            ),
 
           // ── Loading (first fetch, no cached data yet) ────────────────────
           if (_loading && _shells.isEmpty)
@@ -289,14 +278,15 @@ class _TodayEventRow extends StatelessWidget {
               children: [
                 Text(
                   event.title,
-                  style: AppTextStyle.bodyBold,
+                  style: AppTextStyle.bodyBold.copyWith(
+                      fontSize: 14, fontWeight: FontWeight.w500),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 2),
                 Text(
                   '${_fmt(event.start)} – ${_fmt(event.end)}',
-                  style: AppTextStyle.body,
+                  style: AppTextStyle.body.copyWith(fontSize: 12),
                 ),
               ],
             ),

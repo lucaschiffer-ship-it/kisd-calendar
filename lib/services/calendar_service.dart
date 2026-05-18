@@ -151,21 +151,31 @@ class CalendarService {
 
   Future<List<DeviceCalendarEvent>> getEventsForDay(DateTime day) async {
     try {
-      await _ensureTz();
       if (!await _hasPermission()) return const [];
 
-      final loc = tz.local;
-      final start = tz.TZDateTime(loc, day.year, day.month, day.day, 0, 0, 0);
-      final end   = tz.TZDateTime(loc, day.year, day.month, day.day, 23, 59, 59);
+      // Plain local DateTime — millisecondsSinceEpoch is local-time-correct.
+      // Do NOT convert to UTC; device_calendar passes this directly to the platform.
+      final start = DateTime(day.year, day.month, day.day, 0, 0, 0);
+      final end   = DateTime(day.year, day.month, day.day, 23, 59, 59);
 
       final cals = await _plugin.retrieveCalendars();
-      if (!cals.isSuccess || cals.data == null) return const [];
+      if (!cals.isSuccess || cals.data == null) {
+        print('[calendar] getEventsForDay: retrieveCalendars failed');
+        return const [];
+      }
+
+      final calList = cals.data!.where((c) => c.id != null).toList();
+      print('[calendar] getEventsForDay(${day.year}-${day.month}-${day.day}): '
+          '${calList.length} calendars');
 
       final events = <DeviceCalendarEvent>[];
-      for (final cal in cals.data!.where((c) => c.id != null)) {
+      var rawTotal = 0;
+
+      for (final cal in calList) {
         final r = await _plugin.retrieveEvents(
             cal.id!, RetrieveEventsParams(startDate: start, endDate: end));
         if (!r.isSuccess || r.data == null) continue;
+        rawTotal += r.data!.length;
         for (final e in r.data!) {
           if (e.start == null || e.end == null || (e.title ?? '').isEmpty) continue;
           events.add(DeviceCalendarEvent(
@@ -173,11 +183,12 @@ class CalendarService {
             start: TimeOfDay(hour: e.start!.hour, minute: e.start!.minute),
             end:   TimeOfDay(hour: e.end!.hour,   minute: e.end!.minute),
             location: e.location?.isEmpty == true ? null : e.location,
-            calendarColor: (cal.color as Color?) ?? _kisdColor,
+            calendarColor: cal.color != null ? Color(cal.color as int) : _kisdColor,
           ));
         }
       }
 
+      print('[calendar] getEventsForDay: $rawTotal raw → ${events.length} after filter');
       events.sort((a, b) =>
           (a.start.hour * 60 + a.start.minute)
               .compareTo(b.start.hour * 60 + b.start.minute));
@@ -195,14 +206,12 @@ class CalendarService {
 
   Future<Set<DateTime>> getEventDaysForMonth(DateTime month) async {
     try {
-      await _ensureTz();
       if (!await _hasPermission()) return const {};
 
-      final loc      = tz.local;
       final firstDay = DateTime(month.year, month.month, 1);
       final lastDay  = DateTime(month.year, month.month + 1, 0); // day-0 trick
-      final start = tz.TZDateTime(loc, firstDay.year, firstDay.month, firstDay.day);
-      final end   = tz.TZDateTime(loc, lastDay.year,  lastDay.month,  lastDay.day, 23, 59, 59);
+      final start = DateTime(firstDay.year, firstDay.month, firstDay.day, 0, 0, 0);
+      final end   = DateTime(lastDay.year,  lastDay.month,  lastDay.day, 23, 59, 59);
 
       final cals = await _plugin.retrieveCalendars();
       if (!cals.isSuccess || cals.data == null) return const {};

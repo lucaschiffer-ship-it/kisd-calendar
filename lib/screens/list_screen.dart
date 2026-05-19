@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../config/app_theme.dart' as tokens;
 import '../models/course_shell.dart';
 import '../services/cache_service.dart';
 import '../services/calendar_service.dart';
 import '../services/service_locator.dart';
+import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/course_shell_card.dart';
 import 'course_shell_edit_screen.dart';
@@ -257,42 +259,58 @@ class _TodayEventRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Container(
-            width: 4,
-            height: 46,
-            decoration: BoxDecoration(
-              color: event.calendarColor,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  event.title,
-                  style: AppTextStyle.bodyBold.copyWith(
-                      fontSize: 14, fontWeight: FontWeight.w500),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+    return ValueListenableBuilder<String>(
+      valueListenable: ThemeService.instance.currentTheme,
+      builder: (context, _, _) {
+        final useDot = tokens.AppThemeTokens.useEventDot;
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 5),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              if (useDot)
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: tokens.AppThemeTokens.accentColor,
+                    borderRadius: BorderRadius.circular(1.5),
+                  ),
+                )
+              else
+                Container(
+                  width: 4,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: tokens.AppThemeTokens.accentColor,
+                    borderRadius: BorderRadius.circular(1),
+                  ),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  '${_fmt(event.start)} – ${_fmt(event.end)}',
-                  style: AppTextStyle.body.copyWith(fontSize: 12),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      event.title,
+                      style: AppTextStyle.bodyBold.copyWith(
+                          fontSize: 14, fontWeight: FontWeight.w500),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${_fmt(event.start)} – ${_fmt(event.end)}',
+                      style: AppTextStyle.body.copyWith(fontSize: 12),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

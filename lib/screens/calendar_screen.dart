@@ -416,7 +416,7 @@ class _EventRow extends StatelessWidget {
             height: 46,
             decoration: BoxDecoration(
               color: event.calendarColor,
-              borderRadius: BorderRadius.circular(2),
+              borderRadius: BorderRadius.circular(1),
             ),
           ),
           const SizedBox(width: 12),

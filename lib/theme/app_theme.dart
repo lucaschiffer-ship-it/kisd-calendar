@@ -157,6 +157,7 @@ class AppCard extends StatelessWidget {
     this.borderColor,
     this.borderWidth = 0.5,
     this.padding = const EdgeInsets.all(AppSpacing.cardPadding),
+    this.borderRadius = AppSpacing.cardRadius,
   });
 
   final Widget child;
@@ -164,6 +165,7 @@ class AppCard extends StatelessWidget {
   final Color? borderColor;
   final double borderWidth;
   final EdgeInsetsGeometry padding;
+  final double borderRadius;
 
   @override
   Widget build(BuildContext context) {
@@ -173,7 +175,7 @@ class AppCard extends StatelessWidget {
     final decoration = color != null
         ? BoxDecoration(
             color: color,
-            borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
+            borderRadius: BorderRadius.circular(borderRadius),
             border: Border.all(color: effectiveBorder, width: borderWidth),
           )
         : BoxDecoration(
@@ -185,7 +187,7 @@ class AppCard extends StatelessWidget {
                 Color(0xFF141414), // pure dark base
               ],
             ),
-            borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
+            borderRadius: BorderRadius.circular(borderRadius),
             border: Border.all(color: effectiveBorder, width: borderWidth),
           );
 

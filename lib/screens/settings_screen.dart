@@ -4,6 +4,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../services/cache_service.dart';
 import '../services/service_locator.dart';
+import '../services/theme_service.dart';
 import 'course_shell_test_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -60,19 +61,74 @@ class SettingsScreen extends StatelessWidget {
       ),
       body: ListView(
         children: [
+          // ── Appearance ───────────────────────────────────────────────────
+          const SizedBox(height: 24),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Text(
+              'APPEARANCE',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: colorScheme.onSurface.withAlpha(100),
+                letterSpacing: 1.2,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: ValueListenableBuilder<String>(
+              valueListenable: ThemeService.instance.currentTheme,
+              builder: (context, theme, _) => ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  color: colorScheme.surfaceContainerHigh,
+                  child: Column(
+                    children: [
+                      _ThemeOption(
+                        label: 'Vivid',
+                        subtitle: 'Orange accents, high contrast',
+                        selected: theme == 'vivid',
+                        onTap: () => ThemeService.instance.setTheme('vivid'),
+                      ),
+                      Divider(
+                        height: 1,
+                        thickness: 0.5,
+                        indent: 16,
+                        color: Colors.white.withAlpha(18),
+                      ),
+                      _ThemeOption(
+                        label: 'Minimal',
+                        subtitle: 'Muted greys, low contrast',
+                        selected: theme == 'minimal',
+                        onTap: () => ThemeService.instance.setTheme('minimal'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // ── Other ────────────────────────────────────────────────────────
           const SizedBox(height: 32),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: ListTile(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
               tileColor: colorScheme.surfaceContainerHigh,
-              leading: Icon(CupertinoIcons.rectangle_stack, color: colorScheme.onSurface),
-              title: const Text('Course Shells', style: TextStyle(fontWeight: FontWeight.w500)),
+              leading:
+                  Icon(CupertinoIcons.rectangle_stack, color: colorScheme.onSurface),
+              title: const Text('Course Shells',
+                  style: TextStyle(fontWeight: FontWeight.w500)),
               subtitle: const Text('Dev preview'),
               trailing: const Icon(CupertinoIcons.chevron_right, size: 16),
               onTap: () => Navigator.push(
                 context,
-                CupertinoPageRoute(builder: (_) => const CourseShellTestScreen()),
+                CupertinoPageRoute(
+                    builder: (_) => const CourseShellTestScreen()),
               ),
             ),
           ),
@@ -99,6 +155,60 @@ class SettingsScreen extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ─── Theme option row ─────────────────────────────────────────────────────────
+
+class _ThemeOption extends StatelessWidget {
+  const _ThemeOption({
+    required this.label,
+    required this.subtitle,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final String subtitle;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w500, fontSize: 15),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: colorScheme.onSurface.withAlpha(120),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (selected)
+              Icon(CupertinoIcons.checkmark,
+                  size: 16, color: colorScheme.primary),
+          ],
+        ),
       ),
     );
   }

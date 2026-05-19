@@ -4,8 +4,10 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../config/app_theme.dart' as tokens;
 import '../models/course_shell.dart';
 import '../services/spaces_browser.dart';
+import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
 
 // ─── sizing constants used by both the page and the menu ─────────────────────
@@ -134,7 +136,7 @@ class _CourseShellCardState extends State<CourseShellCard>
       backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius:
-            BorderRadius.vertical(top: Radius.circular(AppSpacing.cardRadius)),
+            BorderRadius.vertical(top: Radius.circular(AppSpacing.cardRadius / 2)),
       ),
       builder: (ctx) => SafeArea(
         top: false,
@@ -162,80 +164,87 @@ class _CourseShellCardState extends State<CourseShellCard>
           setState(() => _pressing = false);
           _showContextMenu(context, d.globalPosition);
         },
-        child: AppCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // ── 1. Title + heart ─────────────────────────────────────────
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Text(
-                      shell.title,
-                      style: AppTextStyle.cardTitle.copyWith(fontSize: 29),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+        child: ValueListenableBuilder<String>(
+          valueListenable: ThemeService.instance.currentTheme,
+          builder: (context, _, _) => AppCard(
+            color: tokens.AppThemeTokens.cardBackground,
+            borderColor: tokens.AppThemeTokens.cardBorder,
+            borderRadius: tokens.AppThemeTokens.cardBorderRadius / 2,
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ── 1. Title + heart ───────────────────────────────────────
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        shell.title,
+                        style: AppTextStyle.cardTitle.copyWith(
+                          fontSize: tokens.AppThemeTokens.titleFontSize,
+                          color: tokens.AppThemeTokens.titleColor,
+                          fontWeight: tokens.AppThemeTokens.titleFontWeight,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-                  ),
-                  GestureDetector(
-                    onTap: _toggleLike,
-                    behavior: HitTestBehavior.opaque,
-                    child: Padding(
-                      padding: const EdgeInsets.only(left: 14, top: 3),
-                      child: ScaleTransition(
-                        scale: _heartScale,
-                        child: Icon(
-                          _liked
-                              ? CupertinoIcons.heart_fill
-                              : CupertinoIcons.heart,
-                          size: 22,
-                          color: _liked
-                              ? AppColors.heartActive
-                              : AppColors.textTertiary,
+                    GestureDetector(
+                      onTap: _toggleLike,
+                      behavior: HitTestBehavior.opaque,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 14, top: 3),
+                        child: ScaleTransition(
+                          scale: _heartScale,
+                          child: Icon(
+                            _liked
+                                ? CupertinoIcons.heart_fill
+                                : CupertinoIcons.heart,
+                            size: 22,
+                            color: _liked
+                                ? AppColors.heartActive
+                                : tokens.AppThemeTokens.secondaryTextColor,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ],
-              ),
-
-              // ── 2. Meeting times ─────────────────────────────────────────
-              if (shell.meetingTimes.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                Text(_allMeetingsText,
-                    style: AppTextStyle.body.copyWith(color: AppColors.accent)),
-              ],
-
-              // ── 3. Location ──────────────────────────────────────────────
-              if (shell.location != null) ...[
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    const Icon(CupertinoIcons.location,
-                        size: 10, color: AppColors.textTertiary),
-                    const SizedBox(width: 4),
-                    Text(
-                      shell.location!.toUpperCase(),
-                      style: AppTextStyle.label,
-                    ),
                   ],
                 ),
-              ],
 
-              // ── 4. Link indicator bottom-right ───────────────────────────
-              if (shell.links.length > 1) ...[
-                const SizedBox(height: 10),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: Icon(
-                    CupertinoIcons.link,
-                    size: 12,
-                    color: AppColors.accent.withValues(alpha: 0.5),
+                // ── 2. Meeting times ───────────────────────────────────────
+                if (shell.meetingTimes.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    _allMeetingsText,
+                    style: AppTextStyle.body.copyWith(
+                      color: tokens.AppThemeTokens.timesColor,
+                    ),
                   ),
-                ),
+                ],
+
+                // ── 3. Location ────────────────────────────────────────────
+                if (shell.location != null) ...[
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Icon(
+                        CupertinoIcons.location,
+                        size: 10,
+                        color: tokens.AppThemeTokens.locationColor,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        shell.location!.toUpperCase(),
+                        style: AppTextStyle.label.copyWith(
+                          color: tokens.AppThemeTokens.locationColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -420,7 +429,7 @@ class _GlassMenu extends StatelessWidget {
     return Container(
       width: _kMenuWidth,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(7),
         border: Border.all(color: borderColor, width: 0.5),
         boxShadow: [
           BoxShadow(
@@ -432,7 +441,7 @@ class _GlassMenu extends StatelessWidget {
         ],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(13.5),
+        borderRadius: BorderRadius.circular(6.5),
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
           child: Container(
@@ -537,7 +546,7 @@ class _InfoSheet extends StatelessWidget {
               height: 4,
               decoration: BoxDecoration(
                 color: AppColors.textTertiary,
-                borderRadius: BorderRadius.circular(2),
+                borderRadius: BorderRadius.circular(1),
               ),
             ),
           ),

@@ -165,11 +165,13 @@ class _CourseShellCardState extends State<CourseShellCard>
           _showContextMenu(context, d.globalPosition);
         },
         child: ValueListenableBuilder<String>(
-          valueListenable: ThemeService.instance.currentTheme,
-          builder: (context, _, _) => AppCard(
+          valueListenable: ThemeService.instance.currentColor,
+          builder: (context, _, _) => ValueListenableBuilder<String>(
+            valueListenable: ThemeService.instance.currentStyle,
+            builder: (context, style, _) => AppCard(
             color: tokens.AppThemeTokens.cardBackground,
             borderColor: tokens.AppThemeTokens.cardBorder,
-            borderRadius: tokens.AppThemeTokens.cardBorderRadius / 2,
+            borderRadius: style == 'vivid' ? 10.0 : 5.0,
             padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -182,9 +184,11 @@ class _CourseShellCardState extends State<CourseShellCard>
                       child: Text(
                         shell.title,
                         style: AppTextStyle.cardTitle.copyWith(
-                          fontSize: tokens.AppThemeTokens.titleFontSize,
+                          fontSize: style == 'vivid' ? 27 : 23,
                           color: tokens.AppThemeTokens.titleColor,
-                          fontWeight: tokens.AppThemeTokens.titleFontWeight,
+                          fontWeight: style == 'vivid'
+                              ? FontWeight.w700
+                              : FontWeight.w400,
                         ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
@@ -248,7 +252,8 @@ class _CourseShellCardState extends State<CourseShellCard>
           ),
         ),
       ),
-    );
+    ),
+  );
   }
 }
 

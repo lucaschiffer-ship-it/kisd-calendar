@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../config/app_theme.dart' as tokens;
 import '../services/calendar_service.dart';
+import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
@@ -81,8 +83,12 @@ class _CalendarScreenState extends State<CalendarScreen>
   Widget build(BuildContext context) {
     super.build(context);
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
+    return ValueListenableBuilder<String>(
+      valueListenable: ThemeService.instance.currentColor,
+      builder: (ctx, _, _) => ValueListenableBuilder<String>(
+        valueListenable: ThemeService.instance.currentStyle,
+        builder: (ctx, _, _) => Scaffold(
+      backgroundColor: tokens.AppThemeTokens.backgroundColor,
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -145,7 +151,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                     style: GoogleFonts.spaceGrotesk(
                       fontSize: 34,
                       fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary,
+                      color: tokens.AppThemeTokens.titleColor,
                       letterSpacing: -0.5,
                       height: 1.0,
                     ),
@@ -185,9 +191,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                         style: GoogleFonts.inter(
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
-                          color: i >= 5
-                              ? AppColors.textTertiary
-                              : AppColors.textSecondary,
+                          color: tokens.AppThemeTokens.secondaryTextColor,
                         ),
                       ),
                     ),
@@ -234,7 +238,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(height: 0.5, color: AppColors.divider),
+                  Container(height: 0.5, color: tokens.AppThemeTokens.cardBorder),
                   const SizedBox(height: 12),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -243,7 +247,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                       style: GoogleFonts.inter(
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
-                        color: AppColors.textSecondary,
+                        color: tokens.AppThemeTokens.secondaryTextColor,
                       ),
                     ),
                   ),
@@ -253,7 +257,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                         'Keine Ereignisse',
                         style: GoogleFonts.inter(
                           fontSize: 15,
-                          color: AppColors.textTertiary,
+                          color: tokens.AppThemeTokens.secondaryTextColor,
                         ),
                       ),
                     )
@@ -269,7 +273,9 @@ class _CalendarScreenState extends State<CalendarScreen>
           ],
         ),
       ),
-    );
+    ),
+  ),
+  );
   }
 }
 
@@ -319,11 +325,11 @@ class _MonthGrid extends StatelessWidget {
               if (isToday) {
                 textColor = Colors.white;
               } else if (!isCurrentMonth) {
-                textColor = const Color(0xFF3A3835);
+                textColor = tokens.AppThemeTokens.secondaryTextColor.withValues(alpha: 0.35);
               } else if (isWeekend) {
-                textColor = AppColors.textTertiary;
+                textColor = tokens.AppThemeTokens.secondaryTextColor.withValues(alpha: 0.6);
               } else {
-                textColor = AppColors.textPrimary;
+                textColor = tokens.AppThemeTokens.titleColor;
               }
 
               final BoxDecoration circleDeco;
@@ -333,7 +339,7 @@ class _MonthGrid extends StatelessWidget {
               } else if (isSelected) {
                 circleDeco = BoxDecoration(
                   shape: BoxShape.circle,
-                  border: Border.all(color: AppColors.textSecondary, width: 1));
+                  border: Border.all(color: tokens.AppThemeTokens.secondaryTextColor, width: 1));
               } else {
                 circleDeco = const BoxDecoration(shape: BoxShape.circle);
               }
@@ -430,7 +436,7 @@ class _EventRow extends StatelessWidget {
                   style: GoogleFonts.inter(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
-                    color: AppColors.textPrimary,
+                    color: tokens.AppThemeTokens.titleColor,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -440,7 +446,7 @@ class _EventRow extends StatelessWidget {
                   '${_fmt(event.start)} – ${_fmt(event.end)}',
                   style: GoogleFonts.inter(
                     fontSize: 12,
-                    color: AppColors.textSecondary,
+                    color: tokens.AppThemeTokens.secondaryTextColor,
                   ),
                 ),
               ],

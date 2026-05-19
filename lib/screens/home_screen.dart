@@ -65,6 +65,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _snapBackCtrl.addListener(_onSnapBackTick);
     loginService.addListener(_rebuild);
     mailService.addListener(_rebuild);
+    ThemeService.instance.currentColor.addListener(_rebuild);
+    ThemeService.instance.currentStyle.addListener(_rebuild);
     SpacesBrowser.register((url) {
       _browserKey.currentState?.navigateTo(url);
       _openSheet();
@@ -80,6 +82,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _pageController.dispose();
     loginService.removeListener(_rebuild);
     mailService.removeListener(_rebuild);
+    ThemeService.instance.currentColor.removeListener(_rebuild);
+    ThemeService.instance.currentStyle.removeListener(_rebuild);
     super.dispose();
   }
 
@@ -161,7 +165,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _reloadButton({
     required bool loading,
     required bool done,
-    required ColorScheme cs,
     required VoidCallback onPressed,
   }) =>
       IconButton(
@@ -170,17 +173,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 width: 18,
                 height: 18,
                 child: CircularProgressIndicator(
-                    strokeWidth: 2, color: cs.onSurface),
+                    strokeWidth: 2, color: tokens.AppThemeTokens.navBarIcon),
               )
             : done
                 ? const Icon(Icons.check, color: Color(0xFF30D158))
-                : Icon(CupertinoIcons.arrow_clockwise, color: cs.onSurface),
+                : Icon(CupertinoIcons.arrow_clockwise, color: tokens.AppThemeTokens.navBarIcon),
         onPressed: loading ? null : onPressed,
       );
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     final screenHeight = MediaQuery.of(context).size.height;
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     const tabRowHeight = 50.0;
@@ -190,27 +192,27 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       children: [
         // ── Main scaffold ────────────────────────────────────────────────
         Scaffold(
+          backgroundColor: tokens.AppThemeTokens.backgroundColor,
           appBar: AppBar(
+            backgroundColor: tokens.AppThemeTokens.backgroundColor,
             leading: _currentPage == 0
                 ? _reloadButton(
                     loading: mailService.isFetching,
                     done: _mailReloadDone,
-                    cs: colorScheme,
                     onPressed: _onMailReloadPressed,
                   )
                 : _currentPage == 2
                     ? _reloadButton(
                         loading: loginService.isLoading,
                         done: _calendarReloadDone,
-                        cs: colorScheme,
                         onPressed: _onCalendarReloadPressed,
                       )
                     : null,
-            title: Text(_titles[_currentPage], style: AppTextStyle.navTitle),
+            title: Text(_titles[_currentPage], style: AppTextStyle.navTitle.copyWith(color: tokens.AppThemeTokens.titleColor)),
             actions: [
               IconButton(
-                icon: const Icon(CupertinoIcons.settings,
-                    color: AppColors.textPrimary),
+                icon: Icon(CupertinoIcons.settings,
+                    color: tokens.AppThemeTokens.navBarIcon),
                 onPressed: _openSettings,
               ),
             ],
@@ -354,8 +356,10 @@ class _MiniBrowserBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<String>(
-      valueListenable: ThemeService.instance.currentTheme,
-      builder: (context, _, _) {
+      valueListenable: ThemeService.instance.currentColor,
+      builder: (context, _, _) => ValueListenableBuilder<String>(
+        valueListenable: ThemeService.instance.currentStyle,
+        builder: (context, _, _) {
         final bg = tokens.AppThemeTokens.miniBrowserBackground;
         final fg = tokens.AppThemeTokens.miniBrowserTextColor;
         return GestureDetector(
@@ -407,7 +411,8 @@ class _MiniBrowserBar extends StatelessWidget {
             ),
           ),
         );
-      },
+        },
+      ),
     );
   }
 }
@@ -531,13 +536,11 @@ class _IosTabBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final bgColor = isDark ? AppColors.tabBar : const Color(0xFFF9F9F9);
-    final dividerColor =
-        isDark ? AppColors.divider : const Color(0xFFD1D1D6);
-    final inactiveColor =
-        isDark ? AppColors.tabInactive : const Color(0xFF8E8E93);
+    final bgColor = tokens.AppThemeTokens.navBarBg;
+    final dividerColor = tokens.AppThemeTokens.cardBorder;
+    final activeColor = tokens.AppThemeTokens.eventAccent;
+    final inactiveColor = tokens.AppThemeTokens.locationColor;
 
     return Container(
       decoration: BoxDecoration(
@@ -551,7 +554,7 @@ class _IosTabBar extends StatelessWidget {
           child: Row(
             children: List.generate(_tabs.length, (i) {
               final isActive = i == currentPage;
-              final color = isActive ? colorScheme.primary : inactiveColor;
+              final color = isActive ? activeColor : inactiveColor;
               Widget iconWidget =
                   Icon(_tabs[i].icon, color: color, size: 22);
               if (i == 0 && mailUnread > 0) {

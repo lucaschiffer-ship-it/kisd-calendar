@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../services/spaces_dark_mode.dart';
+import '../services/theme_service.dart';
 
 class BrowserSheet extends StatefulWidget {
   const BrowserSheet({
@@ -97,9 +98,11 @@ class BrowserSheetState extends State<BrowserSheet> {
             onLoadStop: (ctrl, url) async {
               await _updateNavState();
               if (mounted) setState(() => _loading = false);
+              final isDark =
+                  ThemeService.instance.currentColor.value == 'dark';
               await ctrl.evaluateJavascript(
                 source:
-                    "document.documentElement.setAttribute('data-theme', 'dark');",
+                    "document.documentElement.setAttribute('data-theme', '${isDark ? 'dark' : 'light'}');",
               );
               await ctrl.evaluateJavascript(source: """
 (function() {

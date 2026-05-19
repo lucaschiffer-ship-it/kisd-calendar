@@ -5,18 +5,27 @@ class ThemeService {
   ThemeService._();
   static final ThemeService instance = ThemeService._();
 
-  static const _prefsKey = 'kisd_theme';
+  static const _styleKey = 'kisd_style';
+  static const _colorKey = 'kisd_color';
 
-  final ValueNotifier<String> currentTheme = ValueNotifier<String>('vivid');
+  final ValueNotifier<String> currentStyle = ValueNotifier<String>('vivid');
+  final ValueNotifier<String> currentColor = ValueNotifier<String>('dark');
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
-    currentTheme.value = prefs.getString(_prefsKey) ?? 'vivid';
+    currentStyle.value = prefs.getString(_styleKey) ?? 'vivid';
+    currentColor.value = prefs.getString(_colorKey) ?? 'dark';
   }
 
-  Future<void> setTheme(String theme) async {
-    currentTheme.value = theme;
+  Future<void> setStyle(String style) async {
+    currentStyle.value = style;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefsKey, theme);
+    await prefs.setString(_styleKey, style);
+  }
+
+  Future<void> setColor(String color) async {
+    currentColor.value = color;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_colorKey, color);
   }
 }

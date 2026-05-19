@@ -2,7 +2,9 @@ import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../config/app_theme.dart' as tokens;
 import '../services/service_locator.dart';
+import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
 import 'compose_screen.dart';
 import 'email_detail_screen.dart';
@@ -56,18 +58,19 @@ class _MailScreenState extends State<MailScreen>
     final hasMessages = mailService.messages.isNotEmpty;
     final error = mailService.connectionError;
 
-    if (loading && !hasMessages) {
-      return const _SkeletonList();
-    }
-
-    if (error != null && !hasMessages) {
-      return _ErrorView(
-        error: error,
-        onRetry: () => mailService.connect(),
-      );
-    }
-
-    return Stack(
+    return ValueListenableBuilder<String>(
+      valueListenable: ThemeService.instance.currentColor,
+      builder: (ctx, _, _) => ValueListenableBuilder<String>(
+        valueListenable: ThemeService.instance.currentStyle,
+        builder: (ctx, _, _) {
+          if (loading && !hasMessages) return const _SkeletonList();
+          if (error != null && !hasMessages) {
+            return _ErrorView(
+              error: error,
+              onRetry: () => mailService.connect(),
+            );
+          }
+          return Stack(
       children: [
         RefreshIndicator(
           onRefresh: () => mailService.reloadInbox(),
@@ -116,6 +119,9 @@ class _MailScreenState extends State<MailScreen>
           ),
         ),
       ],
+          );
+        },
+      ),
     );
   }
 }
@@ -187,8 +193,8 @@ class _EmailCard extends StatelessWidget {
                               child: Text(
                                 senderName,
                                 style: isUnread
-                                    ? AppTextStyle.headlineBold
-                                    : AppTextStyle.headline,
+                                    ? AppTextStyle.headlineBold.copyWith(color: tokens.AppThemeTokens.titleColor)
+                                    : AppTextStyle.headline.copyWith(color: tokens.AppThemeTokens.titleColor),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -214,8 +220,8 @@ class _EmailCard extends StatelessWidget {
                               child: Text(
                                 subject,
                                 style: isUnread
-                                    ? AppTextStyle.bodyBold
-                                    : AppTextStyle.body,
+                                    ? AppTextStyle.bodyBold.copyWith(color: tokens.AppThemeTokens.titleColor)
+                                    : AppTextStyle.body.copyWith(color: tokens.AppThemeTokens.secondaryTextColor),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -235,7 +241,7 @@ class _EmailCard extends StatelessWidget {
                         const SizedBox(height: 3),
                         Text(
                           preview,
-                          style: AppTextStyle.label,
+                          style: AppTextStyle.label.copyWith(color: tokens.AppThemeTokens.secondaryTextColor),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -417,12 +423,12 @@ class _EmptyState extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(CupertinoIcons.tray, size: 56, color: AppColors.textTertiary),
+          Icon(CupertinoIcons.tray, size: 56, color: tokens.AppThemeTokens.secondaryTextColor),
           const SizedBox(height: 16),
           Text('No messages',
-              style: AppTextStyle.headline.copyWith(fontSize: 17)),
+              style: AppTextStyle.headline.copyWith(fontSize: 17, color: tokens.AppThemeTokens.titleColor)),
           const SizedBox(height: 6),
-          Text('Your inbox is empty.', style: AppTextStyle.body),
+          Text('Your inbox is empty.', style: AppTextStyle.body.copyWith(color: tokens.AppThemeTokens.secondaryTextColor)),
         ],
       ),
     );

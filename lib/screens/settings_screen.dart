@@ -61,12 +61,12 @@ class SettingsScreen extends StatelessWidget {
       ),
       body: ListView(
         children: [
-          // ── Appearance ───────────────────────────────────────────────────
+          // ── Style ────────────────────────────────────────────────────────
           const SizedBox(height: 24),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Text(
-              'APPEARANCE',
+              'STYLE',
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
@@ -79,8 +79,8 @@ class SettingsScreen extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: ValueListenableBuilder<String>(
-              valueListenable: ThemeService.instance.currentTheme,
-              builder: (context, theme, _) => ClipRRect(
+              valueListenable: ThemeService.instance.currentStyle,
+              builder: (context, style, _) => ClipRRect(
                 borderRadius: BorderRadius.circular(12),
                 child: Container(
                   color: colorScheme.surfaceContainerHigh,
@@ -88,9 +88,9 @@ class SettingsScreen extends StatelessWidget {
                     children: [
                       _ThemeOption(
                         label: 'Vivid',
-                        subtitle: 'Orange accents, high contrast',
-                        selected: theme == 'vivid',
-                        onTap: () => ThemeService.instance.setTheme('vivid'),
+                        subtitle: 'Bold weight, rounded cards, bar indicator',
+                        selected: style == 'vivid',
+                        onTap: () => ThemeService.instance.setStyle('vivid'),
                       ),
                       Divider(
                         height: 1,
@@ -100,9 +100,71 @@ class SettingsScreen extends StatelessWidget {
                       ),
                       _ThemeOption(
                         label: 'Minimal',
-                        subtitle: 'Muted greys, low contrast',
-                        selected: theme == 'minimal',
-                        onTap: () => ThemeService.instance.setTheme('minimal'),
+                        subtitle: 'Light weight, tight cards, dot indicator',
+                        selected: style == 'minimal',
+                        onTap: () => ThemeService.instance.setStyle('minimal'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // ── Colour ───────────────────────────────────────────────────────
+          const SizedBox(height: 24),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Text(
+              'COLOUR',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: colorScheme.onSurface.withAlpha(100),
+                letterSpacing: 1.2,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: ValueListenableBuilder<String>(
+              valueListenable: ThemeService.instance.currentColor,
+              builder: (context, color, _) => ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  color: colorScheme.surfaceContainerHigh,
+                  child: Column(
+                    children: [
+                      _ThemeOption(
+                        label: 'Dark',
+                        subtitle: 'Black background, orange accents',
+                        selected: color == 'dark',
+                        onTap: () => ThemeService.instance.setColor('dark'),
+                      ),
+                      Divider(
+                        height: 1,
+                        thickness: 0.5,
+                        indent: 16,
+                        color: Colors.white.withAlpha(18),
+                      ),
+                      _ThemeOption(
+                        label: 'Light',
+                        subtitle: 'White background, clean greys',
+                        selected: color == 'light',
+                        onTap: () => ThemeService.instance.setColor('light'),
+                      ),
+                      Divider(
+                        height: 1,
+                        thickness: 0.5,
+                        indent: 16,
+                        color: Colors.white.withAlpha(18),
+                      ),
+                      _ThemeOption(
+                        label: 'Pastel',
+                        subtitle: 'Warm sand tones, soft browns',
+                        selected: color == 'pastel',
+                        onTap: () => ThemeService.instance.setColor('pastel'),
                       ),
                     ],
                   ),

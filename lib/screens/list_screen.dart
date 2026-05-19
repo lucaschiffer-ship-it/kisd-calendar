@@ -114,7 +114,11 @@ class _ListScreenState extends State<ListScreen>
   Widget build(BuildContext context) {
     super.build(context);
 
-    return RefreshIndicator(
+    return ValueListenableBuilder<String>(
+      valueListenable: ThemeService.instance.currentColor,
+      builder: (ctx, _, _) => ValueListenableBuilder<String>(
+        valueListenable: ThemeService.instance.currentStyle,
+        builder: (ctx, _, _) => RefreshIndicator(
       color: AppColors.accent,
       onRefresh: _scrape,
       child: CustomScrollView(
@@ -135,7 +139,10 @@ class _ListScreenState extends State<ListScreen>
                     children: [
                       RichText(
                         text: TextSpan(
-                          style: AppTextStyle.cardTitle.copyWith(fontSize: 32),
+                          style: AppTextStyle.cardTitle.copyWith(
+                            fontSize: 32,
+                            color: tokens.AppThemeTokens.titleColor,
+                          ),
                           children: [
                             TextSpan(
                               text: _weekdays[_now.weekday - 1],
@@ -150,7 +157,10 @@ class _ListScreenState extends State<ListScreen>
                       Text(
                         '${_now.hour.toString().padLeft(2, '0')}:'
                         '${_now.minute.toString().padLeft(2, '0')}',
-                        style: AppTextStyle.cardTitle.copyWith(fontSize: 32),
+                        style: AppTextStyle.cardTitle.copyWith(
+                          fontSize: 32,
+                          color: tokens.AppThemeTokens.titleColor,
+                        ),
                       ),
                     ],
                   ),
@@ -159,13 +169,13 @@ class _ListScreenState extends State<ListScreen>
                     for (final evt in _todayEvents) _TodayEventRow(event: evt),
                   ],
                   const SizedBox(height: 20),
-                  Text('My\nCourses', style: AppTextStyle.pageTitle),
+                  Text('My\nCourses', style: AppTextStyle.pageTitle.copyWith(color: tokens.AppThemeTokens.titleColor)),
                   const SizedBox(height: 10),
                   Text(
                     _loading
                         ? 'LOADING…'
                         : '${_shells.length} COURSE${_shells.length == 1 ? '' : 'S'}',
-                    style: AppTextStyle.label,
+                    style: AppTextStyle.label.copyWith(color: tokens.AppThemeTokens.secondaryTextColor),
                   ),
                 ],
               ),
@@ -242,6 +252,8 @@ class _ListScreenState extends State<ListScreen>
             ),
         ],
       ),
+        ),
+      ),
     );
   }
 }
@@ -260,9 +272,11 @@ class _TodayEventRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<String>(
-      valueListenable: ThemeService.instance.currentTheme,
-      builder: (context, _, _) {
-        final useDot = tokens.AppThemeTokens.useEventDot;
+      valueListenable: ThemeService.instance.currentColor,
+      builder: (context, _, _) => ValueListenableBuilder<String>(
+        valueListenable: ThemeService.instance.currentStyle,
+        builder: (context, style, _) {
+        final useDot = style != 'vivid';
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 5),
           child: Row(
@@ -295,14 +309,15 @@ class _TodayEventRow extends StatelessWidget {
                     Text(
                       event.title,
                       style: AppTextStyle.bodyBold.copyWith(
-                          fontSize: 14, fontWeight: FontWeight.w500),
+                          fontSize: 14, fontWeight: FontWeight.w500,
+                          color: tokens.AppThemeTokens.titleColor),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
                     Text(
                       '${_fmt(event.start)} – ${_fmt(event.end)}',
-                      style: AppTextStyle.body.copyWith(fontSize: 12),
+                      style: AppTextStyle.body.copyWith(fontSize: 12, color: tokens.AppThemeTokens.secondaryTextColor),
                     ),
                   ],
                 ),
@@ -310,7 +325,8 @@ class _TodayEventRow extends StatelessWidget {
             ],
           ),
         );
-      },
+        },
+      ),
     );
   }
 }

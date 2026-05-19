@@ -264,9 +264,27 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       // Drag handle
                       SafeArea(
                         bottom: false,
-                        child: Padding(
-                          padding: const EdgeInsets.only(top: 12, bottom: 8),
-                          child: Center(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: _closeSheet,
+                          onVerticalDragUpdate: (details) {
+                            if (_snapBackCtrl.isAnimating) _snapBackCtrl.stop();
+                            setState(() => _dragOffset =
+                                (_dragOffset + details.delta.dy).clamp(0.0, 600.0));
+                          },
+                          onVerticalDragEnd: (details) {
+                            final velocityY = details.primaryVelocity ?? 0;
+                            if (_dragOffset > 200 || velocityY > 800) {
+                              setState(() => _dragOffset = 0);
+                              _closeSheet();
+                            } else {
+                              _snapBack();
+                            }
+                          },
+                          child: Container(
+                            width: double.infinity,
+                            height: 44,
+                            alignment: Alignment.center,
                             child: Container(
                               width: 36,
                               height: 4,
@@ -359,61 +377,73 @@ class _MiniBrowserBar extends StatelessWidget {
       valueListenable: ThemeService.instance.currentColor,
       builder: (context, _, _) => ValueListenableBuilder<String>(
         valueListenable: ThemeService.instance.currentStyle,
-        builder: (context, _, _) {
-        final bg = tokens.AppThemeTokens.miniBrowserBackground;
+        builder: (context, _, _) => ValueListenableBuilder<bool>(
+        valueListenable: ThemeService.instance.glassEnabled,
+        builder: (context, glass, _) {
         final fg = tokens.AppThemeTokens.miniBrowserTextColor;
+        final barContent = Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF5C2B),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    color: fg,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Opacity(
+                opacity: 0.7,
+                child: Icon(Icons.keyboard_arrow_up, color: fg, size: 18),
+              ),
+            ],
+          ),
+        );
         return GestureDetector(
           onTap: onTap,
-          child: Container(
+          child: SizedBox(
             height: 50,
-            decoration: BoxDecoration(
-              color: bg,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: fg.withValues(alpha: 0.15), width: 0.5),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.3),
-                  blurRadius: 8,
-                  offset: const Offset(0, -2),
-                ),
-              ],
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFF5C2B),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: TextStyle(
-                      color: fg,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
+            child: glass
+                ? tokens.AppThemeTokens.glassContainer(
+                    borderRadius: BorderRadius.circular(8),
+                    child: barContent,
+                  )
+                : Container(
+                    decoration: BoxDecoration(
+                      color: tokens.AppThemeTokens.miniBrowserBackground,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: fg.withValues(alpha: 0.15), width: 0.5),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.3),
+                          blurRadius: 8,
+                          offset: const Offset(0, -2),
+                        ),
+                      ],
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    child: barContent,
                   ),
-                ),
-                const SizedBox(width: 4),
-                Opacity(
-                  opacity: 0.7,
-                  child: Icon(Icons.keyboard_arrow_up, color: fg, size: 18),
-                ),
-              ],
-            ),
           ),
         );
         },
       ),
-    );
+    ),
+  );
   }
 }
 
@@ -542,17 +572,11 @@ class _IosTabBar extends StatelessWidget {
     final activeColor = tokens.AppThemeTokens.eventAccent;
     final inactiveColor = tokens.AppThemeTokens.locationColor;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: bgColor,
-        border: Border(top: BorderSide(color: dividerColor, width: 0.5)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          height: 50,
-          child: Row(
-            children: List.generate(_tabs.length, (i) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: ThemeService.instance.glassEnabled,
+      builder: (context, glass, _) {
+        final tabRow = Row(
+          children: List.generate(_tabs.length, (i) {
               final isActive = i == currentPage;
               final color = isActive ? activeColor : inactiveColor;
               Widget iconWidget =
@@ -612,9 +636,27 @@ class _IosTabBar extends StatelessWidget {
                 ),
               );
             }),
-          ),
-        ),
-      ),
-    );
+          );
+          final navContent = SafeArea(
+            top: false,
+            child: SizedBox(height: 50, child: tabRow),
+          );
+          if (glass) {
+            return ClipRect(
+              child: tokens.AppThemeTokens.glassContainer(
+                borderRadius: BorderRadius.zero,
+                child: navContent,
+              ),
+            );
+          }
+          return Container(
+            decoration: BoxDecoration(
+              color: bgColor,
+              border: Border(top: BorderSide(color: dividerColor, width: 0.5)),
+            ),
+            child: navContent,
+          );
+        },
+      );
   }
 }

@@ -8,6 +8,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import '../models/course_shell.dart';
 import 'cache_service.dart';
 import 'calendar_service.dart';
+import 'service_locator.dart';
 import 'spaces_dark_mode.dart';
 
 class ScraperService extends ChangeNotifier {
@@ -138,9 +139,26 @@ class ScraperService extends ChangeNotifier {
       ),
       onLoadStop: (ctrl, pageUrl) async {
         if (completer.isCompleted || processing) return;
-        if (!(pageUrl?.toString() ?? '').contains('course-selection')) return;
+        final urlStr = pageUrl?.toString() ?? '';
+        print('[scraper] onLoadStop: $urlStr');
+
+        // Detect SAML/login redirects — session cookies weren't accepted.
+        // Fail fast instead of silently waiting for the 5-minute timeout.
+        if (urlStr.contains('login.th-koeln.de') ||
+            urlStr.contains('mfa.th-koeln.de') ||
+            (urlStr.contains('spaces.kisd.de') && !urlStr.contains('course-selection'))) {
+          if (!completer.isCompleted) {
+            completer.completeError(
+                Exception('auth_required: redirected to $urlStr'));
+            view?.dispose();
+            view = null;
+          }
+          return;
+        }
+
+        if (!urlStr.contains('course-selection')) return;
         processing = true;
-        print('[scraper] page loaded: $pageUrl');
+        print('[scraper] page loaded: $urlStr');
         try {
           if (scrollFirst) await _scrollToLoadMore(ctrl);
           final shells = await _extractFromPage(ctrl,
@@ -162,6 +180,28 @@ class ScraperService extends ChangeNotifier {
         }
       },
     );
+
+    // Re-seed session cookies before the WebView loads. On a real device the
+    // WKHTTPCookieStore propagation to the WebContent process is async; an
+    // explicit setCookie here ensures cookies are in the store in time.
+    final sessionCookies = await loginService.getSavedCookies();
+    if (sessionCookies.isNotEmpty) {
+      final mgr = CookieManager.instance();
+      for (final c in sessionCookies) {
+        try {
+          await mgr.setCookie(
+            url: WebUri('https://spaces.kisd.de'),
+            name: c['name'] as String,
+            value: c['value'] as String,
+            domain: c['domain'] as String?,
+            path: (c['path'] as String?) ?? '/',
+            isSecure: c['isSecure'] as bool?,
+            isHttpOnly: c['isHttpOnly'] as bool?,
+          );
+        } catch (_) {}
+      }
+      print('[scraper] pre-injected ${sessionCookies.length} session cookies');
+    }
 
     await view!.run();
     return completer.future.timeout(
@@ -209,12 +249,16 @@ class ScraperService extends ChangeNotifier {
     bool isMyCourse = false,
     Set<String> skipTitles = const {},
   }) async {
-    final raw = await ctrl.callAsyncJavaScript(
+    var raw = await ctrl.callAsyncJavaScript(
       functionBody: _kExtractScript,
     );
-
     if (raw?.value == null) {
-      print('[scraper] JS returned null — page may not be a course listing');
+      print('[scraper] JS returned null — retrying in 2 s');
+      await Future.delayed(const Duration(seconds: 2));
+      raw = await ctrl.callAsyncJavaScript(functionBody: _kExtractScript);
+    }
+    if (raw?.value == null) {
+      print('[scraper] JS returned null after retry');
       return [];
     }
 

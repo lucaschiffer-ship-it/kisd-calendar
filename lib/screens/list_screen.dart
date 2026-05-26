@@ -118,6 +118,11 @@ class _ListScreenState extends State<ListScreen>
       }
     } catch (e) {
       print('[list] background scrape failed: $e');
+      if (e.toString().contains('auth_required')) {
+        print('[list] session expired — re-logging in (background)');
+        final ok = await loginService.loginWithStoredCredentials();
+        if (ok) _scrapeBackground();
+      }
       return;
     }
     _runAllCoursesBackground(); // intentionally not awaited
@@ -157,6 +162,27 @@ class _ListScreenState extends State<ListScreen>
         });
       }
     } catch (e) {
+      if (e.toString().contains('auth_required')) {
+        print('[list] session expired — re-logging in');
+        final ok = await loginService.loginWithStoredCredentials();
+        if (ok) {
+          try {
+            final shells = await scraperService.scrapeMyCourses();
+            if (mounted) {
+              setState(() { _shells = shells; _loading = false; _rebuildFilteredLists(); });
+            }
+            _runAllCoursesBackground();
+            return;
+          } catch (_) {}
+        }
+        if (mounted) {
+          setState(() {
+            _error = 'Session expired. Please log out and back in.';
+            _loading = false;
+          });
+        }
+        return;
+      }
       if (mounted) setState(() { _error = e.toString(); _loading = false; });
       return;
     }

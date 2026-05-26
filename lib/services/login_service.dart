@@ -460,6 +460,12 @@ class LoginService extends ChangeNotifier {
     }
   }
 
+  Future<List<Map<String, dynamic>>> getSavedCookies() async {
+    final raw = await _storage.read(key: _keyCookies);
+    if (raw == null) return [];
+    return (json.decode(raw) as List).cast<Map<String, dynamic>>();
+  }
+
   Future<void> logout() async {
     await _storage.delete(key: _keyUser);
     await _storage.delete(key: _keyPass);

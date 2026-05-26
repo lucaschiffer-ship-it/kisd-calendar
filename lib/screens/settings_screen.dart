@@ -173,6 +173,42 @@ class SettingsScreen extends StatelessWidget {
             ),
           ),
 
+          // ── Effects ──────────────────────────────────────────────────────
+          const SizedBox(height: 24),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Text(
+              'EFFECTS',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: colorScheme.onSurface.withAlpha(100),
+                letterSpacing: 1.2,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: ValueListenableBuilder<bool>(
+              valueListenable: ThemeService.instance.glassEnabled,
+              builder: (context, glass, _) => ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  color: colorScheme.surfaceContainerHigh,
+                  child: SwitchListTile(
+                    title: const Text('Glass UI',
+                        style: TextStyle(fontWeight: FontWeight.w500)),
+                    subtitle: const Text('Frosted glass backgrounds'),
+                    value: glass,
+                    onChanged: ThemeService.instance.setGlass,
+                    activeThumbColor: colorScheme.primary,
+                  ),
+                ),
+              ),
+            ),
+          ),
+
           // ── Other ────────────────────────────────────────────────────────
           const SizedBox(height: 32),
           Padding(

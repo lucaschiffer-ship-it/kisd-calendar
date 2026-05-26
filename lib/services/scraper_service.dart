@@ -11,8 +11,10 @@ import 'calendar_service.dart';
 import 'spaces_dark_mode.dart';
 
 class ScraperService extends ChangeNotifier {
-  static const _listUrl =
+  static const _myCoursesUrl =
       'https://spaces.kisd.de/course-selection/?semester=2026-1&mycourses=on';
+  static const _allCoursesUrl =
+      'https://spaces.kisd.de/course-selection/?semester=2026-1';
 
   bool _isLoading = false;
   String? _error;
@@ -30,21 +32,42 @@ class ScraperService extends ChangeNotifier {
   Future<void> saveToCache(List<CourseShell> shells) =>
       CacheService().saveCourses(shells.map(_toJson).toList());
 
-  Future<List<CourseShell>> scrape() async {
+  // Fast path: only enrolled courses. Saves to cache, writes calendar, marks timestamp.
+  Future<List<CourseShell>> scrapeMyCourses() async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      final shells = await _scrapeShells();
+      final scraped = await _scrapeOnePage(_myCoursesUrl, isMyCourse: true);
+
+      // Preserve isFavourite choices the user set manually — but only if the
+      // course was already enrolled (isMyCourse: true in cache). If it was
+      // previously a non-enrolled course (allCourses-only, isFavourite: false
+      // by default), treat it as newly enrolled and keep isFavourite: true.
+      final existing = await CacheService().loadCourses();
+      final cachedById = <String, Map<String, dynamic>>{
+        for (final c in existing) if (c['id'] != null) c['id'] as String: c,
+      };
+      final shells = scraped.map((s) {
+        final cached = cachedById[s.id];
+        if (cached == null) return s; // new course → isFavourite: true (default)
+        final wasMyCourse = (cached['isMyCourse'] as bool?) ?? false;
+        if (!wasMyCourse) return s; // was non-enrolled → treat as newly enrolled, keep true
+        // Was already enrolled: honour the user's explicit isFavourite toggle.
+        final cachedFav = (cached['isFavourite'] as bool?) ?? true;
+        return s.copyWith(isFavourite: cachedFav);
+      }).toList();
+
       await saveToCache(shells);
-      // Write to device calendar in the background — don't block the scrape result.
+      await CacheService().markScraped();
       CalendarService.instance.writeCourses(shells).ignore();
+
       _isLoading = false;
       notifyListeners();
       return shells;
     } catch (e, st) {
-      print('[scraper] error: $e\n$st');
+      print('[scraper] scrapeMyCourses error: $e\n$st');
       _isLoading = false;
       _error = e.toString();
       notifyListeners();
@@ -52,28 +75,79 @@ class ScraperService extends ChangeNotifier {
     }
   }
 
-  // ─── Core scrape flow ─────────────────────────────────────────────────────
+  // Slow path: all courses. Merges with the cache, preserving isMyCourse /
+  // isFavourite. Does not write the calendar or update the scrape timestamp.
+  Future<List<CourseShell>> scrapeAllCourses() async {
+    try {
+      final existing = await CacheService().loadCourses();
+      final cachedShells = existing.map(_fromJson).toList();
+      final skipTitles = {for (final s in cachedShells) s.title.toLowerCase()};
 
-  Future<List<CourseShell>> _scrapeShells() async {
+      final newShells = await _scrapeOnePage(
+        _allCoursesUrl,
+        isMyCourse: false,
+        skipTitles: skipTitles,
+        scrollFirst: true,
+      );
+      print('[scraper] all-courses new: ${newShells.length}');
+
+      final merged = _mergeShells(cachedShells, newShells);
+      print('[scraper] merged total: ${merged.length}');
+
+      // Re-read the latest favourite state — it may have changed while the
+      // long all-courses scrape was running.
+      final latestCache = await CacheService().loadCourses();
+      final latestFavMap = <String, bool>{
+        for (final c in latestCache)
+          if (c['id'] != null && c['isFavourite'] != null)
+            c['id'] as String: c['isFavourite'] as bool,
+      };
+      final mergedWithFavs = merged
+          .map((s) => latestFavMap.containsKey(s.id)
+              ? s.copyWith(isFavourite: latestFavMap[s.id]!)
+              : s)
+          .toList();
+
+      await saveToCache(mergedWithFavs);
+      return mergedWithFavs;
+    } catch (e, st) {
+      print('[scraper] scrapeAllCourses error: $e\n$st');
+      rethrow;
+    }
+  }
+
+  // ─── Core WebView scraper ─────────────────────────────────────────────────
+
+  Future<List<CourseShell>> _scrapeOnePage(
+    String url, {
+    required bool isMyCourse,
+    Set<String> skipTitles = const {},
+    bool scrollFirst = false,
+  }) async {
     final completer = Completer<List<CourseShell>>();
     HeadlessInAppWebView? view;
+    var processing = false;
 
     view = HeadlessInAppWebView(
-      initialUrlRequest: URLRequest(url: WebUri(_listUrl)),
+      initialUrlRequest: URLRequest(url: WebUri(url)),
       initialUserScripts: UnmodifiableListView([spacesDarkModeScript]),
       initialSettings: InAppWebViewSettings(
         javaScriptEnabled: true,
         domStorageEnabled: true,
         sharedCookiesEnabled: true,
       ),
-      onLoadStop: (ctrl, url) async {
-        if (completer.isCompleted) return;
-        print('[scraper] listing page loaded: $url');
+      onLoadStop: (ctrl, pageUrl) async {
+        if (completer.isCompleted || processing) return;
+        if (!(pageUrl?.toString() ?? '').contains('course-selection')) return;
+        processing = true;
+        print('[scraper] page loaded: $pageUrl');
         try {
-          final shells = await _extractFromPage(ctrl);
+          if (scrollFirst) await _scrollToLoadMore(ctrl);
+          final shells = await _extractFromPage(ctrl,
+              isMyCourse: isMyCourse, skipTitles: skipTitles);
           completer.complete(shells);
         } catch (e, st) {
-          completer.completeError(e, st);
+          if (!completer.isCompleted) completer.completeError(e, st);
         } finally {
           view?.dispose();
           view = null;
@@ -91,13 +165,50 @@ class ScraperService extends ChangeNotifier {
 
     await view!.run();
     return completer.future.timeout(
-      const Duration(seconds: 60),
-      onTimeout: () => throw TimeoutException('Scraper timed out after 60 s'),
+      const Duration(minutes: 5),
+      onTimeout: () =>
+          throw TimeoutException('Scraper timed out after 5 minutes'),
     );
   }
 
+  // Scroll repeatedly to trigger lazy-loaded / "load more" content.
+  Future<void> _scrollToLoadMore(InAppWebViewController ctrl) async {
+    await ctrl.callAsyncJavaScript(functionBody: r"""
+      let prev = 0;
+      let unchanged = 0;
+      while (unchanged < 3) {
+        window.scrollTo(0, document.body.scrollHeight);
+        document.querySelectorAll(
+          'button[class*="more"], [class*="load-more"], .loadmore, .btn-load-more'
+        ).forEach(btn => { try { btn.click(); } catch(_) {} });
+        await new Promise(r => setTimeout(r, 1200));
+        const count = document.querySelectorAll(
+          'article.card.course, article.course, .course-item, [class*="course"]'
+        ).length;
+        if (count === prev) { unchanged++; } else { unchanged = 0; prev = count; }
+      }
+    """);
+  }
+
+  // Merge: myCourse shells take priority; allShells adds only new courses.
+  List<CourseShell> _mergeShells(
+      List<CourseShell> myShells, List<CourseShell> allShells) {
+    final myIds = {for (final s in myShells) s.id};
+    final myTitles = {for (final s in myShells) s.title.toLowerCase()};
+    final result = [...myShells];
+    for (final s in allShells) {
+      if (!myIds.contains(s.id) && !myTitles.contains(s.title.toLowerCase())) {
+        result.add(s);
+      }
+    }
+    return result;
+  }
+
   Future<List<CourseShell>> _extractFromPage(
-      InAppWebViewController ctrl) async {
+    InAppWebViewController ctrl, {
+    bool isMyCourse = false,
+    Set<String> skipTitles = const {},
+  }) async {
     final raw = await ctrl.callAsyncJavaScript(
       functionBody: _kExtractScript,
     );
@@ -111,13 +222,18 @@ class ScraperService extends ChangeNotifier {
         json.decode(raw!.value.toString()) as List<dynamic>;
     print('[scraper] found ${cards.length} course cards');
 
-
     final shells = <CourseShell>[];
     for (final card in cards) {
       final map = card as Map<String, dynamic>;
 
-      // Always fetch the detail page — Space URL (priority-1 link),
-      // location, and description all live there, not in the listing card.
+      // Compute title early so we can skip known courses without a detail fetch.
+      final rawTitle = (map['title'] as String?)?.trim() ?? '';
+      final title = rawTitle.contains(' | ')
+          ? rawTitle.split(' | ').first.trim()
+          : rawTitle;
+      if (title.isEmpty) continue;
+      if (skipTitles.contains(title.toLowerCase())) continue;
+
       String? location = (map['location'] as String?)?.trim();
       String? spaceUrl;
       String? description;
@@ -125,19 +241,22 @@ class ScraperService extends ChangeNotifier {
       if (detailUrl.isNotEmpty) {
         final detail = await _fetchDetailData(ctrl, detailUrl);
         if (location == null || location.isEmpty) location = detail.location;
-        spaceUrl    = detail.spaceUrl;
+        spaceUrl = detail.spaceUrl;
         description = detail.description;
       }
 
       final shell = _buildShell(
         map,
         location?.trim().isEmpty == true ? null : location?.trim(),
-        spaceUrl:    spaceUrl,
-        detailDesc:  description,
+        spaceUrl: spaceUrl,
+        detailDesc: description,
+        isMyCourse: isMyCourse,
+        isFavourite: isMyCourse,
       );
       if (shell != null) {
         shells.add(shell);
-        print('[scraper] parsed: ${shell.title}  spaceUrl=${spaceUrl ?? '-'}  location=${location ?? '-'}');
+        print(
+            '[scraper] parsed: ${shell.title}  isMyCourse=$isMyCourse  spaceUrl=${spaceUrl ?? '-'}  location=${location ?? '-'}');
       }
     }
 
@@ -372,8 +491,14 @@ class ScraperService extends ChangeNotifier {
 
   // ─── Build CourseShell from extracted map ─────────────────────────────────
 
-  CourseShell? _buildShell(Map<String, dynamic> map, String? location,
-      {String? spaceUrl, String? detailDesc}) {
+  CourseShell? _buildShell(
+    Map<String, dynamic> map,
+    String? location, {
+    String? spaceUrl,
+    String? detailDesc,
+    bool isMyCourse = false,
+    bool isFavourite = false,
+  }) {
     final rawTitle = (map['title'] as String?)?.trim() ?? '';
     // Strip bilingual suffix: "English | Deutsch" → "English"
     final title = rawTitle.contains(' | ')
@@ -443,6 +568,8 @@ class ScraperService extends ChangeNotifier {
       location: location,
       links: links,
       isManual: false,
+      isMyCourse: isMyCourse,
+      isFavourite: isFavourite,
     );
   }
 
@@ -568,6 +695,8 @@ class ScraperService extends ChangeNotifier {
             .toList(),
         'isManual': s.isManual,
         'isLiked': s.isLiked,
+        'isMyCourse': s.isMyCourse,
+        'isFavourite': s.isFavourite,
       };
 
   static CourseShell _fromJson(Map<String, dynamic> j) => CourseShell(
@@ -600,6 +729,8 @@ class ScraperService extends ChangeNotifier {
         }).toList(),
         isManual: (j['isManual'] as bool?) ?? false,
         isLiked: (j['isLiked'] as bool?) ?? false,
+        isMyCourse: (j['isMyCourse'] as bool?) ?? false,
+        isFavourite: (j['isFavourite'] as bool?) ?? false,
       );
 }
 

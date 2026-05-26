@@ -13,13 +13,13 @@ class AppColors {
   static const elevated   = Color(0xFF1E1E1E);
 
   // Accent
-  static const accent      = Color(0xFFFF5C2B); // warm orange
+  static const accent      = Color(0xFFEB5A01); // warm orange
   static const accentLight = Color(0xFFFF8A5C); // gradient endpoint
   static const accentMuted = Color(0xFF3D1D10); // deep dark orange for bg tints
 
   // Semantic
   static const red         = Color(0xFFFF453A);
-  static const heartActive = red;
+  static const heartActive = accent;
   static const success     = Color(0xFF30D158);
 
   // Text — warm tones
@@ -34,7 +34,7 @@ class AppColors {
   static const divider     = Color(0xFF1E1E1E);
 
   // Card border — warm orange at ~7 %
-  static const cardBorder  = Color(0x12FF5C2B);
+  static const cardBorder  = Color(0x12EB5A01);
 }
 
 // ─── Spacing & shape tokens ───────────────────────────────────────────────────

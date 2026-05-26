@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import '../services/theme_service.dart';
 
@@ -34,9 +36,9 @@ class AppThemeTokens {
       };
 
   static Color get timesColor => switch (_color) {
-        'light' => const Color(0xFFFF5C2B),
+        'light' => const Color(0xFFEB5A01),
         'pastel' => const Color(0xFFE8845A),
-        _ => const Color(0xFFFF5C2B).withValues(alpha: 0.85),
+        _ => const Color(0xFFEB5A01).withValues(alpha: 0.85),
       };
 
   static Color get locationColor => switch (_color) {
@@ -64,9 +66,9 @@ class AppThemeTokens {
       };
 
   static Color get miniBrowserBackground => switch (_color) {
-        'light' => const Color(0xFFFF5C2B),
+        'light' => const Color(0xFFEB5A01),
         'pastel' => const Color(0xFFE8845A),
-        _ => const Color(0xFFFF5C2B),
+        _ => const Color(0xFFEB5A01),
       };
 
   static Color get miniBrowserTextColor => switch (_color) {
@@ -76,9 +78,9 @@ class AppThemeTokens {
       };
 
   static Color get eventAccent => switch (_color) {
-        'light' => const Color(0xFFFF5C2B),
+        'light' => const Color(0xFFEB5A01),
         'pastel' => const Color(0xFFE8845A),
-        _ => const Color(0xFFFF5C2B),
+        _ => const Color(0xFFEB5A01),
       };
 
   // Alias kept for existing widget references
@@ -95,4 +97,43 @@ class AppThemeTokens {
 
   // 'bar' for vivid, 'dot' for minimal
   static bool get useEventDot => _style != 'vivid';
+
+  // ── Glass helper ──────────────────────────────────────────────────────────────
+
+  static Widget glassContainer({
+    required Widget child,
+    double blur = 20,
+    double opacity = 0.15,
+    BorderRadius? borderRadius,
+    Color? tintColor,
+  }) {
+    if (ThemeService.instance.glassEnabled.value) {
+      final tint = tintColor ?? Colors.white;
+      return ClipRRect(
+        borderRadius: borderRadius ?? BorderRadius.zero,
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+          child: Container(
+            decoration: BoxDecoration(
+              color: tint.withValues(alpha: opacity),
+              borderRadius: borderRadius,
+              border: Border.all(
+                color: tint.withValues(alpha: 0.25),
+                width: 0.5,
+              ),
+            ),
+            child: child,
+          ),
+        ),
+      );
+    }
+    return Container(
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        border: Border.all(color: cardBorder, width: 0.5),
+        borderRadius: borderRadius,
+      ),
+      child: child,
+    );
+  }
 }

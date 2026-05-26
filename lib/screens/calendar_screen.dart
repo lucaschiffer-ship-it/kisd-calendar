@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -83,17 +85,24 @@ class _CalendarScreenState extends State<CalendarScreen>
   Widget build(BuildContext context) {
     super.build(context);
 
-    return ValueListenableBuilder<String>(
-      valueListenable: ThemeService.instance.currentColor,
-      builder: (ctx, _, _) => ValueListenableBuilder<String>(
-        valueListenable: ThemeService.instance.currentStyle,
-        builder: (ctx, _, _) => Scaffold(
-      backgroundColor: tokens.AppThemeTokens.backgroundColor,
-      body: SafeArea(
-        child: Column(
+    return AnimatedBuilder(
+      animation: Listenable.merge([
+        ThemeService.instance.currentColor,
+        ThemeService.instance.currentStyle,
+        ThemeService.instance.glassEnabled,
+      ]),
+      builder: (context, _) {
+        final glass    = ThemeService.instance.glassEnabled.value;
+        final colorKey = ThemeService.instance.currentColor.value;
+        final glassBg  = colorKey == 'dark'
+            ? Colors.white.withValues(alpha: 0.08)
+            : Colors.white.withValues(alpha: 0.50);
+
+        // ── Calendar top header (nav + month name + weekday letters) ───────
+        final topHeader = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Nav row: < year · · · icons ───────────────────────────────
+            // Nav row
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
               child: Row(
@@ -104,8 +113,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.chevron_left,
-                            color: AppColors.accent, size: 24),
+                        const Icon(Icons.chevron_left, color: AppColors.accent, size: 24),
                         const SizedBox(width: 1),
                         Text(
                           '${_displayedMonth.year}',
@@ -139,8 +147,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                 ],
               ),
             ),
-
-            // ── Month name + prev/next ─────────────────────────────────────
+            // Month name + prev/next
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 2, 14, 6),
               child: Row(
@@ -162,8 +169,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                     onTap: _prevMonth,
                     child: const Padding(
                       padding: EdgeInsets.all(8),
-                      child: Icon(Icons.chevron_left,
-                          color: AppColors.textSecondary, size: 24),
+                      child: Icon(Icons.chevron_left, color: AppColors.textSecondary, size: 24),
                     ),
                   ),
                   GestureDetector(
@@ -171,15 +177,13 @@ class _CalendarScreenState extends State<CalendarScreen>
                     onTap: _nextMonth,
                     child: const Padding(
                       padding: EdgeInsets.all(8),
-                      child: Icon(Icons.chevron_right,
-                          color: AppColors.textSecondary, size: 24),
+                      child: Icon(Icons.chevron_right, color: AppColors.textSecondary, size: 24),
                     ),
                   ),
                 ],
               ),
             ),
-
-            // ── Weekday header ─────────────────────────────────────────────
+            // Weekday letters
             SizedBox(
               height: 20,
               child: Row(
@@ -199,8 +203,37 @@ class _CalendarScreenState extends State<CalendarScreen>
                 }),
               ),
             ),
-
             const SizedBox(height: 2),
+          ],
+        );
+
+        final header = glass
+            ? ClipRect(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: glassBg,
+                      border: const Border(
+                        bottom: BorderSide(color: Color(0x1AFFFFFF), width: 0.5),
+                      ),
+                    ),
+                    child: topHeader,
+                  ),
+                ),
+              )
+            : Container(
+                color: tokens.AppThemeTokens.backgroundColor,
+                child: topHeader,
+              );
+
+        return Scaffold(
+      backgroundColor: tokens.AppThemeTokens.backgroundColor,
+      body: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            header,
 
             // ── Month grid ─────────────────────────────────────────────────
             LayoutBuilder(builder: (ctx, box) {
@@ -273,9 +306,9 @@ class _CalendarScreenState extends State<CalendarScreen>
           ],
         ),
       ),
-    ),
-  ),
-  );
+    );         // closes return Scaffold
+  },           // closes builder: (context, _) {
+);             // closes AnimatedBuilder
   }
 }
 

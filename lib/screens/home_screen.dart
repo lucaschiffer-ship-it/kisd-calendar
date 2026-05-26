@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -35,7 +37,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   double _dragOffset = 0;
 
   int _currentPage = _initialPage;
-  bool _mailReloadDone = false;
   bool _calendarReloadDone = false;
   String _miniBarTitle = 'Spaces';
 
@@ -67,6 +68,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     mailService.addListener(_rebuild);
     ThemeService.instance.currentColor.addListener(_rebuild);
     ThemeService.instance.currentStyle.addListener(_rebuild);
+    ThemeService.instance.glassEnabled.addListener(_rebuild);
     SpacesBrowser.register((url) {
       _browserKey.currentState?.navigateTo(url);
       _openSheet();
@@ -84,6 +86,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     mailService.removeListener(_rebuild);
     ThemeService.instance.currentColor.removeListener(_rebuild);
     ThemeService.instance.currentStyle.removeListener(_rebuild);
+    ThemeService.instance.glassEnabled.removeListener(_rebuild);
     super.dispose();
   }
 
@@ -124,17 +127,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   // ── Misc ───────────────────────────────────────────────────────────────────
-
-  void _onMailReloadPressed() {
-    if (mailService.isFetching) return;
-    mailService.reloadInbox().then((_) {
-      if (!mounted) return;
-      setState(() => _mailReloadDone = true);
-      Future.delayed(const Duration(seconds: 1), () {
-        if (mounted) setState(() => _mailReloadDone = false);
-      });
-    });
-  }
 
   void _onCalendarReloadPressed() {
     if (loginService.isLoading) return;
@@ -193,30 +185,55 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         // ── Main scaffold ────────────────────────────────────────────────
         Scaffold(
           backgroundColor: tokens.AppThemeTokens.backgroundColor,
-          appBar: AppBar(
-            backgroundColor: tokens.AppThemeTokens.backgroundColor,
-            leading: _currentPage == 0
-                ? _reloadButton(
-                    loading: mailService.isFetching,
-                    done: _mailReloadDone,
-                    onPressed: _onMailReloadPressed,
-                  )
-                : _currentPage == 2
-                    ? _reloadButton(
-                        loading: loginService.isLoading,
-                        done: _calendarReloadDone,
-                        onPressed: _onCalendarReloadPressed,
-                      )
-                    : null,
-            title: Text(_titles[_currentPage], style: AppTextStyle.navTitle.copyWith(color: tokens.AppThemeTokens.titleColor)),
-            actions: [
-              IconButton(
-                icon: Icon(CupertinoIcons.settings,
-                    color: tokens.AppThemeTokens.navBarIcon),
-                onPressed: _openSettings,
-              ),
-            ],
-          ),
+          // Mail tab: body extends behind its own glass header (no AppBar chrome)
+          extendBodyBehindAppBar: _currentPage == 0,
+          appBar: _currentPage == 0
+              ? AppBar(
+                  backgroundColor: Colors.transparent,
+                  elevation: 0,
+                  scrolledUnderElevation: 0,
+                  surfaceTintColor: Colors.transparent,
+                  forceMaterialTransparency: true,
+                )
+              : AppBar(
+                  backgroundColor: ThemeService.instance.glassEnabled.value
+                      ? Colors.transparent
+                      : tokens.AppThemeTokens.backgroundColor,
+                  flexibleSpace: ThemeService.instance.glassEnabled.value
+                      ? ClipRect(
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: ThemeService.instance.currentColor.value == 'dark'
+                                    ? Colors.white.withValues(alpha: 0.08)
+                                    : Colors.white.withValues(alpha: 0.50),
+                                border: const Border(
+                                  bottom: BorderSide(color: Color(0x1AFFFFFF), width: 0.5),
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                      : null,
+                  leading: _currentPage == 2
+                      ? _reloadButton(
+                          loading: loginService.isLoading,
+                          done: _calendarReloadDone,
+                          onPressed: _onCalendarReloadPressed,
+                        )
+                      : null,
+                  title: Text(_titles[_currentPage],
+                      style: AppTextStyle.navTitle.copyWith(
+                          color: tokens.AppThemeTokens.titleColor)),
+                  actions: [
+                    IconButton(
+                      icon: Icon(CupertinoIcons.settings,
+                          color: tokens.AppThemeTokens.navBarIcon),
+                      onPressed: _openSettings,
+                    ),
+                  ],
+                ),
           body: PageView(
             controller: _pageController,
             physics: const NeverScrollableScrollPhysics(),
@@ -257,14 +274,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           child: ClipRRect(
                 borderRadius:
                     const BorderRadius.vertical(top: Radius.circular(8)),
+                clipBehavior: Clip.antiAlias,
                 child: Material(
-                  color: const Color(0xFF141414),
+                  color: Colors.transparent,
                   child: Column(
                     children: [
-                      // Drag handle
-                      SafeArea(
-                        bottom: false,
-                        child: GestureDetector(
+                      // Drag handle — extends into the status-bar area
+                      Builder(builder: (ctx) {
+                        final topPad = MediaQuery.of(ctx).padding.top;
+                        return GestureDetector(
                           behavior: HitTestBehavior.opaque,
                           onTap: _closeSheet,
                           onVerticalDragUpdate: (details) {
@@ -283,19 +301,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           },
                           child: Container(
                             width: double.infinity,
-                            height: 44,
+                            height: topPad + 44,
+                            padding: EdgeInsets.only(top: topPad),
+                            color: const Color(0xFF1A1A1A),
                             alignment: Alignment.center,
-                            child: Container(
-                              width: 36,
-                              height: 4,
-                              decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.3),
-                                borderRadius: BorderRadius.circular(1),
-                              ),
-                            ),
+                            child: const _HandlePill(),
                           ),
-                        ),
-                      ),
+                        );
+                      }),
                       // WebView
                       Expanded(
                         child: BrowserSheet(
@@ -385,12 +398,20 @@ class _MiniBrowserBar extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
             children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFF5C2B),
-                  borderRadius: BorderRadius.circular(2),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: Image.asset(
+                  'assets/images/spaces_icon.png',
+                  width: 24,
+                  height: 24,
+                  errorBuilder: (_, err, stack) => Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEB5A01),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
@@ -421,6 +442,8 @@ class _MiniBrowserBar extends StatelessWidget {
             child: glass
                 ? tokens.AppThemeTokens.glassContainer(
                     borderRadius: BorderRadius.circular(8),
+                    tintColor: const Color(0xFFEB5A01),
+                    opacity: 0.55,
                     child: barContent,
                   )
                 : Container(
@@ -470,49 +493,39 @@ class _BrowserNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      top: false,
-      child: Container(
-        height: 52,
-        color: const Color(0xFF1A1A1A),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            _NavBtn(
-              icon: Icons.arrow_back_ios_new,
-              size: 20,
-              enabled: canGoBack,
-              onTap: onBack,
-            ),
-            _NavBtn(
-              icon: Icons.arrow_forward_ios,
-              size: 20,
-              enabled: canGoForward,
-              onTap: onForward,
-            ),
-            _NavBtn(
-              icon: Icons.refresh,
-              size: 20,
-              enabled: true,
-              onTap: onReload,
-            ),
-            _NavBtn(
-              icon: Icons.open_in_browser,
-              size: 20,
-              enabled: true,
-              onTap: onOpenInBrowser,
-            ),
-            _NavBtn(
-              icon: Icons.keyboard_arrow_down,
-              size: 24,
-              enabled: true,
-              onTap: onDismiss,
-            ),
-          ],
-        ),
-      ),
+    final row = Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        _NavBtn(icon: Icons.arrow_back_ios_new,  size: 20, enabled: canGoBack,    onTap: onBack),
+        _NavBtn(icon: Icons.arrow_forward_ios,   size: 20, enabled: canGoForward, onTap: onForward),
+        _NavBtn(icon: Icons.refresh,             size: 20, enabled: true,         onTap: onReload),
+        _NavBtn(icon: Icons.open_in_browser,     size: 20, enabled: true,         onTap: onOpenInBrowser),
+        _NavBtn(icon: Icons.keyboard_arrow_down, size: 24, enabled: true,         onTap: onDismiss),
+      ],
     );
+    return Builder(builder: (ctx) {
+      final bottomPad = MediaQuery.of(ctx).padding.bottom;
+      return Container(
+        height: 52.0 + bottomPad,
+        padding: EdgeInsets.only(bottom: bottomPad),
+        color: const Color(0xFF1A1A1A),
+        child: row,
+      );
+    });
   }
+}
+
+class _HandlePill extends StatelessWidget {
+  const _HandlePill();
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 36,
+        height: 4,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.6),
+          borderRadius: BorderRadius.circular(1),
+        ),
+      );
 }
 
 class _NavBtn extends StatelessWidget {

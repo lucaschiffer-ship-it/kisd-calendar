@@ -2,7 +2,6 @@ import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_theme.dart' as tokens;
 import '../models/course_shell.dart';
@@ -22,11 +21,13 @@ class CourseShellCard extends StatefulWidget {
     required this.shell,
     required this.onEdit,
     required this.onDelete,
+    this.onFavouriteChanged,
   });
 
   final CourseShell shell;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+  final void Function(bool isFavourite)? onFavouriteChanged;
 
   static String fmtTime(TimeOfDay t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
@@ -37,7 +38,6 @@ class CourseShellCard extends StatefulWidget {
 
 class _CourseShellCardState extends State<CourseShellCard>
     with SingleTickerProviderStateMixin {
-  static SharedPreferences? _prefs;
   late bool _liked;
   bool _pressing = false;
 
@@ -45,13 +45,10 @@ class _CourseShellCardState extends State<CourseShellCard>
   late final AnimationController _heartCtrl;
   late final Animation<double> _heartScale;
 
-  static String _key(String id) => 'shell_liked_$id';
-
   @override
   void initState() {
     super.initState();
-    _liked = widget.shell.isLiked;
-    _loadLiked();
+    _liked = widget.shell.isFavourite;
     _heartCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 160),
@@ -63,26 +60,24 @@ class _CourseShellCardState extends State<CourseShellCard>
   }
 
   @override
+  void didUpdateWidget(CourseShellCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.shell.isFavourite != widget.shell.isFavourite) {
+      _liked = widget.shell.isFavourite;
+    }
+  }
+
+  @override
   void dispose() {
     _heartCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _loadLiked() async {
-    _prefs ??= await SharedPreferences.getInstance();
-    final saved = _prefs!.getBool(_key(widget.shell.id));
-    if (saved != null && saved != _liked && mounted) {
-      setState(() => _liked = saved);
-    }
-  }
-
   Future<void> _toggleLike() async {
     final next = !_liked;
     setState(() => _liked = next);
-    // Bounce: scale up then back
     _heartCtrl.forward(from: 0.0).then((_) => _heartCtrl.reverse());
-    _prefs ??= await SharedPreferences.getInstance();
-    await _prefs!.setBool(_key(widget.shell.id), next);
+    widget.onFavouriteChanged?.call(next);
   }
 
   // "TUE  13:00 – 16:00  ·  THU  13:00 – 16:00"
@@ -168,12 +163,11 @@ class _CourseShellCardState extends State<CourseShellCard>
           valueListenable: ThemeService.instance.currentColor,
           builder: (context, _, _) => ValueListenableBuilder<String>(
             valueListenable: ThemeService.instance.currentStyle,
-            builder: (context, style, _) => AppCard(
-            color: tokens.AppThemeTokens.cardBackground,
-            borderColor: tokens.AppThemeTokens.cardBorder,
-            borderRadius: style == 'vivid' ? 10.0 : 5.0,
-            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
-            child: Column(
+            builder: (context, style, _) => ValueListenableBuilder<bool>(
+              valueListenable: ThemeService.instance.glassEnabled,
+              builder: (context, glass, _) {
+              final radius = style == 'vivid' ? 10.0 : 5.0;
+              final body = Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // ── 1. Title + heart ───────────────────────────────────────
@@ -248,7 +242,26 @@ class _CourseShellCardState extends State<CourseShellCard>
                   ),
                 ],
               ],
-            ),
+            );
+            if (glass) {
+              return tokens.AppThemeTokens.glassContainer(
+                opacity: 0.1,
+                blur: 15,
+                borderRadius: BorderRadius.circular(radius),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                  child: body,
+                ),
+              );
+            }
+            return AppCard(
+              color: tokens.AppThemeTokens.cardBackground,
+              borderColor: tokens.AppThemeTokens.cardBorder,
+              borderRadius: radius,
+              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+              child: body,
+            );
+            },
           ),
         ),
       ),

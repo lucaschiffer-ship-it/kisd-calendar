@@ -33,7 +33,7 @@ class CalendarService {
 
   static const _kKeyCalId  = 'kisd_cal_id';
   static const _kKeyEvtIds = 'kisd_event_ids';
-  static const _kisdColor  = Color(0xFFFF5C2B);
+  static const _kisdColor  = Color(0xFFEB5A01);
 
   final _plugin = DeviceCalendarPlugin();
 

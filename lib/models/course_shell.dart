@@ -51,6 +51,8 @@ class CourseShell {
   final List<CourseLink> links;
   final bool isManual;
   final bool isLiked;
+  final bool isMyCourse;
+  final bool isFavourite;
 
   const CourseShell({
     required this.id,
@@ -63,5 +65,35 @@ class CourseShell {
     required this.links,
     required this.isManual,
     this.isLiked = false,
+    this.isMyCourse = false,
+    this.isFavourite = false,
   });
+
+  CourseShell copyWith({
+    String? id,
+    String? title,
+    String? description,
+    List<MeetingTime>? meetingTimes,
+    DateTime? startDate,
+    DateTime? endDate,
+    String? location,
+    List<CourseLink>? links,
+    bool? isManual,
+    bool? isLiked,
+    bool? isMyCourse,
+    bool? isFavourite,
+  }) => CourseShell(
+    id: id ?? this.id,
+    title: title ?? this.title,
+    description: description ?? this.description,
+    meetingTimes: meetingTimes ?? this.meetingTimes,
+    startDate: startDate ?? this.startDate,
+    endDate: endDate ?? this.endDate,
+    location: location ?? this.location,
+    links: links ?? this.links,
+    isManual: isManual ?? this.isManual,
+    isLiked: isLiked ?? this.isLiked,
+    isMyCourse: isMyCourse ?? this.isMyCourse,
+    isFavourite: isFavourite ?? this.isFavourite,
+  );
 }

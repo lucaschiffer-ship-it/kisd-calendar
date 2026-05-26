@@ -4,9 +4,12 @@ import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:google_fonts/google_fonts.dart';
 
+import '../config/app_theme.dart' as tokens;
 import '../services/service_locator.dart';
-import 'home_screen.dart';
+import '../services/spaces_browser.dart';
+import '../services/theme_service.dart';
 
 class EmailDetailScreen extends StatefulWidget {
   const EmailDetailScreen({
@@ -45,33 +48,44 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return AnimatedBuilder(
+      animation: Listenable.merge([
+        ThemeService.instance.currentColor,
+        ThemeService.instance.currentStyle,
+      ]),
+      builder: (context, _) =>
+          _buildScreen(context, ThemeService.instance.currentColor.value),
+    );
+  }
 
-    final msg = _full ?? widget.message;
-    final fromEmail = msg.fromEmail ?? '';
+  Widget _buildScreen(BuildContext context, String colorKey) {
+    final msg  = _full ?? widget.message;
+
     final fromPersonal = msg.from?.firstOrNull?.personalName;
-    final senderName = (fromPersonal != null && fromPersonal.isNotEmpty)
+    final fromEmail    = msg.fromEmail ?? '';
+    final senderName   = (fromPersonal != null && fromPersonal.isNotEmpty)
         ? fromPersonal
         : fromEmail.isNotEmpty ? fromEmail : 'Unknown';
-    final senderEmail = fromEmail;
-    final subject = msg.decodeSubject() ?? '(No subject)';
-    final date = msg.decodeDate();
+    final subject  = msg.decodeSubject() ?? '(No subject)';
+    final date     = msg.decodeDate();
+    final initial  = senderName.isNotEmpty ? senderName[0].toUpperCase() : '?';
 
     return Scaffold(
-      backgroundColor: cs.surface,
+      backgroundColor: tokens.AppThemeTokens.backgroundColor,
       appBar: AppBar(
-        backgroundColor: cs.surface,
+        backgroundColor: tokens.AppThemeTokens.backgroundColor,
         elevation: 0,
         scrolledUnderElevation: 0,
         surfaceTintColor: Colors.transparent,
         leading: IconButton(
-          icon: const Icon(CupertinoIcons.chevron_back),
+          icon: Icon(CupertinoIcons.chevron_back,
+              color: tokens.AppThemeTokens.navBarIcon),
           onPressed: () => Navigator.pop(context),
         ),
         actions: [
           IconButton(
-            icon: const Icon(CupertinoIcons.delete),
+            icon: Icon(CupertinoIcons.delete,
+                color: tokens.AppThemeTokens.secondaryTextColor),
             onPressed: () {
               mailService.deleteMessage(widget.message);
               Navigator.pop(context);
@@ -82,29 +96,30 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── Header ──────────────────────────────────────────────────────
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   subject,
-                  style: const TextStyle(
-                    fontSize: 20,
+                  style: GoogleFonts.spaceGrotesk(
+                    fontSize: 22,
                     fontWeight: FontWeight.w700,
-                    height: 1.25,
+                    color: tokens.AppThemeTokens.titleColor,
+                    height: 1.2,
+                    letterSpacing: -0.4,
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 Row(
                   children: [
                     CircleAvatar(
                       radius: 18,
                       backgroundColor: _senderColor(senderName),
                       child: Text(
-                        senderName.isNotEmpty
-                            ? senderName[0].toUpperCase()
-                            : '?',
+                        initial,
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w600,
@@ -119,17 +134,22 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
                         children: [
                           Text(
                             senderName,
-                            style: const TextStyle(
+                            style: GoogleFonts.inter(
                               fontWeight: FontWeight.w600,
                               fontSize: 14,
+                              color: tokens.AppThemeTokens.titleColor,
                             ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                           Text(
-                            senderEmail,
-                            style: TextStyle(
+                            fromEmail,
+                            style: GoogleFonts.inter(
                               fontSize: 12,
-                              color: cs.onSurface.withAlpha(127),
+                              color: tokens.AppThemeTokens.secondaryTextColor,
                             ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ],
                       ),
@@ -137,9 +157,9 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
                     if (date != null)
                       Text(
                         _formatFullDate(date),
-                        style: TextStyle(
+                        style: GoogleFonts.inter(
                           fontSize: 12,
-                          color: cs.onSurface.withAlpha(127),
+                          color: tokens.AppThemeTokens.secondaryTextColor,
                         ),
                       ),
                   ],
@@ -147,41 +167,34 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
               ],
             ),
           ),
-          const Divider(height: 1),
+          Divider(height: 1, color: tokens.AppThemeTokens.cardBorder),
+
+          // ── Body ────────────────────────────────────────────────────────
           Expanded(
             child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _buildBody(msg, isDark, cs),
+                ? const Center(
+                    child: CircularProgressIndicator(
+                        color: Color(0xFFEB5A01)),
+                  )
+                : _buildBody(msg, colorKey),
           ),
-          _buildAttachments(msg, cs),
-          SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    widget.onReply(_full ?? widget.message);
-                  },
-                  icon: const Icon(Icons.reply),
-                  label: const Text('Reply'),
-                ),
-              ),
-            ),
-          ),
+
+          // ── Attachments ─────────────────────────────────────────────────
+          _buildAttachments(msg),
+
+          // ── Action bar ──────────────────────────────────────────────────
+          _buildActions(msg),
         ],
       ),
     );
   }
 
-  Widget _buildBody(MimeMessage msg, bool isDark, ColorScheme cs) {
+  Widget _buildBody(MimeMessage msg, String colorKey) {
     final html = msg.decodeTextHtmlPart();
     if (html != null && html.isNotEmpty) {
       return InAppWebView(
         initialData: InAppWebViewInitialData(
-          data: _wrapHtml(html, isDark),
+          data: _wrapHtml(html, colorKey),
           mimeType: 'text/html',
           encoding: 'utf-8',
           baseUrl: WebUri('about:blank'),
@@ -192,10 +205,8 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
         ),
         shouldOverrideUrlLoading: (controller, action) async {
           final url = action.request.url;
-          print('[mail-link] tapped url: $url (scheme=${url?.scheme})');
           if (url != null &&
               (url.scheme == 'http' || url.scheme == 'https')) {
-            print('[mail-link] SpacesBrowser.open called');
             if (context.mounted) Navigator.of(context).pop();
             SpacesBrowser.open(url.toString());
             return NavigationActionPolicy.CANCEL;
@@ -209,14 +220,25 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
       padding: const EdgeInsets.all(20),
       child: SelectableText(
         plain,
-        style: TextStyle(fontSize: 14, height: 1.6, color: cs.onSurface),
+        style: GoogleFonts.inter(
+          fontSize: 14,
+          height: 1.6,
+          color: tokens.AppThemeTokens.titleColor,
+        ),
       ),
     );
   }
 
-  String _wrapHtml(String html, bool isDark) {
-    final bg = isDark ? '#1C1C1E' : '#FFFFFF';
-    final fg = isDark ? '#EBEBF5' : '#1C1C1E';
+  String _wrapHtml(String html, String colorKey) {
+    final String bg, fg;
+    switch (colorKey) {
+      case 'light':
+        bg = '#F5F5F5'; fg = '#111111';
+      case 'pastel':
+        bg = '#FFF5EE'; fg = '#5C3D2E';
+      default: // dark
+        bg = '#000000'; fg = '#EBEBF5';
+    }
     return '''<!DOCTYPE html><html><head>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
@@ -224,28 +246,102 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
          font-family:-apple-system,sans-serif; font-size:14px;
          line-height:1.6; word-break:break-word; }
   img  { max-width:100% !important; height:auto; }
-  a    { color:#007AFF; }
+  a    { color:#EB5A01; }
   table{ max-width:100%; }
 </style></head><body>$html</body></html>''';
   }
 
-  Widget _buildAttachments(MimeMessage msg, ColorScheme cs) {
-    final attachments = msg.findContentInfo(
-      disposition: ContentDisposition.attachment,
-    );
+  Widget _buildAttachments(MimeMessage msg) {
+    final attachments =
+        msg.findContentInfo(disposition: ContentDisposition.attachment);
     if (attachments.isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       child: Wrap(
         spacing: 8,
-        runSpacing: 4,
+        runSpacing: 6,
         children: attachments.map((info) {
           final name = info.fileName ?? 'attachment';
-          return Chip(
-            avatar: Icon(Icons.attach_file, size: 16, color: cs.primary),
-            label: Text(name, style: const TextStyle(fontSize: 12)),
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: tokens.AppThemeTokens.cardBackground,
+              borderRadius: BorderRadius.circular(
+                  tokens.AppThemeTokens.cardBorderRadius),
+              border: Border.all(
+                  color: tokens.AppThemeTokens.cardBorder, width: 0.5),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.attach_file,
+                    size: 14, color: Color(0xFFEB5A01)),
+                const SizedBox(width: 4),
+                Text(
+                  name,
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    color: tokens.AppThemeTokens.titleColor,
+                  ),
+                ),
+              ],
+            ),
           );
         }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildActions(MimeMessage msg) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(8, 10, 8, 12),
+        decoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(
+                color: tokens.AppThemeTokens.cardBorder, width: 0.5),
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            _ActionBtn(
+              icon: CupertinoIcons.reply,
+              label: 'Reply',
+              onTap: () {
+                Navigator.pop(context);
+                widget.onReply(_full ?? widget.message);
+              },
+            ),
+            _ActionBtn(
+              icon: CupertinoIcons.reply_all,
+              label: 'Reply All',
+              onTap: () {
+                Navigator.pop(context);
+                widget.onReply(_full ?? widget.message);
+              },
+            ),
+            _ActionBtn(
+              icon: CupertinoIcons.arrowshape_turn_up_right,
+              label: 'Forward',
+              onTap: () {
+                Navigator.pop(context);
+                // Opens compose; full forward mode requires ComposeScreen extension.
+                widget.onReply(_full ?? widget.message);
+              },
+            ),
+            _ActionBtn(
+              icon: CupertinoIcons.delete,
+              label: 'Delete',
+              color: const Color(0xFFFF3B30),
+              onTap: () {
+                mailService.deleteMessage(widget.message);
+                Navigator.pop(context);
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -267,5 +363,48 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
     final h = date.hour.toString().padLeft(2, '0');
     final m = date.minute.toString().padLeft(2, '0');
     return '${date.day} ${months[date.month - 1]} ${date.year}, $h:$m';
+  }
+}
+
+// ── Action button ─────────────────────────────────────────────────────────────
+
+class _ActionBtn extends StatelessWidget {
+  const _ActionBtn({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = color ?? tokens.AppThemeTokens.titleColor;
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: c, size: 22),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: GoogleFonts.inter(
+                fontSize: 11,
+                color: c,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

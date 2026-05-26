@@ -2,13 +2,14 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class CacheService {
-  static const _keyCourses  = 'kisd_courses';
-  static const _keyUpdated  = 'kisd_courses_updated';
-  static const _keyVersion  = 'kisd_courses_version';
+  static const _keyCourses    = 'kisd_courses';
+  static const _keyUpdated    = 'kisd_courses_updated';
+  static const _keyVersion    = 'kisd_courses_version';
+  static const _keyScrapeTime = 'kisd_last_scrape';
 
   // Bump this whenever the scraper output format changes so that stale
   // cached data is automatically discarded on the next app launch.
-  static const _currentVersion = 9;
+  static const _currentVersion = 11;
 
   Future<bool> isCurrentVersion() async {
     final prefs = await SharedPreferences.getInstance();
@@ -32,6 +33,27 @@ class CacheService {
     if (raw == null) return [];
     final decoded = json.decode(raw) as List;
     return decoded.cast<Map<String, dynamic>>();
+  }
+
+  Future<void> markScraped() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyScrapeTime, DateTime.now().toIso8601String());
+  }
+
+  Future<DateTime?> lastScrapeTimestamp() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_keyScrapeTime);
+    return raw != null ? DateTime.tryParse(raw) : null;
+  }
+
+  Future<void> updateCourseFavourite(String id, bool isFavourite) async {
+    final courses = await loadCourses();
+    final idx = courses.indexWhere((c) => c['id'] == id);
+    if (idx < 0) return;
+    courses[idx] = Map<String, dynamic>.from(courses[idx])
+      ..['isFavourite'] = isFavourite;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyCourses, json.encode(courses));
   }
 
   Future<DateTime?> lastUpdated() async {

@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'calendar_screen.dart';
 import 'list_screen.dart';
 import 'mail_screen.dart';
+import 'mensa_screen.dart';
 import 'browser_screen.dart';
 import 'settings_screen.dart';
 import '../config/app_theme.dart' as tokens;
@@ -24,8 +25,8 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
-  // Page order: Mail=0, List=1, Calendar=2
-  static const int _initialPage = 1;
+  // Page order: Mensa=0, Mail=1, List=2, Calendar=3
+  static const int _initialPage = 2;
 
   late final PageController _pageController;
   late final AnimationController _sheetAnim;
@@ -45,9 +46,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _canGoForward = false;
   String _currentUrl = 'https://spaces.kisd.de';
 
-  static const _titles = ['Mail', 'List', 'Calendar'];
+  static const _titles = ['Mensa', 'Mail', 'List', 'Calendar'];
 
   static const List<Widget> _pages = [
+    MensaScreen(),
     MailScreen(),
     ListScreen(),
     CalendarScreen(),
@@ -185,9 +187,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         // ── Main scaffold ────────────────────────────────────────────────
         Scaffold(
           backgroundColor: tokens.AppThemeTokens.backgroundColor,
-          // Mail tab: body extends behind its own glass header (no AppBar chrome)
-          extendBodyBehindAppBar: _currentPage == 0,
-          appBar: _currentPage == 0
+          // Mensa (0) and Mail (1) manage their own glass headers
+          extendBodyBehindAppBar: _currentPage == 0 || _currentPage == 1,
+          appBar: (_currentPage == 0 || _currentPage == 1)
               ? AppBar(
                   backgroundColor: Colors.transparent,
                   elevation: 0,
@@ -216,7 +218,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           ),
                         )
                       : null,
-                  leading: _currentPage == 2
+                  leading: _currentPage == 3
                       ? _reloadButton(
                           loading: loginService.isLoading,
                           done: _calendarReloadDone,
@@ -571,6 +573,7 @@ class _IosTabBar extends StatelessWidget {
   final int mailUnread;
 
   static const _tabs = [
+    (icon: Icons.restaurant_menu, label: 'Mensa'),
     (icon: CupertinoIcons.mail, label: 'Mail'),
     (icon: CupertinoIcons.list_bullet, label: 'List'),
     (icon: CupertinoIcons.calendar, label: 'Calendar'),
@@ -594,7 +597,7 @@ class _IosTabBar extends StatelessWidget {
               final color = isActive ? activeColor : inactiveColor;
               Widget iconWidget =
                   Icon(_tabs[i].icon, color: color, size: 22);
-              if (i == 0 && mailUnread > 0) {
+              if (i == 1 && mailUnread > 0) {
                 iconWidget = Stack(
                   clipBehavior: Clip.none,
                   children: [

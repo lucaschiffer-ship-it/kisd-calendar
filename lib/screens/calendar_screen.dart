@@ -8,6 +8,7 @@ import '../config/app_theme.dart' as tokens;
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/day_column.dart';
+import '../widgets/multi_day_view.dart';
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
@@ -218,8 +219,7 @@ class _CalendarScreenState extends State<CalendarScreen>
           ),
         _NavLevel.day => switch (_dayViewMode) {
             _DayViewMode.singleDay => DayColumn(day: _selectedDate),
-            _DayViewMode.multiDay =>
-              const _Placeholder(label: 'Multi Day (Phase 3)'),
+            _DayViewMode.multiDay => const MultiDayView(),
             _DayViewMode.list => const _Placeholder(label: 'List View'),
           },
       };

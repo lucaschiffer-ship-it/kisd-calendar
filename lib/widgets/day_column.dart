@@ -12,20 +12,25 @@ class DayColumn extends StatefulWidget {
     super.key,
     required this.day,
     this.onEventTap,
+    this.showHourLabels = true,
+    this.embedded = false,
   });
 
   final DateTime day;
   final void Function(DeviceCalendarEvent)? onEventTap;
+  final bool showHourLabels;
+  /// When true, omits the internal SingleChildScrollView — the parent owns scrolling.
+  final bool embedded;
+
+  static const double hourHeight = 60.0;
+  static const double labelWidth = 52.0;
 
   @override
   State<DayColumn> createState() => _DayColumnState();
 }
 
 class _DayColumnState extends State<DayColumn> {
-  static const double _hourHeight = 60.0;
-  static const double _labelWidth = 52.0;
-
-  final _scrollController = ScrollController();
+  ScrollController? _scrollController;
   List<DeviceCalendarEvent> _events = [];
   DateTime _now = DateTime.now();
   late Timer _timer;
@@ -33,11 +38,16 @@ class _DayColumnState extends State<DayColumn> {
   @override
   void initState() {
     super.initState();
+    if (!widget.embedded) {
+      _scrollController = ScrollController();
+    }
     _loadEvents();
     _timer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() => _now = DateTime.now());
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToFocus());
+    if (!widget.embedded) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToFocus());
+    }
   }
 
   @override
@@ -46,14 +56,16 @@ class _DayColumnState extends State<DayColumn> {
     if (old.day != widget.day) {
       setState(() => _events = []);
       _loadEvents();
-      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToFocus());
+      if (!widget.embedded) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToFocus());
+      }
     }
   }
 
   @override
   void dispose() {
     _timer.cancel();
-    _scrollController.dispose();
+    _scrollController?.dispose();
     super.dispose();
   }
 
@@ -69,12 +81,12 @@ class _DayColumnState extends State<DayColumn> {
   }
 
   void _scrollToFocus() {
-    if (!_scrollController.hasClients) return;
+    if (_scrollController == null || !_scrollController!.hasClients) return;
     final focusHour = _isToday ? _now.hour + _now.minute / 60.0 : 8.0;
-    final viewportHeight = _scrollController.position.viewportDimension;
-    final target = focusHour * _hourHeight - viewportHeight / 2;
-    _scrollController.jumpTo(
-      target.clamp(0.0, _scrollController.position.maxScrollExtent),
+    final viewportHeight = _scrollController!.position.viewportDimension;
+    final target = focusHour * DayColumn.hourHeight - viewportHeight / 2;
+    _scrollController!.jumpTo(
+      target.clamp(0.0, _scrollController!.position.maxScrollExtent),
     );
   }
 
@@ -93,22 +105,28 @@ class _DayColumnState extends State<DayColumn> {
   Widget _buildContent() {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final totalHeight = _hourHeight * 24;
-        final eventAreaWidth = constraints.maxWidth - _labelWidth;
+        final totalHeight = DayColumn.hourHeight * 24;
+        final leftOffset = widget.showHourLabels ? DayColumn.labelWidth : 0.0;
+        final eventAreaWidth = constraints.maxWidth - leftOffset;
+
+        final stack = SizedBox(
+          height: totalHeight,
+          width: constraints.maxWidth,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              _buildGrid(),
+              ..._buildEventCards(eventAreaWidth, leftOffset),
+              if (_isToday) _buildTimeIndicator(constraints.maxWidth, leftOffset),
+            ],
+          ),
+        );
+
+        if (widget.embedded) return stack;
+
         return SingleChildScrollView(
           controller: _scrollController,
-          child: SizedBox(
-            height: totalHeight,
-            width: constraints.maxWidth,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                _buildGrid(),
-                ..._buildEventCards(eventAreaWidth),
-                if (_isToday) _buildTimeIndicator(constraints.maxWidth),
-              ],
-            ),
-          ),
+          child: stack,
         );
       },
     );
@@ -124,21 +142,22 @@ class _DayColumnState extends State<DayColumn> {
     return Column(
       children: List.generate(24, (hour) {
         return SizedBox(
-          height: _hourHeight,
+          height: DayColumn.hourHeight,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(
-                width: _labelWidth,
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 3, right: 8),
-                  child: Text(
-                    '${hour.toString().padLeft(2, '0')}:00',
-                    textAlign: TextAlign.right,
-                    style: labelStyle,
+              if (widget.showHourLabels)
+                SizedBox(
+                  width: DayColumn.labelWidth,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 3, right: 8),
+                    child: Text(
+                      '${hour.toString().padLeft(2, '0')}:00',
+                      textAlign: TextAlign.right,
+                      style: labelStyle,
+                    ),
                   ),
                 ),
-              ),
               Expanded(
                 child: Container(
                   decoration: BoxDecoration(
@@ -155,17 +174,17 @@ class _DayColumnState extends State<DayColumn> {
     );
   }
 
-  List<Widget> _buildEventCards(double eventAreaWidth) {
+  List<Widget> _buildEventCards(double eventAreaWidth, double leftOffset) {
     return _events.map((event) {
       final startMin = event.start.hour * 60 + event.start.minute;
       final endMin = event.end.hour * 60 + event.end.minute;
       final durationMin = (endMin - startMin).clamp(15, 24 * 60).toDouble();
-      final top = startMin / 60.0 * _hourHeight;
-      final height = (durationMin / 60.0 * _hourHeight).clamp(20.0, _hourHeight * 24);
+      final top = startMin / 60.0 * DayColumn.hourHeight;
+      final height = (durationMin / 60.0 * DayColumn.hourHeight).clamp(20.0, DayColumn.hourHeight * 24);
 
       return Positioned(
         top: top,
-        left: _labelWidth + 2,
+        left: leftOffset + 2,
         width: eventAreaWidth - 4,
         height: height,
         child: _EventCard(
@@ -176,9 +195,9 @@ class _DayColumnState extends State<DayColumn> {
     }).toList();
   }
 
-  Widget _buildTimeIndicator(double totalWidth) {
+  Widget _buildTimeIndicator(double totalWidth, double leftOffset) {
     final totalMinutes = _now.hour * 60 + _now.minute;
-    final top = totalMinutes / 60.0 * _hourHeight;
+    final top = totalMinutes / 60.0 * DayColumn.hourHeight;
     return Positioned(
       top: top - 4,
       left: 0,
@@ -187,7 +206,7 @@ class _DayColumnState extends State<DayColumn> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          SizedBox(width: _labelWidth - 4),
+          SizedBox(width: (leftOffset - 4).clamp(0.0, double.infinity)),
           Container(
             width: 8,
             height: 8,

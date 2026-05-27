@@ -10,6 +10,7 @@ import '../theme/app_theme.dart';
 import '../widgets/day_column.dart';
 import '../widgets/month_view.dart';
 import '../widgets/multi_day_view.dart';
+import '../widgets/year_view.dart';
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
@@ -62,6 +63,7 @@ class _CalendarScreenState extends State<CalendarScreen>
       switch (_navLevel) {
         case _NavLevel.month:
           _navLevel = _NavLevel.year;
+          _displayedYear = _displayedMonth.year;
         case _NavLevel.day:
           _navLevel = _NavLevel.month;
           // Seed header label to selected date's month; MonthView fires onMonthChanged
@@ -215,10 +217,11 @@ class _CalendarScreenState extends State<CalendarScreen>
   // ── Body ─────────────────────────────────────────────────────────────────────
 
   Widget _buildBody() => switch (_navLevel) {
-        _NavLevel.year => _DrillPlaceholder(
-            label: 'Year View (Phase 5)',
-            hint: 'Tap to open current month',
-            onTap: () => _drillToMonth(DateTime(_today.year, _today.month)),
+        _NavLevel.year => YearView(
+            today: _today,
+            initialYear: _displayedYear,
+            onMonthTapped: _drillToMonth,
+            onYearChanged: (y) => setState(() => _displayedYear = y),
           ),
         _NavLevel.month => MonthView(
             today: _today,
@@ -324,45 +327,3 @@ class _Placeholder extends StatelessWidget {
   }
 }
 
-class _DrillPlaceholder extends StatelessWidget {
-  const _DrillPlaceholder({
-    required this.label,
-    required this.hint,
-    required this.onTap,
-  });
-
-  final String label;
-  final String hint;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              label,
-              style: GoogleFonts.inter(
-                fontSize: 17,
-                fontWeight: FontWeight.w500,
-                color: tokens.AppThemeTokens.secondaryTextColor,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              hint,
-              style: GoogleFonts.inter(
-                fontSize: 13,
-                color: AppColors.accent,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}

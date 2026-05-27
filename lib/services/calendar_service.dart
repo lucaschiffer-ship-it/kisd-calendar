@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io' show Platform;
+
 import 'package:device_calendar/device_calendar.dart';
 import 'package:flutter/material.dart' show Color, TimeOfDay;
 import 'package:flutter_timezone/flutter_timezone.dart';
@@ -6,6 +9,9 @@ import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../models/course_shell.dart';
+import '../models/kisd_event.dart';
+import 'cache_service.dart';
+import 'settings_service.dart';
 
 // ─── Simple event model returned to UI ────────────────────────────────────────
 
@@ -15,6 +21,7 @@ class DeviceCalendarEvent {
   final TimeOfDay end;
   final String? location;
   final Color calendarColor;
+  final String calendarName;
 
   const DeviceCalendarEvent({
     required this.title,
@@ -22,6 +29,7 @@ class DeviceCalendarEvent {
     required this.end,
     this.location,
     required this.calendarColor,
+    this.calendarName = '',
   });
 }
 
@@ -31,9 +39,19 @@ class CalendarService {
   CalendarService._();
   static final CalendarService instance = CalendarService._();
 
-  static const _kKeyCalId  = 'kisd_cal_id';
-  static const _kKeyEvtIds = 'kisd_event_ids';
+  static const _kKeyCalId       = 'kisd_cal_id';
+  static const _kKeyEvtIds      = 'kisd_event_ids';
+  static const _kKeyEvtEventIds = 'kisd_event_calendar_ids';
+  static const _kKeyEvtCalId    = 'kisd_events_cal_id';
+  // Shadow map: fingerprint → {c: calendarEventId, h: contentHash}
+  static const _kKeyEvtShadow   = 'kisd_evt_shadow_v1';
   static const _kisdColor  = Color(0xFFEB5A01);
+
+  // device_calendar's objective_c FFI bridge is absent in newer iOS simulator
+  // runtimes — skip all calendar I/O on simulator so the app doesn't crash.
+  static bool get _isSimulator =>
+      Platform.isIOS &&
+      Platform.environment.containsKey('SIMULATOR_DEVICE_NAME');
 
   final _plugin = DeviceCalendarPlugin();
 
@@ -85,9 +103,34 @@ class CalendarService {
     return null;
   }
 
+  // ── KISD Events calendar ID — separate calendar to keep courses-only in "KISD"
+  Future<String?> _eventsCalendarId() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString(_kKeyEvtCalId);
+
+    if (saved != null) {
+      final cals = await _plugin.retrieveCalendars();
+      if (cals.isSuccess && (cals.data?.any((c) => c.id == saved) ?? false)) {
+        return saved;
+      }
+    }
+
+    final r = await _plugin.createCalendar(
+      'KISD Events',
+      calendarColor: _kisdColor,
+      localAccountName: 'KISD',
+    );
+    if (r.isSuccess && r.data != null) {
+      await prefs.setString(_kKeyEvtCalId, r.data!);
+      return r.data;
+    }
+    return null;
+  }
+
   // ── Write courses ───────────────────────────────────────────────────────────
 
   Future<void> writeCourses(List<CourseShell> shells) async {
+    if (_isSimulator) return;
     try {
       await _ensureTz();
       if (!await _hasPermission()) return;
@@ -161,9 +204,249 @@ class CalendarService {
     }
   }
 
+  // ── Write KISD events ───────────────────────────────────────────────────────
+
+  // Concurrency guard: only one write runs at a time; latest pending wins.
+  bool _kisdWriteInProgress = false;
+  List<KisdEvent>? _kisdWritePending;
+
+  Future<void> writeKisdEvents(List<KisdEvent> events) async {
+    if (_kisdWriteInProgress) {
+      _kisdWritePending = events;
+      return;
+    }
+    _kisdWriteInProgress = true;
+    try {
+      await _doWriteKisdEvents(events);
+      while (_kisdWritePending != null) {
+        final pending = _kisdWritePending!;
+        _kisdWritePending = null;
+        await _doWriteKisdEvents(pending);
+      }
+    } finally {
+      _kisdWriteInProgress = false;
+    }
+  }
+
+  // One-time removal of "View"-titled events left in either calendar from bad scrapes.
+  // V2 also wipes the events cache + scrape timestamp so a fresh scrape is forced.
+  Future<void> _cleanupViewEvents(SharedPreferences prefs) async {
+    if (prefs.getBool('_kisdViewCleanedV2') == true) return;
+
+    // Wipe the bad cache and reset the timestamp so the next launch re-scrapes.
+    await CacheService().clearKisdEvents();
+    print('[calendar] _cleanupViewEvents: cleared events cache + scrape timestamp');
+
+    // Delete "View"-titled events from both calendars.
+    final start = DateTime(2024, 1, 1);
+    final end   = DateTime(2028, 12, 31);
+    var removed = 0;
+    for (final calId in [prefs.getString(_kKeyCalId), prefs.getString(_kKeyEvtCalId)]) {
+      if (calId == null) continue;
+      final r = await _plugin.retrieveEvents(calId, RetrieveEventsParams(startDate: start, endDate: end));
+      if (!r.isSuccess || r.data == null) continue;
+      for (final e in r.data!) {
+        if ((e.title ?? '').trim() == 'View' && e.eventId != null) {
+          try { await _plugin.deleteEvent(calId, e.eventId!); removed++; } catch (_) {}
+        }
+      }
+    }
+    print('[calendar] _cleanupViewEvents: removed $removed "View" calendar events');
+    await prefs.setBool('_kisdViewCleanedV2', true);
+  }
+
+  // One-time full wipe of the KISD Events calendar to clear orphaned duplicates
+  // created by concurrent writes before the concurrency guard was added.
+  Future<void> _wipeDuplicateKisdEvents(String calId, SharedPreferences prefs) async {
+    if (prefs.getBool('_kisdEventsDupesWiped') == true) return;
+
+    final start = DateTime(2020, 1, 1);
+    final end   = DateTime(2030, 12, 31);
+    final r = await _plugin.retrieveEvents(calId, RetrieveEventsParams(startDate: start, endDate: end));
+    var wiped = 0;
+    if (r.isSuccess && r.data != null) {
+      for (final e in r.data!) {
+        if (e.eventId != null) {
+          try { await _plugin.deleteEvent(calId, e.eventId!); wiped++; } catch (_) {}
+        }
+      }
+    }
+    await prefs.remove(_kKeyEvtEventIds);
+    await prefs.remove(_kKeyEvtShadow); // start with a clean shadow map
+    print('[calendar] _wipeDuplicateKisdEvents: wiped $wiped events');
+    await prefs.setBool('_kisdEventsDupesWiped', true);
+  }
+
+  // ── Shadow map helpers ──────────────────────────────────────────────────────
+
+  // Stable identity: title + start date/time components (more robust than ms).
+  static String _evtFingerprint(KisdEvent e) {
+    final t = e.title.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+    final s = e.start;
+    return '${t}_${s.year}_${s.month}_${s.day}_${s.hour}_${s.minute}';
+  }
+
+  // Mutable fields: changing any of these triggers a calendar update.
+  static String _evtContentHash(KisdEvent e) =>
+      '${e.venue ?? ''}_${e.url ?? ''}'
+      '_${e.end.hour}_${e.end.minute}'
+      '_${e.isRecurring}_${e.recurrenceRule ?? ''}';
+
+  static Map<String, Map<String, String>> _decodeShadow(SharedPreferences prefs) {
+    final raw = prefs.getString(_kKeyEvtShadow);
+    if (raw == null) return {};
+    try {
+      final m = json.decode(raw) as Map<String, dynamic>;
+      return {
+        for (final kv in m.entries)
+          kv.key: Map<String, String>.from(kv.value as Map),
+      };
+    } catch (_) {
+      return {};
+    }
+  }
+
+  static Future<void> _saveShadow(
+      SharedPreferences prefs, Map<String, Map<String, String>> shadow) =>
+      prefs.setString(_kKeyEvtShadow, json.encode(shadow));
+
+  // ── Core sync ───────────────────────────────────────────────────────────────
+
+  Future<void> _doWriteKisdEvents(List<KisdEvent> events) async {
+    if (_isSimulator) return;
+    try {
+      await _ensureTz();
+      if (!await _hasPermission()) return;
+      final calId = await _eventsCalendarId();
+      if (calId == null) return;
+
+      final prefs = await SharedPreferences.getInstance();
+
+      // One-time cleanup of old "View"-polluted events.
+      await _cleanupViewEvents(prefs);
+
+      // One-time wipe of duplicates from the old flat-ID-list era.
+      // Also clears the shadow map so we start fully clean.
+      await _wipeDuplicateKisdEvents(calId, prefs);
+
+      if (!SettingsService.instance.showKisdEvents.value) {
+        // Feature disabled: delete everything in shadow map and bail.
+        final shadow = _decodeShadow(prefs);
+        for (final entry in shadow.values) {
+          try { await _plugin.deleteEvent(calId, entry['c']!); } catch (_) {}
+        }
+        if (shadow.isNotEmpty) {
+          await prefs.remove(_kKeyEvtShadow);
+          print('[calendar] writeKisdEvents: disabled — removed ${shadow.length} entries');
+        }
+        return;
+      }
+
+      // ── Step 1: Deduplicate + filter the input ─────────────────────────────
+      final disabled = SettingsService.instance.disabledRecurringEventIds.value;
+      final seen = <String>{};
+      final active = <KisdEvent>[];
+      for (final evt in events) {
+        if (evt.title.isEmpty || evt.title == 'View') continue;
+        if (evt.isRecurring && disabled.contains(evt.id)) continue;
+        final fp = _evtFingerprint(evt);
+        if (seen.add(fp)) active.add(evt);
+      }
+      print('[calendar] writeKisdEvents: ${events.length} raw → ${active.length} active');
+
+      // ── Step 2: Load shadow map ────────────────────────────────────────────
+      final shadow = _decodeShadow(prefs);
+      final newMap = {for (final e in active) _evtFingerprint(e): e};
+
+      // ── Step 3: Delete events that are no longer in the scraped list ───────
+      var deleted = 0;
+      for (final fp in shadow.keys.toList()) {
+        if (!newMap.containsKey(fp)) {
+          try { await _plugin.deleteEvent(calId, shadow[fp]!['c']!); } catch (_) {}
+          shadow.remove(fp);
+          deleted++;
+        }
+      }
+
+      // ── Step 4: Create new / update changed events ─────────────────────────
+      final loc = tz.local;
+      var created = 0, updated = 0, skipped = 0;
+
+      for (var i = 0; i < active.length; i++) {
+        final evt = active[i];
+        final fp = _evtFingerprint(evt);
+        final newHash = _evtContentHash(evt);
+        final existing = shadow[fp];
+
+        if (existing != null && existing['h'] == newHash) {
+          skipped++;
+          continue; // Identical — no calendar write needed.
+        }
+
+        // Delete old calendar entry when updating.
+        if (existing != null) {
+          try { await _plugin.deleteEvent(calId, existing['c']!); } catch (_) {}
+        }
+
+        final evtStart = tz.TZDateTime(loc,
+            evt.start.year, evt.start.month, evt.start.day,
+            evt.start.hour, evt.start.minute);
+        final evtEnd = tz.TZDateTime(loc,
+            evt.end.year, evt.end.month, evt.end.day,
+            evt.end.hour, evt.end.minute);
+
+        final calEvt = Event(calId)
+          ..title = evt.title
+          ..start = evtStart
+          ..end = evtEnd
+          ..location = evt.venue
+          ..description = evt.url;
+
+        if (evt.isRecurring) {
+          calEvt.recurrenceRule = _parseRecurrenceRule(evt.recurrenceRule, evt.start);
+        }
+
+        final r = await _plugin.createOrUpdateEvent(calEvt);
+        if (r != null && r.isSuccess && r.data != null) {
+          shadow[fp] = {'c': r.data!, 'h': newHash};
+          if (existing != null) { updated++; } else { created++; }
+        }
+
+        if (i % 10 == 9) await Future.delayed(Duration.zero);
+      }
+
+      // ── Step 5: Persist the new shadow map ────────────────────────────────
+      await _saveShadow(prefs, shadow);
+      print('[calendar] writeKisdEvents: '
+          'deleted=$deleted created=$created updated=$updated skipped=$skipped');
+    } catch (e) {
+      print('[calendar] _doWriteKisdEvents: $e');
+    }
+  }
+
+  static RecurrenceRule _parseRecurrenceRule(String? rule, DateTime start) {
+    final lower = (rule ?? '').toLowerCase();
+    if (lower.contains('daily')) {
+      return RecurrenceRule(RecurrenceFrequency.Daily,
+          endDate: start.add(const Duration(days: 365)));
+    }
+    if (lower.contains('month')) {
+      return RecurrenceRule(RecurrenceFrequency.Monthly,
+          endDate: start.add(const Duration(days: 365 * 2)));
+    }
+    if (lower.contains('year') || lower.contains('annual')) {
+      return RecurrenceRule(RecurrenceFrequency.Yearly,
+          endDate: start.add(const Duration(days: 365 * 5)));
+    }
+    // Default: weekly (covers "weekly" and unknown rule strings)
+    return RecurrenceRule(RecurrenceFrequency.Weekly,
+        endDate: start.add(const Duration(days: 365 * 2)));
+  }
+
   // ── Query: events for a specific day (all calendars) ───────────────────────
 
   Future<List<DeviceCalendarEvent>> getEventsForDay(DateTime day) async {
+    if (_isSimulator) return const [];
     try {
       if (!await _hasPermission()) return const [];
 
@@ -198,6 +481,7 @@ class CalendarService {
             end:   TimeOfDay(hour: e.end!.hour,   minute: e.end!.minute),
             location: e.location?.isEmpty == true ? null : e.location,
             calendarColor: cal.color != null ? Color(cal.color as int) : _kisdColor,
+            calendarName: cal.name ?? '',
           ));
         }
       }
@@ -219,6 +503,7 @@ class CalendarService {
   // ── Query: which days in a month have events (all calendars) ───────────────
 
   Future<Set<DateTime>> getEventDaysForMonth(DateTime month) async {
+    if (_isSimulator) return const {};
     try {
       if (!await _hasPermission()) return const {};
 

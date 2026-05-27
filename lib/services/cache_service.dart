@@ -68,4 +68,53 @@ class CacheService {
     await prefs.remove(_keyCourses);
     await prefs.remove(_keyUpdated);
   }
+
+  // ── KISD events cache ──────────────────────────────────────────────────────
+
+  static const _keyEvents = 'kisd_events';
+  static const _keyEventsScraped = 'kisd_events_last_scrape';
+  static const _keyEventsVersion = 'kisd_events_version';
+  // Bump when the scraper output format changes to force a fresh scrape.
+  static const _eventsCurrentVersion = 5;
+
+  Future<void> saveKisdEvents(List<Map<String, dynamic>> events) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyEvents, json.encode(events));
+  }
+
+  Future<List<Map<String, dynamic>>> loadKisdEvents() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_keyEvents);
+    if (raw == null) return [];
+    final decoded = json.decode(raw) as List;
+    return decoded.cast<Map<String, dynamic>>();
+  }
+
+  Future<void> markEventsScrapeTime() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyEventsScraped, DateTime.now().toIso8601String());
+  }
+
+  Future<void> clearKisdEvents() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keyEvents);
+    await prefs.remove(_keyEventsScraped);
+    await prefs.remove(_keyEventsVersion);
+  }
+
+  Future<DateTime?> lastEventsScrapeTimestamp() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_keyEventsScraped);
+    return raw != null ? DateTime.tryParse(raw) : null;
+  }
+
+  Future<bool> isEventsCurrentVersion() async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getInt(_keyEventsVersion) ?? 0) == _eventsCurrentVersion;
+  }
+
+  Future<void> markEventsCurrentVersion() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_keyEventsVersion, _eventsCurrentVersion);
+  }
 }

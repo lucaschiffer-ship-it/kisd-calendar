@@ -2,10 +2,14 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
+import '../models/kisd_event.dart';
 import '../services/cache_service.dart';
+import '../services/calendar_service.dart';
 import '../services/service_locator.dart';
+import '../services/settings_service.dart';
 import '../services/theme_service.dart';
 import 'course_shell_test_screen.dart';
+import 'recurring_events_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -203,6 +207,76 @@ class SettingsScreen extends StatelessWidget {
                     value: glass,
                     onChanged: ThemeService.instance.setGlass,
                     activeThumbColor: colorScheme.primary,
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // ── Calendar ─────────────────────────────────────────────────────
+          const SizedBox(height: 24),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Text(
+              'CALENDAR',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: colorScheme.onSurface.withAlpha(100),
+                letterSpacing: 1.2,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: ValueListenableBuilder<bool>(
+              valueListenable: SettingsService.instance.showKisdEvents,
+              builder: (context, showEvents, _) => ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  color: colorScheme.surfaceContainerHigh,
+                  child: Column(
+                    children: [
+                      SwitchListTile(
+                        title: const Text('Show KISD events',
+                            style: TextStyle(fontWeight: FontWeight.w500)),
+                        subtitle:
+                            const Text('University events in your calendar'),
+                        value: showEvents,
+                        onChanged: (v) async {
+                          await SettingsService.instance.setShowKisdEvents(v);
+                          final raw = await CacheService().loadKisdEvents();
+                          final events = raw.map(KisdEvent.fromJson).toList();
+                          CalendarService.instance
+                              .writeKisdEvents(events)
+                              .ignore();
+                        },
+                        activeThumbColor: colorScheme.primary,
+                      ),
+                      if (showEvents) ...[
+                        Divider(
+                          height: 1,
+                          thickness: 0.5,
+                          indent: 16,
+                          color: Colors.white.withAlpha(18),
+                        ),
+                        ListTile(
+                          title: const Text('Toggle repeating events',
+                              style: TextStyle(fontWeight: FontWeight.w500)),
+                          subtitle: const Text(
+                              'Choose which recurring events to include'),
+                          trailing: const Icon(CupertinoIcons.chevron_right,
+                              size: 16),
+                          onTap: () => Navigator.push(
+                            context,
+                            CupertinoPageRoute(
+                                builder: (_) =>
+                                    const RecurringEventsScreen()),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ),

@@ -187,9 +187,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         // ── Main scaffold ────────────────────────────────────────────────
         Scaffold(
           backgroundColor: tokens.AppThemeTokens.backgroundColor,
-          // Mensa (0) and Mail (1) manage their own glass headers
-          extendBodyBehindAppBar: _currentPage == 0 || _currentPage == 1,
-          appBar: (_currentPage == 0 || _currentPage == 1)
+          // Mensa (0), Mail (1), and List (2) manage their own glass headers
+          extendBodyBehindAppBar: _currentPage == 0 || _currentPage == 1 || _currentPage == 2,
+          appBar: (_currentPage == 0 || _currentPage == 1 || _currentPage == 2)
               ? AppBar(
                   backgroundColor: Colors.transparent,
                   elevation: 0,

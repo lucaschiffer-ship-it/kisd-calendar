@@ -3,12 +3,14 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/service_locator.dart';
+import 'services/settings_service.dart';
 import 'services/theme_service.dart';
 import 'theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await ThemeService.instance.init();
+  await SettingsService.instance.init();
   await loginService.initialize();
   loginService.navigatorKey = navigatorKey;
   runApp(const KisdCalendarApp());

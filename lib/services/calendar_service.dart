@@ -500,6 +500,55 @@ class CalendarService {
   Future<List<DeviceCalendarEvent>> getTodayEvents() =>
       getEventsForDay(DateTime.now());
 
+  // ── Query: all events in a month, grouped by day-of-month ──────────────────
+
+  Future<Map<int, List<DeviceCalendarEvent>>> getEventsForMonth(
+      DateTime month) async {
+    if (_isSimulator) return const {};
+    try {
+      if (!await _hasPermission()) return const {};
+
+      final start = DateTime(month.year, month.month, 1, 0, 0, 0);
+      final end = DateTime(month.year, month.month + 1, 0, 23, 59, 59);
+
+      final cals = await _plugin.retrieveCalendars();
+      if (!cals.isSuccess || cals.data == null) return const {};
+
+      final result = <int, List<DeviceCalendarEvent>>{};
+
+      for (final cal in cals.data!.where((c) => c.id != null)) {
+        final r = await _plugin.retrieveEvents(
+            cal.id!, RetrieveEventsParams(startDate: start, endDate: end));
+        if (!r.isSuccess || r.data == null) continue;
+        for (final e in r.data!) {
+          if (e.start == null || e.end == null || (e.title ?? '').isEmpty) {
+            continue;
+          }
+          final day = e.start!.day;
+          result.putIfAbsent(day, () => []).add(DeviceCalendarEvent(
+            title: e.title!,
+            start: TimeOfDay(hour: e.start!.hour, minute: e.start!.minute),
+            end: TimeOfDay(hour: e.end!.hour, minute: e.end!.minute),
+            location: e.location?.isEmpty == true ? null : e.location,
+            calendarColor:
+                cal.color != null ? Color(cal.color as int) : _kisdColor,
+            calendarName: cal.name ?? '',
+          ));
+        }
+      }
+
+      for (final list in result.values) {
+        list.sort((a, b) => (a.start.hour * 60 + a.start.minute)
+            .compareTo(b.start.hour * 60 + b.start.minute));
+      }
+
+      return result;
+    } catch (e) {
+      print('[calendar] getEventsForMonth: $e');
+      return const {};
+    }
+  }
+
   // ── Query: which days in a month have events (all calendars) ───────────────
 
   Future<Set<DateTime>> getEventDaysForMonth(DateTime month) async {

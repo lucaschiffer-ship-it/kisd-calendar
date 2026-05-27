@@ -8,31 +8,44 @@ import '../theme/app_theme.dart';
 import 'day_column.dart';
 
 class MultiDayView extends StatefulWidget {
-  const MultiDayView({super.key, this.onEventTap});
+  const MultiDayView({super.key, this.onEventTap, this.initialDay});
 
   final void Function(DeviceCalendarEvent)? onEventTap;
+
+  /// Day to center on when first shown. Defaults to today.
+  final DateTime? initialDay;
 
   // Number of day columns visible simultaneously.
   // viewportFraction is derived from this, so changing it resizes all columns.
   static const int kColumnCount = 3;
+
+  // Page 500 = today. Gives ~500 pages in each direction.
+  static const int kTodayPage = 500;
 
   @override
   State<MultiDayView> createState() => _MultiDayViewState();
 }
 
 class _MultiDayViewState extends State<MultiDayView> {
-  // Page 500 = today. Gives ~500 pages in each direction.
-  static const int _kInitialPage = 500;
-
   late final PageController _pageController;
   final _scrollController = ScrollController();
-  int _focusedPage = _kInitialPage;
+  late int _focusedPage;
 
   @override
   void initState() {
     super.initState();
+    final today = DateTime.now();
+    final todayNorm = DateTime(today.year, today.month, today.day);
+    if (widget.initialDay != null) {
+      final target = DateTime(
+          widget.initialDay!.year, widget.initialDay!.month, widget.initialDay!.day);
+      _focusedPage =
+          MultiDayView.kTodayPage + target.difference(todayNorm).inDays;
+    } else {
+      _focusedPage = MultiDayView.kTodayPage;
+    }
     _pageController = PageController(
-      initialPage: _kInitialPage,
+      initialPage: _focusedPage,
       viewportFraction: 1 / MultiDayView.kColumnCount,
     );
     _pageController.addListener(_onPageScroll);
@@ -48,14 +61,14 @@ class _MultiDayViewState extends State<MultiDayView> {
   }
 
   void _onPageScroll() {
-    final page = _pageController.page?.round() ?? _kInitialPage;
+    final page = _pageController.page?.round() ?? MultiDayView.kTodayPage;
     if (page != _focusedPage) setState(() => _focusedPage = page);
   }
 
   DateTime _dayForPage(int page) {
     final today = DateTime.now();
     final anchor = DateTime(today.year, today.month, today.day);
-    return anchor.add(Duration(days: page - _kInitialPage));
+    return anchor.add(Duration(days: page - MultiDayView.kTodayPage));
   }
 
   void _scrollToCurrentTime() {

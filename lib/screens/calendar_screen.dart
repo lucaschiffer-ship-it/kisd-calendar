@@ -8,6 +8,7 @@ import '../config/app_theme.dart' as tokens;
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/day_column.dart';
+import '../widgets/month_view.dart';
 import '../widgets/multi_day_view.dart';
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
@@ -43,6 +44,9 @@ class _CalendarScreenState extends State<CalendarScreen>
   late DateTime _displayedMonth;
   late DateTime _selectedDate;
 
+  // Preserved so MonthView restores its scroll position on back-navigation.
+  double? _monthScrollOffset;
+
   @override
   void initState() {
     super.initState();
@@ -60,6 +64,10 @@ class _CalendarScreenState extends State<CalendarScreen>
           _navLevel = _NavLevel.year;
         case _NavLevel.day:
           _navLevel = _NavLevel.month;
+          // Seed header label to selected date's month; MonthView fires onMonthChanged
+          // after the first frame to sync to the actual scrolled position.
+          _displayedMonth =
+              DateTime(_selectedDate.year, _selectedDate.month);
         case _NavLevel.year:
           break;
       }
@@ -212,14 +220,20 @@ class _CalendarScreenState extends State<CalendarScreen>
             hint: 'Tap to open current month',
             onTap: () => _drillToMonth(DateTime(_today.year, _today.month)),
           ),
-        _NavLevel.month => _DrillPlaceholder(
-            label: 'Month View (Phase 4)',
-            hint: 'Tap to open today',
-            onTap: () => _drillToDay(_today),
+        _NavLevel.month => MonthView(
+            today: _today,
+            onDayTapped: (day) {
+              setState(() => _dayViewMode = _DayViewMode.multiDay);
+              _drillToDay(day);
+            },
+            onMonthChanged: (m) => setState(() => _displayedMonth = m),
+            initialScrollOffset: _monthScrollOffset,
+            onScrollChanged: (offset) => _monthScrollOffset = offset,
           ),
         _NavLevel.day => switch (_dayViewMode) {
             _DayViewMode.singleDay => DayColumn(day: _selectedDate),
-            _DayViewMode.multiDay => const MultiDayView(),
+            _DayViewMode.multiDay =>
+              MultiDayView(initialDay: _selectedDate),
             _DayViewMode.list => const _Placeholder(label: 'List View'),
           },
       };

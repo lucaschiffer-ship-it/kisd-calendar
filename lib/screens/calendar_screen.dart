@@ -7,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../config/app_theme.dart' as tokens;
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/day_column.dart';
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
@@ -215,13 +216,12 @@ class _CalendarScreenState extends State<CalendarScreen>
             hint: 'Tap to open today',
             onTap: () => _drillToDay(_today),
           ),
-        _NavLevel.day => _Placeholder(
-            label: switch (_dayViewMode) {
-              _DayViewMode.singleDay => 'Single Day (Phase 2)',
-              _DayViewMode.multiDay => 'Multi Day (Phase 3)',
-              _DayViewMode.list => 'List View',
-            },
-          ),
+        _NavLevel.day => switch (_dayViewMode) {
+            _DayViewMode.singleDay => DayColumn(day: _selectedDate),
+            _DayViewMode.multiDay =>
+              const _Placeholder(label: 'Multi Day (Phase 3)'),
+            _DayViewMode.list => const _Placeholder(label: 'List View'),
+          },
       };
 }
 

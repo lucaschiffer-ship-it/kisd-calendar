@@ -29,6 +29,7 @@ class MonthView extends StatefulWidget {
     this.onMonthChanged,
     this.initialScrollOffset,
     this.onScrollChanged,
+    this.onEventTap,
   });
 
   final DateTime today;
@@ -36,6 +37,7 @@ class MonthView extends StatefulWidget {
   final void Function(DateTime month)? onMonthChanged;
   final double? initialScrollOffset;
   final void Function(double offset)? onScrollChanged;
+  final void Function(DeviceCalendarEvent, DateTime)? onEventTap;
 
   @override
   State<MonthView> createState() => _MonthViewState();
@@ -143,6 +145,7 @@ class _MonthViewState extends State<MonthView> {
             month: month,
             today: widget.today,
             onDayTapped: widget.onDayTapped,
+            onEventTap: widget.onEventTap,
           );
         },
       ),
@@ -157,11 +160,13 @@ class _MonthSection extends StatefulWidget {
     required this.month,
     required this.today,
     required this.onDayTapped,
+    this.onEventTap,
   });
 
   final DateTime month;
   final DateTime today;
   final void Function(DateTime day) onDayTapped;
+  final void Function(DeviceCalendarEvent, DateTime)? onEventTap;
 
   @override
   State<_MonthSection> createState() => _MonthSectionState();
@@ -271,6 +276,7 @@ class _MonthSectionState extends State<_MonthSection> {
               isInMonth: isInMonth,
               events: isInMonth ? (_eventsByDay[dayNum] ?? []) : const [],
               onTap: () => widget.onDayTapped(cellDay),
+              onEventTap: widget.onEventTap,
             ),
           );
         }),
@@ -288,6 +294,7 @@ class _DayCell extends StatelessWidget {
     required this.isInMonth,
     required this.events,
     this.onTap,
+    this.onEventTap,
   });
 
   final DateTime day;
@@ -295,6 +302,7 @@ class _DayCell extends StatelessWidget {
   final bool isInMonth;
   final List<DeviceCalendarEvent> events;
   final VoidCallback? onTap;
+  final void Function(DeviceCalendarEvent, DateTime)? onEventTap;
 
   @override
   Widget build(BuildContext context) {
@@ -349,8 +357,12 @@ class _DayCell extends StatelessWidget {
                     ),
             ),
             const SizedBox(height: 3),
-            // Event chips
-            for (final e in chips) _EventChip(event: e),
+            // Event chips — inner taps open detail sheet; outer cell tap drills to day.
+            for (final e in chips)
+              _EventChip(
+                event: e,
+                onTap: onEventTap != null ? () => onEventTap!(e, day) : null,
+              ),
             if (overflow > 0)
               Padding(
                 padding: const EdgeInsets.only(left: 3, right: 3, top: 1),
@@ -376,13 +388,16 @@ class _DayCell extends StatelessWidget {
 // ─── Event chip ───────────────────────────────────────────────────────────────
 
 class _EventChip extends StatelessWidget {
-  const _EventChip({required this.event});
+  const _EventChip({required this.event, this.onTap});
 
   final DeviceCalendarEvent event;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
       height: 12,
       margin: const EdgeInsets.only(left: 2, right: 2, bottom: 2),
       padding: const EdgeInsets.symmetric(horizontal: 3),
@@ -401,6 +416,6 @@ class _EventChip extends StatelessWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
-    );
+    ));
   }
 }

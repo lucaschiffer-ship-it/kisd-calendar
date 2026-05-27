@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../config/app_theme.dart' as tokens;
+import '../screens/event_detail_screen.dart';
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/day_column.dart';
@@ -48,6 +49,10 @@ class _CalendarScreenState extends State<CalendarScreen>
   // Preserved so MonthView restores its scroll position on back-navigation.
   double? _monthScrollOffset;
 
+  // Direction for the nav-level slide transition.
+  // true = drilling in (Year→Month, Month→Day); false = going back.
+  Offset _slideBegin = const Offset(0.15, 0);
+
   @override
   void initState() {
     super.initState();
@@ -59,6 +64,7 @@ class _CalendarScreenState extends State<CalendarScreen>
   }
 
   void _goBack() {
+    _slideBegin = const Offset(-0.15, 0);
     setState(() {
       switch (_navLevel) {
         case _NavLevel.month:
@@ -77,6 +83,7 @@ class _CalendarScreenState extends State<CalendarScreen>
   }
 
   void _drillToMonth(DateTime month) {
+    _slideBegin = const Offset(0.15, 0);
     setState(() {
       _displayedMonth = month;
       _navLevel = _NavLevel.month;
@@ -84,6 +91,7 @@ class _CalendarScreenState extends State<CalendarScreen>
   }
 
   void _drillToDay(DateTime day) {
+    _slideBegin = const Offset(0.15, 0);
     setState(() {
       _selectedDate = day;
       _navLevel = _NavLevel.day;
@@ -115,7 +123,7 @@ class _CalendarScreenState extends State<CalendarScreen>
       builder: (context, _) => Column(
         children: [
           _buildHeader(context),
-          Expanded(child: _buildBody()),
+          Expanded(child: _buildBody(context)),
         ],
       ),
     );
@@ -216,7 +224,27 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   // ── Body ─────────────────────────────────────────────────────────────────────
 
-  Widget _buildBody() => switch (_navLevel) {
+  Widget _buildBody(BuildContext context) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 220),
+      transitionBuilder: (child, animation) => FadeTransition(
+        opacity: animation,
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: _slideBegin,
+            end: Offset.zero,
+          ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOut)),
+          child: child,
+        ),
+      ),
+      child: KeyedSubtree(
+        key: ValueKey(_navLevel),
+        child: _buildNavContent(context),
+      ),
+    );
+  }
+
+  Widget _buildNavContent(BuildContext context) => switch (_navLevel) {
         _NavLevel.year => YearView(
             today: _today,
             initialYear: _displayedYear,
@@ -232,13 +260,27 @@ class _CalendarScreenState extends State<CalendarScreen>
             onMonthChanged: (m) => setState(() => _displayedMonth = m),
             initialScrollOffset: _monthScrollOffset,
             onScrollChanged: (offset) => _monthScrollOffset = offset,
+            onEventTap: (e, d) => showEventDetail(context, e, d),
           ),
-        _NavLevel.day => switch (_dayViewMode) {
-            _DayViewMode.singleDay => DayColumn(day: _selectedDate),
-            _DayViewMode.multiDay =>
-              MultiDayView(initialDay: _selectedDate),
-            _DayViewMode.list => const _Placeholder(label: 'List View'),
-          },
+        _NavLevel.day => AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            child: KeyedSubtree(
+              key: ValueKey(_dayViewMode),
+              child: _buildDayContent(context),
+            ),
+          ),
+      };
+
+  Widget _buildDayContent(BuildContext context) => switch (_dayViewMode) {
+        _DayViewMode.singleDay => DayColumn(
+            day: _selectedDate,
+            onEventTap: (e, d) => showEventDetail(context, e, d),
+          ),
+        _DayViewMode.multiDay => MultiDayView(
+            initialDay: _selectedDate,
+            onEventTap: (e, d) => showEventDetail(context, e, d),
+          ),
+        _DayViewMode.list => const _Placeholder(label: 'List View'),
       };
 }
 
@@ -326,4 +368,3 @@ class _Placeholder extends StatelessWidget {
     );
   }
 }
-

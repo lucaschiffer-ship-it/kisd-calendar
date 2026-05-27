@@ -7,6 +7,20 @@ import '../config/app_theme.dart';
 import '../services/calendar_service.dart';
 import '../services/theme_service.dart';
 
+// ─── Overlap layout helpers ───────────────────────────────────────────────────
+
+class _EvtItem {
+  _EvtItem({required this.event, required this.startMin, required this.endMin});
+  final DeviceCalendarEvent event;
+  final int startMin;
+  final int endMin;
+}
+
+bool _overlaps(_EvtItem a, _EvtItem b) =>
+    a.startMin < b.endMin && b.startMin < a.endMin;
+
+// ─── Widget ───────────────────────────────────────────────────────────────────
+
 class DayColumn extends StatefulWidget {
   const DayColumn({
     super.key,
@@ -17,8 +31,11 @@ class DayColumn extends StatefulWidget {
   });
 
   final DateTime day;
-  final void Function(DeviceCalendarEvent)? onEventTap;
+
+  /// Called with the tapped event and the day it belongs to.
+  final void Function(DeviceCalendarEvent, DateTime)? onEventTap;
   final bool showHourLabels;
+
   /// When true, omits the internal SingleChildScrollView — the parent owns scrolling.
   final bool embedded;
 
@@ -174,25 +191,92 @@ class _DayColumnState extends State<DayColumn> {
     );
   }
 
-  List<Widget> _buildEventCards(double eventAreaWidth, double leftOffset) {
-    return _events.map((event) {
-      final startMin = event.start.hour * 60 + event.start.minute;
-      final endMin = event.end.hour * 60 + event.end.minute;
-      final durationMin = (endMin - startMin).clamp(15, 24 * 60).toDouble();
-      final top = startMin / 60.0 * DayColumn.hourHeight;
-      final height = (durationMin / 60.0 * DayColumn.hourHeight).clamp(20.0, DayColumn.hourHeight * 24);
+  // ── Overlap layout ────────────────────────────────────────────────────────────
+  // 1. Sort events by start time.
+  // 2. Group events that overlap transitively (sort ensures bridging events
+  //    are processed between the events they bridge, so a single-pass group
+  //    build correctly captures transitivity).
+  // 3. Within each group, assign events to lanes greedily (reuse a lane when
+  //    the previous event in that lane has ended).
+  // 4. Position each event: left = lane * (laneWidth + gap), width = laneWidth.
 
-      return Positioned(
-        top: top,
-        left: leftOffset + 2,
-        width: eventAreaWidth - 4,
-        height: height,
-        child: _EventCard(
-          event: event,
-          onTap: widget.onEventTap != null ? () => widget.onEventTap!(event) : null,
-        ),
-      );
-    }).toList();
+  List<Widget> _buildEventCards(double eventAreaWidth, double leftOffset) {
+    if (_events.isEmpty) return const [];
+
+    final items = _events.map((e) {
+      final startMin = e.start.hour * 60 + e.start.minute;
+      final endMin = (e.end.hour * 60 + e.end.minute).clamp(startMin + 15, 24 * 60);
+      return _EvtItem(event: e, startMin: startMin, endMin: endMin);
+    }).toList()
+      ..sort((a, b) => a.startMin.compareTo(b.startMin));
+
+    final n = items.length;
+
+    // Build overlap groups — each is a list of indices into `items`.
+    final groups = <List<int>>[];
+    for (int i = 0; i < n; i++) {
+      bool added = false;
+      for (final group in groups) {
+        if (group.any((j) => _overlaps(items[i], items[j]))) {
+          group.add(i);
+          added = true;
+          break;
+        }
+      }
+      if (!added) groups.add([i]);
+    }
+
+    const gap = 1.5;
+    final widgets = <Widget>[];
+
+    for (final group in groups) {
+      // Lane assignment: find the first reusable lane; otherwise open a new one.
+      final laneEndMins = <int>[];
+      final eventLane = <int, int>{}; // index → lane
+
+      for (final idx in group) {
+        int lane = -1;
+        for (int l = 0; l < laneEndMins.length; l++) {
+          if (laneEndMins[l] <= items[idx].startMin) {
+            lane = l;
+            laneEndMins[l] = items[idx].endMin;
+            break;
+          }
+        }
+        if (lane == -1) {
+          lane = laneEndMins.length;
+          laneEndMins.add(items[idx].endMin);
+        }
+        eventLane[idx] = lane;
+      }
+
+      final totalLanes = laneEndMins.length;
+      final laneWidth = (eventAreaWidth - 4 - gap * (totalLanes - 1)) / totalLanes;
+
+      for (final idx in group) {
+        final item = items[idx];
+        final lane = eventLane[idx]!;
+        final top = item.startMin / 60.0 * DayColumn.hourHeight;
+        final height = ((item.endMin - item.startMin) / 60.0 * DayColumn.hourHeight)
+            .clamp(20.0, DayColumn.hourHeight * 24);
+        final left = leftOffset + 2 + lane * (laneWidth + gap);
+
+        widgets.add(Positioned(
+          top: top,
+          left: left,
+          width: laneWidth,
+          height: height,
+          child: _EventCard(
+            event: item.event,
+            onTap: widget.onEventTap != null
+                ? () => widget.onEventTap!(item.event, widget.day)
+                : null,
+          ),
+        ));
+      }
+    }
+
+    return widgets;
   }
 
   Widget _buildTimeIndicator(double totalWidth, double leftOffset) {

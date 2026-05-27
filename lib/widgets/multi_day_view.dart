@@ -10,7 +10,7 @@ import 'day_column.dart';
 class MultiDayView extends StatefulWidget {
   const MultiDayView({super.key, this.onEventTap, this.initialDay});
 
-  final void Function(DeviceCalendarEvent)? onEventTap;
+  final void Function(DeviceCalendarEvent, DateTime)? onEventTap;
 
   /// Day to center on when first shown. Defaults to today.
   final DateTime? initialDay;

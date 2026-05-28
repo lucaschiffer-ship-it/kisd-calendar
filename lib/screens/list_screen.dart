@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../config/app_theme.dart' as tokens;
 import '../models/course_shell.dart';
+import '../models/kisd_event.dart';
 import '../services/cache_service.dart';
 import '../services/calendar_service.dart';
 import '../services/service_locator.dart';
@@ -69,6 +70,7 @@ class _ListScreenState extends State<ListScreen>
   List<CourseShell> _allCourses = [];
 
   List<DeviceCalendarEvent> _todayEvents = [];
+  List<DeviceCalendarEvent> _todayKisdEvents = [];
   bool _loading = false;
   String? _error;
 
@@ -85,7 +87,11 @@ class _ListScreenState extends State<ListScreen>
     _myCourses  = _shells.where((s) => s.isMyCourse).toList();
     _favourites = _shells.where((s) => s.isFavourite).toList();
     _allCourses = List.of(_shells);
-    _todayEvents = _computeTodayCourseEvents();
+    final all = [..._computeTodayCourseEvents(), ..._todayKisdEvents];
+    all.sort((a, b) =>
+        (a.start.hour * 60 + a.start.minute)
+            .compareTo(b.start.hour * 60 + b.start.minute));
+    _todayEvents = all;
   }
 
   // Compute today's enrolled-course schedule from shell data — never queries
@@ -124,6 +130,32 @@ class _ListScreenState extends State<ListScreen>
     return events;
   }
 
+  Future<void> _loadTodayKisdEvents() async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final rawEvents = await CacheService().loadKisdEvents();
+    final seen = <String>{};
+    final kisd = <DeviceCalendarEvent>[];
+    for (final j in rawEvents) {
+      final e = KisdEvent.fromJson(j);
+      if (DateTime(e.start.year, e.start.month, e.start.day) != today) continue;
+      final fp = '${e.title.trim().toLowerCase()}_${e.start.hour}_${e.start.minute}';
+      if (!seen.add(fp)) continue;
+      kisd.add(DeviceCalendarEvent(
+        title: e.title,
+        start: TimeOfDay(hour: e.start.hour, minute: e.start.minute),
+        end: TimeOfDay(hour: e.end.hour, minute: e.end.minute),
+        location: e.venue,
+        calendarColor: AppColors.accent,
+      ));
+    }
+    if (!mounted) return;
+    setState(() {
+      _todayKisdEvents = kisd;
+      _rebuildFilteredLists();
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -133,6 +165,7 @@ class _ListScreenState extends State<ListScreen>
     _init();
     // Events scrape deferred until after first frame so cached courses render first.
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeEventsBackground());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadTodayKisdEvents());
   }
 
   Future<void> _maybeEventsBackground() async {
@@ -212,6 +245,7 @@ class _ListScreenState extends State<ListScreen>
       await cache.markEventsScrapeTime();
       await cache.markEventsCurrentVersion();
       CalendarService.instance.writeKisdEvents(events).ignore();
+      _loadTodayKisdEvents();
     } catch (e) {
       print('[list] events scrape failed: $e');
     }

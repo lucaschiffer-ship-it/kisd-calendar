@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -8,7 +6,6 @@ import 'list_screen.dart';
 import 'mail_screen.dart';
 import 'mensa_screen.dart';
 import 'browser_screen.dart';
-import 'settings_screen.dart';
 import '../config/app_theme.dart' as tokens;
 import '../services/service_locator.dart';
 import '../services/spaces_browser.dart';
@@ -38,15 +35,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   double _dragOffset = 0;
 
   int _currentPage = _initialPage;
-  bool _calendarReloadDone = false;
   String _miniBarTitle = 'Spaces';
 
   // Bottom nav bar state
   bool _canGoBack = false;
   bool _canGoForward = false;
   String _currentUrl = 'https://spaces.kisd.de';
-
-  static const _titles = ['Mensa', 'Mail', 'List', 'Calendar'];
 
   static const List<Widget> _pages = [
     MensaScreen(),
@@ -130,17 +124,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   // ── Misc ───────────────────────────────────────────────────────────────────
 
-  void _onCalendarReloadPressed() {
-    if (loginService.isLoading) return;
-    loginService.loginWithStoredCredentials().then((_) {
-      if (!mounted) return;
-      setState(() => _calendarReloadDone = true);
-      Future.delayed(const Duration(seconds: 1), () {
-        if (mounted) setState(() => _calendarReloadDone = false);
-      });
-    });
-  }
-
   void _onTabTapped(int index) {
     _pageController.animateToPage(
       index,
@@ -148,32 +131,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       curve: Curves.easeInOut,
     );
   }
-
-  void _openSettings() {
-    Navigator.push(
-      context,
-      CupertinoPageRoute(builder: (_) => const SettingsScreen()),
-    );
-  }
-
-  Widget _reloadButton({
-    required bool loading,
-    required bool done,
-    required VoidCallback onPressed,
-  }) =>
-      IconButton(
-        icon: loading
-            ? SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: tokens.AppThemeTokens.navBarIcon),
-              )
-            : done
-                ? const Icon(Icons.check, color: Color(0xFF30D158))
-                : Icon(CupertinoIcons.arrow_clockwise, color: tokens.AppThemeTokens.navBarIcon),
-        onPressed: loading ? null : onPressed,
-      );
 
   @override
   Widget build(BuildContext context) {
@@ -187,55 +144,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         // ── Main scaffold ────────────────────────────────────────────────
         Scaffold(
           backgroundColor: tokens.AppThemeTokens.backgroundColor,
-          // Mensa (0), Mail (1), and List (2) manage their own glass headers
-          extendBodyBehindAppBar: _currentPage == 0 || _currentPage == 1 || _currentPage == 2,
-          appBar: (_currentPage == 0 || _currentPage == 1 || _currentPage == 2)
-              ? AppBar(
-                  backgroundColor: Colors.transparent,
-                  elevation: 0,
-                  scrolledUnderElevation: 0,
-                  surfaceTintColor: Colors.transparent,
-                  forceMaterialTransparency: true,
-                )
-              : AppBar(
-                  backgroundColor: ThemeService.instance.glassEnabled.value
-                      ? Colors.transparent
-                      : tokens.AppThemeTokens.backgroundColor,
-                  flexibleSpace: ThemeService.instance.glassEnabled.value
-                      ? ClipRect(
-                          child: BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: ThemeService.instance.currentColor.value == 'dark'
-                                    ? Colors.white.withValues(alpha: 0.08)
-                                    : Colors.white.withValues(alpha: 0.50),
-                                border: const Border(
-                                  bottom: BorderSide(color: Color(0x1AFFFFFF), width: 0.5),
-                                ),
-                              ),
-                            ),
-                          ),
-                        )
-                      : null,
-                  leading: _currentPage == 3
-                      ? _reloadButton(
-                          loading: loginService.isLoading,
-                          done: _calendarReloadDone,
-                          onPressed: _onCalendarReloadPressed,
-                        )
-                      : null,
-                  title: Text(_titles[_currentPage],
-                      style: AppTextStyle.navTitle.copyWith(
-                          color: tokens.AppThemeTokens.titleColor)),
-                  actions: [
-                    IconButton(
-                      icon: Icon(CupertinoIcons.settings,
-                          color: tokens.AppThemeTokens.navBarIcon),
-                      onPressed: _openSettings,
-                    ),
-                  ],
-                ),
+          // All pages manage their own headers
+          extendBodyBehindAppBar: true,
+          appBar: AppBar(
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            surfaceTintColor: Colors.transparent,
+            forceMaterialTransparency: true,
+          ),
           body: PageView(
             controller: _pageController,
             physics: const NeverScrollableScrollPhysics(),
@@ -424,6 +341,7 @@ class _MiniBrowserBar extends StatelessWidget {
                     color: fg,
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
+                    decoration: TextDecoration.none,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,

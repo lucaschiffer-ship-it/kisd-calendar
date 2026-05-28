@@ -20,6 +20,7 @@ class MailScreen extends StatefulWidget {
 
   @override
   State<MailScreen> createState() => _MailScreenState();
+  
 }
 
 class _MailScreenState extends State<MailScreen>

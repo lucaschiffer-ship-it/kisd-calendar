@@ -28,6 +28,7 @@ class DayColumn extends StatefulWidget {
     this.onEventTap,
     this.showHourLabels = true,
     this.embedded = false,
+    this.topInset = 0,
   });
 
   final DateTime day;
@@ -39,7 +40,11 @@ class DayColumn extends StatefulWidget {
   /// When true, omits the internal SingleChildScrollView — the parent owns scrolling.
   final bool embedded;
 
-  static const double hourHeight = 60.0;
+  /// Height in logical pixels covered by the glass header overlay. Used to
+  /// position 8:00 at the first visible row below the header on initial load.
+  final double topInset;
+
+  static const double hourHeight = 50.0;
   static const double labelWidth = 52.0;
 
   @override
@@ -58,6 +63,8 @@ class _DayColumnState extends State<DayColumn> {
     if (!widget.embedded) {
       _scrollController = ScrollController();
     }
+    // Seed from cache synchronously so the first frame shows events rather than blank.
+    _events = CalendarService.instance.getCachedEvents(widget.day) ?? [];
     _loadEvents();
     _timer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() => _now = DateTime.now());
@@ -71,7 +78,9 @@ class _DayColumnState extends State<DayColumn> {
   void didUpdateWidget(DayColumn old) {
     super.didUpdateWidget(old);
     if (old.day != widget.day) {
-      setState(() => _events = []);
+      // Show cached events immediately while the async refresh runs.
+      setState(() =>
+          _events = CalendarService.instance.getCachedEvents(widget.day) ?? []);
       _loadEvents();
       if (!widget.embedded) {
         WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToFocus());
@@ -99,12 +108,11 @@ class _DayColumnState extends State<DayColumn> {
 
   void _scrollToFocus() {
     if (_scrollController == null || !_scrollController!.hasClients) return;
-    final focusHour = _isToday ? _now.hour + _now.minute / 60.0 : 8.0;
-    final viewportHeight = _scrollController!.position.viewportDimension;
-    final target = focusHour * DayColumn.hourHeight - viewportHeight / 2;
-    _scrollController!.jumpTo(
-      target.clamp(0.0, _scrollController!.position.maxScrollExtent),
-    );
+    // Position 8:00 at the first pixel visible below the glass header.
+    const kStartHour = 8.0;
+    final target = (kStartHour * DayColumn.hourHeight - widget.topInset)
+        .clamp(0.0, _scrollController!.position.maxScrollExtent);
+    _scrollController!.jumpTo(target);
   }
 
   @override
@@ -139,7 +147,19 @@ class _DayColumnState extends State<DayColumn> {
           ),
         );
 
-        if (widget.embedded) return stack;
+        if (widget.embedded) {
+          return DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border(
+                right: BorderSide(
+                  color: AppThemeTokens.cardBorder,
+                  width: 0.5,
+                ),
+              ),
+            ),
+            child: stack,
+          );
+        }
 
         return SingleChildScrollView(
           controller: _scrollController,
@@ -191,15 +211,6 @@ class _DayColumnState extends State<DayColumn> {
     );
   }
 
-  // ── Overlap layout ────────────────────────────────────────────────────────────
-  // 1. Sort events by start time.
-  // 2. Group events that overlap transitively (sort ensures bridging events
-  //    are processed between the events they bridge, so a single-pass group
-  //    build correctly captures transitivity).
-  // 3. Within each group, assign events to lanes greedily (reuse a lane when
-  //    the previous event in that lane has ended).
-  // 4. Position each event: left = lane * (laneWidth + gap), width = laneWidth.
-
   List<Widget> _buildEventCards(double eventAreaWidth, double leftOffset) {
     if (_events.isEmpty) return const [];
 
@@ -212,70 +223,101 @@ class _DayColumnState extends State<DayColumn> {
 
     final n = items.length;
 
-    // Build overlap groups — each is a list of indices into `items`.
-    final groups = <List<int>>[];
+    // Apple-style layout: only split events into side-by-side columns when their
+    // header regions conflict (both time-overlap AND start within kHeaderMin of
+    // each other). Events starting far apart are layered full-width, later on top.
+    const kHeaderMin = 45; // minutes ≈ rendered height of one event header
+
+    bool needsSplit(int i, int j) =>
+        _overlaps(items[i], items[j]) &&
+        (items[i].startMin - items[j].startMin).abs() < kHeaderMin;
+
+    // Connected components of the header-conflict graph → each component shares columns.
+    final compOf = List.filled(n, -1);
+    final comps = <List<int>>[];
     for (int i = 0; i < n; i++) {
-      bool added = false;
-      for (final group in groups) {
-        if (group.any((j) => _overlaps(items[i], items[j]))) {
-          group.add(i);
-          added = true;
-          break;
+      if (compOf[i] != -1) continue;
+      final cId = comps.length;
+      final comp = <int>[];
+      comps.add(comp);
+      final stack = [i];
+      while (stack.isNotEmpty) {
+        final cur = stack.removeLast();
+        if (compOf[cur] != -1) continue;
+        compOf[cur] = cId;
+        comp.add(cur);
+        for (int j = 0; j < n; j++) {
+          if (compOf[j] == -1 && needsSplit(cur, j)) stack.add(j);
         }
       }
-      if (!added) groups.add([i]);
     }
 
+    // Greedy lane assignment within each component.
     const gap = 1.5;
-    final widgets = <Widget>[];
+    final lane = List.filled(n, 0);
+    final lanesPerComp = List.filled(comps.length, 1);
 
-    for (final group in groups) {
-      // Lane assignment: find the first reusable lane; otherwise open a new one.
-      final laneEndMins = <int>[];
-      final eventLane = <int, int>{}; // index → lane
-
-      for (final idx in group) {
-        int lane = -1;
-        for (int l = 0; l < laneEndMins.length; l++) {
-          if (laneEndMins[l] <= items[idx].startMin) {
-            lane = l;
-            laneEndMins[l] = items[idx].endMin;
-            break;
-          }
+    for (int ci = 0; ci < comps.length; ci++) {
+      final comp = comps[ci]
+        ..sort((a, b) => items[a].startMin.compareTo(items[b].startMin));
+      final laneEnd = <int>[];
+      for (final idx in comp) {
+        int l = laneEnd.indexWhere((e) => e <= items[idx].startMin);
+        if (l == -1) l = laneEnd.length;
+        if (l == laneEnd.length) {
+          laneEnd.add(items[idx].startMin + kHeaderMin);
+        } else {
+          laneEnd[l] = items[idx].startMin + kHeaderMin;
         }
-        if (lane == -1) {
-          lane = laneEndMins.length;
-          laneEndMins.add(items[idx].endMin);
-        }
-        eventLane[idx] = lane;
+        lane[idx] = l;
       }
-
-      final totalLanes = laneEndMins.length;
-      final laneWidth = (eventAreaWidth - 4 - gap * (totalLanes - 1)) / totalLanes;
-
-      for (final idx in group) {
-        final item = items[idx];
-        final lane = eventLane[idx]!;
-        final top = item.startMin / 60.0 * DayColumn.hourHeight;
-        final height = ((item.endMin - item.startMin) / 60.0 * DayColumn.hourHeight)
-            .clamp(20.0, DayColumn.hourHeight * 24);
-        final left = leftOffset + 2 + lane * (laneWidth + gap);
-
-        widgets.add(Positioned(
-          top: top,
-          left: left,
-          width: laneWidth,
-          height: height,
-          child: _EventCard(
-            event: item.event,
-            onTap: widget.onEventTap != null
-                ? () => widget.onEventTap!(item.event, widget.day)
-                : null,
-          ),
-        ));
-      }
+      lanesPerComp[ci] = laneEnd.length;
     }
 
+    // Layering indent: full-width events that time-overlap an earlier full-width
+    // event are offset to the right so the event beneath stays partially visible.
+    const kLayerIndent = 28.0;
+    final layerDepth = List.filled(n, 0);
+    for (int idx = 0; idx < n; idx++) {
+      if (lanesPerComp[compOf[idx]] != 1) continue;
+      int depth = 0;
+      for (int j = 0; j < idx; j++) {
+        if (lanesPerComp[compOf[j]] == 1 && _overlaps(items[idx], items[j])) {
+          final d = layerDepth[j] + 1;
+          if (d > depth) depth = d;
+        }
+      }
+      layerDepth[idx] = depth;
+    }
+
+    // Build positioned widgets — sorted by start time so later events render on top.
+    final widgets = <Widget>[];
+    for (int idx = 0; idx < n; idx++) {
+      final item = items[idx];
+      final totalLanes = lanesPerComp[compOf[idx]];
+      final indent = totalLanes == 1 ? layerDepth[idx] * kLayerIndent : 0.0;
+      final laneWidth = totalLanes == 1
+          ? eventAreaWidth - 4 - indent
+          : (eventAreaWidth - 4 - gap * (totalLanes - 1)) / totalLanes;
+      final left = leftOffset + 2 + indent +
+          (totalLanes == 1 ? 0.0 : lane[idx] * (laneWidth + gap));
+      final top = item.startMin / 60.0 * DayColumn.hourHeight;
+      final height = ((item.endMin - item.startMin) / 60.0 * DayColumn.hourHeight)
+          .clamp(20.0, DayColumn.hourHeight * 24);
+
+      widgets.add(Positioned(
+        top: top,
+        left: left,
+        width: laneWidth,
+        height: height,
+        child: _EventCard(
+          event: item.event,
+          onTap: widget.onEventTap != null
+              ? () => widget.onEventTap!(item.event, widget.day)
+              : null,
+        ),
+      ));
+    }
     return widgets;
   }
 
@@ -355,39 +397,52 @@ class _EventCard extends StatelessWidget {
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      event.title,
-                      style: GoogleFonts.inter(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: AppThemeTokens.titleColor,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Text(
-                      '${_fmt(event.start)} – ${_fmt(event.end)}',
-                      style: GoogleFonts.inter(
-                        fontSize: 10,
-                        color: AppThemeTokens.secondaryTextColor,
-                      ),
-                      maxLines: 1,
-                    ),
-                    if (event.location != null)
-                      Text(
-                        event.location!,
-                        style: GoogleFonts.inter(
-                          fontSize: 10,
-                          color: AppThemeTokens.locationColor,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                  ],
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final h = constraints.maxHeight.isFinite
+                        ? constraints.maxHeight
+                        : 999.0;
+                    final showTitle = h >= 12;
+                    final showTime = h >= 30;
+                    final showLocation = h >= 44 && event.location != null;
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (showTitle)
+                          Text(
+                            event.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppThemeTokens.titleColor,
+                            ),
+                          ),
+                        if (showTime)
+                          Text(
+                            '${_fmt(event.start)} – ${_fmt(event.end)}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.inter(
+                              fontSize: 10,
+                              color: AppThemeTokens.secondaryTextColor,
+                            ),
+                          ),
+                        if (showLocation)
+                          Text(
+                            event.location!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.inter(
+                              fontSize: 10,
+                              color: AppThemeTokens.locationColor,
+                            ),
+                          ),
+                      ],
+                    );
+                  },
                 ),
               ),
             ),

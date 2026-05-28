@@ -74,6 +74,8 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   // Shared vertical scroll controller — survives mode switches
   final _timelineScrollController = ScrollController();
+  // Saved offset so returning from list mode restores the exact hour alignment.
+  double? _savedTimelineOffset;
 
   // Horizontal swipe spring (re-created per swipe, placeholder at rest)
   late AnimationController _swipeSnapAnim;
@@ -191,11 +193,24 @@ class _CalendarScreenState extends State<CalendarScreen>
   void _onDayViewModeChanged(_DayViewMode m) {
     if (m == _dayViewMode) return;
     final wasListMode = _dayViewMode == _DayViewMode.list;
+    if (m == _DayViewMode.list && _timelineScrollController.hasClients) {
+      _savedTimelineOffset = _timelineScrollController.offset;
+    }
     setState(() => _dayViewMode = m);
     if (m == _DayViewMode.list) {
       _dayBarAnim.reverse();
     } else if (wasListMode) {
       _dayBarAnim.forward();
+      if (_savedTimelineOffset != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_timelineScrollController.hasClients) {
+            _timelineScrollController.jumpTo(_savedTimelineOffset!.clamp(
+              0.0,
+              _timelineScrollController.position.maxScrollExtent,
+            ));
+          }
+        });
+      }
     }
     if (m == _DayViewMode.singleDay &&
         _stretchAnim.status != AnimationStatus.completed) {

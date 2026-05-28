@@ -38,6 +38,7 @@ class SettingsScreen extends StatelessWidget {
 
     await CookieManager.instance().deleteAllCookies();
     await CacheService().clearCourses();
+    await CacheService().clearKisdEvents();
     await loginService.logout();
 
     navigatorKey.currentState?.popUntil((route) => route.isFirst);

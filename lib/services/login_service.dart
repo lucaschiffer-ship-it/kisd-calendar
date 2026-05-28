@@ -1,4 +1,4 @@
-import 'dart:async' show Completer, TimeoutException, unawaited;
+import 'dart:async' show Completer, TimeoutException;
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -55,6 +55,9 @@ class LoginService extends ChangeNotifier {
   }
 
   Future<bool> _run() async {
+    if (_isLoading && _completer != null && !_completer!.isCompleted) {
+      return _completer!.future;
+    }
     print('[login] starting login flow');
     _isLoading = true;
     _loginFailed = false;
@@ -126,7 +129,7 @@ class LoginService extends ChangeNotifier {
     if (s.contains('mfa.th-koeln.de') && s.contains('oauth2/grant')) {
       print('[login] MFA required');
       final otp = await _promptOtp();
-      if (otp == null || otp.isEmpty) { _finish(false); return; }
+      if (otp == null || otp.isEmpty) { await _finish(false); return; }
       await ctrl.evaluateJavascript(source: """
         document.getElementById('nffc').value = '${otp.replaceAll("'", "\\'")}';
         document.IDPLogin.submit();
@@ -134,7 +137,7 @@ class LoginService extends ChangeNotifier {
     } else if (s.contains('spaces.kisd.de/course-selection')) {
       await Future.delayed(const Duration(seconds: 2));
       print('[login] login complete');
-      _finish(true);
+      await _finish(true);
     } else if (s.contains('spaces.kisd.de') && _samlClicked && !_courseSelectionVisited) {
       print('[login] post-auth on spaces — navigating to course-selection');
       _courseSelectionVisited = true;
@@ -220,11 +223,11 @@ class LoginService extends ChangeNotifier {
 
       } on TimeoutException {
         print('[login] error: credential form polling timed out');
-        _finish(false);
+        await _finish(false);
         return;
       } catch (e) {
         print('[login] error: $e');
-        _finish(false);
+        await _finish(false);
         return;
       }
     } else if (s.contains('login.th-koeln.de') &&
@@ -311,15 +314,15 @@ class LoginService extends ChangeNotifier {
     }
   }
 
-  void _finish(bool success) {
+  Future<void> _finish(bool success) async {
     if (_completer?.isCompleted ?? true) return;
     _isLoggedIn = success;
     _isLoading = false;
-    _completer!.complete(success);
     _webView?.dispose();
     _webView = null;
     if (!success) _loginFailed = true;
-    if (success) unawaited(_saveCookies());
+    if (success) await _saveCookies();
+    _completer!.complete(success);
     notifyListeners();
   }
 

@@ -255,6 +255,23 @@ class _ListScreenState extends State<ListScreen>
     if (!mounted) return;
     setState(() { _loading = true; _error = null; });
     _scrapeEventsBackground();
+
+    if (loginService.isLoading && !loginService.isLoggedIn) {
+      final waitCompleter = Completer<void>();
+      void loginListener() {
+        if (!loginService.isLoading) {
+          loginService.removeListener(loginListener);
+          if (!waitCompleter.isCompleted) waitCompleter.complete();
+        }
+      }
+      loginService.addListener(loginListener);
+      await waitCompleter.future;
+      if (!mounted || !loginService.isLoggedIn) {
+        setState(() { _error = 'Login failed.'; _loading = false; });
+        return;
+      }
+    }
+
     try {
       final shells = await scraperService.scrapeMyCourses();
       if (mounted) {

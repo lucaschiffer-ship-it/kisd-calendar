@@ -55,6 +55,26 @@ class CalendarService {
 
   final _plugin = DeviceCalendarPlugin();
 
+  // In-memory event cache — keyed by "yyyy-MM-dd". Populated on first fetch per
+  // day and reused by subsequent DayColumn mounts so events appear immediately.
+  final _eventCache = <String, List<DeviceCalendarEvent>>{};
+
+  static String _dayKey(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  /// Synchronous cache read — null means the day has not been fetched yet.
+  List<DeviceCalendarEvent>? getCachedEvents(DateTime day) =>
+      _eventCache[_dayKey(day)];
+
+  /// Fire-and-forget: fetch [day] into the cache if not already present.
+  void prefetchEventsForDay(DateTime day) {
+    final key = _dayKey(day);
+    if (!_eventCache.containsKey(key)) getEventsForDay(day);
+  }
+
+  /// Clears the in-memory event cache so the next fetch re-reads from the device calendar.
+  void clearCache() => _eventCache.clear();
+
   // Lazy timezone init — runs once, subsequent awaits resolve immediately.
   Future<void>? _tzFuture;
   Future<void> _ensureTz() => _tzFuture ??= _initTz();
@@ -490,6 +510,7 @@ class CalendarService {
       events.sort((a, b) =>
           (a.start.hour * 60 + a.start.minute)
               .compareTo(b.start.hour * 60 + b.start.minute));
+      _eventCache[_dayKey(day)] = events;
       return events;
     } catch (e) {
       print('[calendar] getEventsForDay: $e');

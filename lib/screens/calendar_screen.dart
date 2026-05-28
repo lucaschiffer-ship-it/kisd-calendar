@@ -1022,6 +1022,7 @@ class _EventListViewState extends State<_EventListView> {
       ]);
     }
     return ListView.builder(
+      padding: EdgeInsets.zero,
       itemCount: _items.length + 1,
       itemBuilder: (ctx, i) {
         if (i == 0) return SizedBox(height: widget.topInset);

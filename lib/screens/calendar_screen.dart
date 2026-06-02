@@ -44,10 +44,10 @@ class _CalendarScreenState extends State<CalendarScreen>
   static const double _kTitleRowH   = 56.0;
   static const double _kButtonsRowH = 60.0;
   static const double _kDayBarH     = 60.0;
+  static const double _kColLabelH   = 28.0;
 
   // Timeline constants
-  static const int _kTodayPage   = 500;
-  static const int _kColumnCount = 3;
+  static const int _kTodayPage = 500;
 
   _NavLevel _navLevel = _NavLevel.day;
   _DayViewMode _dayViewMode = _DayViewMode.multiDay;
@@ -525,12 +525,12 @@ class _CalendarScreenState extends State<CalendarScreen>
             ),
           ),
 
-          // ── Day bar (animates in/out when toggling list mode) ──────────
+          // ── Week strip (animates in/out when toggling list mode) ──────────
           if (_navLevel == _NavLevel.day)
             SizeTransition(
               sizeFactor: _dayBarCurved,
               axisAlignment: -1.0,
-              child: _buildDayBar(),
+              child: _buildWeekStrip(),
             ),
         ],
     );
@@ -551,92 +551,202 @@ class _CalendarScreenState extends State<CalendarScreen>
     );
   }
 
-  // ── Day bar row (synced with focused page) ────────────────────────────────
+  // ── Week strip: full Mon–Sun for the current week ────────────────────────
 
-  Widget _buildDayBar() {
-    final int half = _kColumnCount ~/ 2;
-    final days = List.generate(
-      _kColumnCount,
-      (i) => _dayForMultiDayPage(_focusedMultiDayPage - half + i),
-    );
-    const weekdays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
-    final t = _stretchCurved.value; // 0=multi, 1=single
+  Widget _buildWeekStrip() {
+    const letters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+    final monday = _weekMonday(_dayForMultiDayPage(_focusedMultiDayPage));
+    final focusedDay = _dayForMultiDayPage(_focusedMultiDayPage);
+    final focusIndex = focusedDay.difference(monday).inDays.clamp(0, 6);
+    final todayDiff = _today.difference(monday).inDays;
+    final todayIndex = (todayDiff >= 0 && todayDiff <= 6) ? todayDiff : -1;
 
-    return Row(
-      children: [
-        SizedBox(width: DayColumn.labelWidth),
-        ...List.generate(days.length, (i) {
-          final day = days[i];
-          final isToday = day == _today;
-          final isFocused = i == half;
-          final isSide = !isFocused;
-          final isLeft = i < half;
+    const double cellH = 28.0;
 
-          final content = Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  weekdays[day.weekday - 1],
-                  style: GoogleFonts.inter(
-                    fontSize: 10,
-                    fontWeight: isFocused ? FontWeight.w700 : FontWeight.w500,
-                    letterSpacing: 0.8,
-                    color: isToday
-                        ? AppColors.accent
-                        : tokens.AppThemeTokens.secondaryTextColor,
+    return SizedBox(
+      height: _kDayBarH,
+      child: LayoutBuilder(builder: (context, constraints) {
+        final cellW = constraints.maxWidth / 7.0;
+        final glass    = ThemeService.instance.glassEnabled.value;
+        final colorKey = ThemeService.instance.currentColor.value;
+        final pillColor = glass
+            ? switch (colorKey) {
+                'dark'   => Colors.white.withValues(alpha: 0.18),
+                'pastel' => Colors.black.withValues(alpha: 0.10),
+                _        => Colors.black.withValues(alpha: 0.12),
+              }
+            : switch (colorKey) {
+                'dark' => Colors.white.withValues(alpha: 0.22),
+                _      => const Color(0xFFC8C8C8),
+              };
+        // Pill width lerps 3→1 cell as stretch goes 0 (multi-day) → 1 (single-day).
+        // Center stays fixed on the focused day; clamp so pill never exits the strip.
+        final t = _stretchCurved.value;
+        final pillWidth = lerpDouble(3 * cellW, cellW, t)!;
+        final center    = (focusIndex + 0.5) * cellW;
+        final pillLeft  = (center - pillWidth / 2).clamp(0.0, 7 * cellW - pillWidth);
+
+        return Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Row 1: Weekday letters — plain text, no background
+            Row(
+              children: List.generate(7, (i) {
+                return Expanded(
+                  child: GestureDetector(
+                    onTap: () => _drillToDay(monday.add(Duration(days: i))),
+                    behavior: HitTestBehavior.opaque,
+                    child: Center(
+                      child: Text(
+                        letters[i],
+                        style: GoogleFonts.inter(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: 0.6,
+                          color: tokens.AppThemeTokens.secondaryTextColor,
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                isToday
-                    ? Container(
-                        width: 28,
-                        height: 28,
+                );
+              }),
+            ),
+            const SizedBox(height: 4),
+            // Row 2: Day numbers with horizontal pill and today accent circle
+            SizedBox(
+              height: cellH,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  // Horizontal grey capsule: 3 cells (multi-day) → 1 cell (single-day)
+                  Positioned(
+                    left: pillLeft,
+                    width: pillWidth,
+                    top: 0,
+                    height: cellH,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: pillColor,
+                        borderRadius: BorderRadius.circular(cellH / 2),
+                      ),
+                    ),
+                  ),
+                  // Accent circle for today (behind today's number text)
+                  if (todayIndex >= 0)
+                    Positioned(
+                      left: todayIndex * cellW + (cellW - cellH) / 2,
+                      top: 0,
+                      width: cellH,
+                      height: cellH,
+                      child: Container(
                         decoration: const BoxDecoration(
                           color: AppColors.accent,
                           shape: BoxShape.circle,
                         ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          '${day.day}',
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
+                      ),
+                    ),
+                  // Number text row
+                  Row(
+                    children: List.generate(7, (i) {
+                      final day = monday.add(Duration(days: i));
+                      final isToday = todayIndex == i;
+                      final isWeekend = i >= 5;
+                      return Expanded(
+                        child: GestureDetector(
+                          onTap: () => _drillToDay(day),
+                          behavior: HitTestBehavior.opaque,
+                          child: Center(
+                            child: Text(
+                              '${day.day}',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: isToday ? FontWeight.w700 : FontWeight.w400,
+                                color: isToday
+                                    ? Colors.white
+                                    : (isWeekend
+                                        ? tokens.AppThemeTokens.secondaryTextColor
+                                        : tokens.AppThemeTokens.titleColor),
+                              ),
+                            ),
                           ),
                         ),
-                      )
-                    : Text(
-                        '${day.day}',
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight:
-                              isFocused ? FontWeight.w700 : FontWeight.w400,
-                          color: tokens.AppThemeTokens.titleColor,
+                      );
+                    }),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      }),
+    );
+  }
+
+  // ── Column label bar: one label per visible column ────────────────────────
+
+  Widget _buildColumnLabelBar() {
+    const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return LayoutBuilder(builder: (context, constraints) {
+      final totalW      = constraints.maxWidth;
+      final contentW    = totalW - DayColumn.labelWidth;
+      final colW        = contentW / 3.0;
+      final t           = _stretchCurved.value;
+      final effectiveStep = lerpDouble(colW, contentW, t)!;
+      final centerPos   = (1.0 - t) * colW;
+      final s           = _swipeFraction;
+
+      final slotLefts = List.generate(5, (i) =>
+          centerPos + (i - 2) * effectiveStep + s * effectiveStep);
+      final days = List.generate(5, (i) =>
+          _dayForMultiDayPage(_focusedMultiDayPage + i - 2));
+
+      return Container(
+        height: _kColLabelH,
+        decoration: BoxDecoration(
+          color: tokens.AppThemeTokens.backgroundColor,
+          border: Border(bottom: BorderSide(
+            color: tokens.AppThemeTokens.cardBorder, width: 0.5)),
+        ),
+        child: Row(
+          children: [
+            SizedBox(width: DayColumn.labelWidth),
+            Expanded(
+              child: ClipRect(
+                child: Stack(
+                  children: List.generate(5, (i) => Positioned(
+                    left: slotLefts[i],
+                    width: effectiveStep,
+                    top: 0, bottom: 0,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        border: Border(
+                          right: BorderSide(
+                            color: tokens.AppThemeTokens.cardBorder,
+                            width: 0.5,
+                          ),
                         ),
                       ),
-              ],
-            ),
-          );
-
-          if (isSide && t > 0) {
-            return Expanded(
-              child: ClipRect(
-                child: FractionalTranslation(
-                  translation: Offset(isLeft ? -t : t, 0),
-                  child: Opacity(
-                    opacity: (1.0 - t).clamp(0.0, 1.0),
-                    child: content,
-                  ),
+                      child: Center(
+                        child: Text(
+                          '${weekdays[days[i].weekday - 1]} · ${days[i].day}',
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            fontWeight: days[i] == _today ? FontWeight.w600 : FontWeight.w400,
+                            color: days[i] == _today
+                                ? AppColors.accent
+                                : tokens.AppThemeTokens.secondaryTextColor,
+                          ),
+                        ),
+                      ),
+                    ),
+                  )),
                 ),
               ),
-            );
-          }
-          return Expanded(child: content);
-        }),
-      ],
-    );
+            ),
+          ],
+        ),
+      );
+    });
   }
 
   // ── Body ──────────────────────────────────────────────────────────────────
@@ -699,9 +809,17 @@ class _CalendarScreenState extends State<CalendarScreen>
               topInset: topOffset,
               onEventTap: (e, d) => showEventDetail(context, e, d),
             )
-          : KeyedSubtree(
+          : Stack(
               key: const ValueKey('timeline'),
-              child: _buildUnifiedTimeline(topOffset),
+              children: [
+                _buildUnifiedTimeline(topOffset),
+                Positioned(
+                  top: topOffset,
+                  left: 0,
+                  right: 0,
+                  child: _buildColumnLabelBar(),
+                ),
+              ],
             ),
     );
   }

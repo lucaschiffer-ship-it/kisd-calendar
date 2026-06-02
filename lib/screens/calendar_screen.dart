@@ -716,13 +716,8 @@ class _CalendarScreenState extends State<CalendarScreen>
       final days = List.generate(5, (i) =>
           _dayForMultiDayPage(_focusedMultiDayPage + i - 2));
 
-      return Container(
+      return SizedBox(
         height: _kColLabelH,
-        decoration: BoxDecoration(
-          color: tokens.AppThemeTokens.backgroundColor,
-          border: Border(bottom: BorderSide(
-            color: tokens.AppThemeTokens.cardBorder, width: 0.5)),
-        ),
         child: Row(
           children: [
             SizedBox(width: DayColumn.labelWidth),
@@ -815,14 +810,6 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   // ── Day view: list fades in/out, timeline is always live ─────────────────
 
-  List<DateTime> get _allDayBandDays => _dayViewMode == _DayViewMode.singleDay
-      ? [_selectedDate]
-      : [
-          _dayForMultiDayPage(_focusedMultiDayPage - 1),
-          _dayForMultiDayPage(_focusedMultiDayPage),
-          _dayForMultiDayPage(_focusedMultiDayPage + 1),
-        ];
-
   Widget _buildDayView(BuildContext context, double topOffset) {
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 200),
@@ -837,17 +824,32 @@ class _CalendarScreenState extends State<CalendarScreen>
               key: const ValueKey('timeline'),
               children: [
                 _buildUnifiedTimeline(topOffset),
+                // Column label bar + all-day band share one Positioned block so
+                // the bottom border lives on the outer wrapper. When the band is
+                // empty it collapses to zero height and the border sits flush
+                // below the day labels — no gap, no double line.
                 Positioned(
                   top: topOffset,
                   left: 0,
                   right: 0,
-                  child: _buildColumnLabelBar(),
-                ),
-                Positioned(
-                  top: topOffset + _kColLabelH,
-                  left: 0,
-                  right: 0,
-                  child: _AllDayBand(visibleDays: _allDayBandDays),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: tokens.AppThemeTokens.backgroundColor,
+                      border: Border(bottom: BorderSide(
+                          color: tokens.AppThemeTokens.cardBorder, width: 0.5)),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildColumnLabelBar(),
+                        _AllDayBand(
+                          focusedDay: _dayForMultiDayPage(_focusedMultiDayPage),
+                          swipeFraction: _swipeFraction,
+                          stretchValue: _stretchCurved.value,
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -1146,19 +1148,25 @@ class _ReloadButtonState extends State<_ReloadButton>
 // ─── All-day event band ───────────────────────────────────────────────────────
 
 class _AllDayBand extends StatefulWidget {
-  const _AllDayBand({required this.visibleDays});
+  const _AllDayBand({
+    required this.focusedDay,
+    required this.swipeFraction,
+    required this.stretchValue,
+  });
 
-  final List<DateTime> visibleDays;
+  final DateTime focusedDay;
+  final double   swipeFraction;
+  final double   stretchValue;
 
-  static const double _rowH    = 24.0;
-  static const double _rowGap  = 2.0;
-  static const double _padV    = 4.0;
-  static const int    _maxVis  = 3;
-  static const double _maxH    = _padV + _maxVis * _rowH + (_maxVis - 1) * _rowGap + _padV; // 84
+  static const double _rowH   = 24.0;
+  static const double _rowGap = 2.0;
+  static const double _padV   = 4.0;
+  static const int    _maxVis = 3;
+  static const double _maxH   =
+      _padV + _maxVis * _rowH + (_maxVis - 1) * _rowGap + _padV; // 84
 
-  static double _contentH(int rows) => rows == 0
-      ? 0
-      : _padV + rows * _rowH + (rows - 1) * _rowGap + _padV;
+  static double _contentH(int rows) =>
+      rows == 0 ? 0 : _padV + rows * _rowH + (rows - 1) * _rowGap + _padV;
 
   @override
   State<_AllDayBand> createState() => _AllDayBandState();
@@ -1176,24 +1184,19 @@ class _AllDayBandState extends State<_AllDayBand> {
   @override
   void didUpdateWidget(_AllDayBand old) {
     super.didUpdateWidget(old);
-    if (!_sameDays(old.visibleDays, widget.visibleDays)) _load();
-  }
-
-  bool _sameDays(List<DateTime> a, List<DateTime> b) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
+    // Reload only when the date window shifts — not on every swipe frame.
+    if (old.focusedDay != widget.focusedDay) _load();
   }
 
   Future<void> _load() async {
-    if (widget.visibleDays.isEmpty) return;
+    final day = widget.focusedDay;
     final events = await CalendarService.instance.getAllDayEventsForRange(
-      widget.visibleDays.first,
-      widget.visibleDays.last,
+      day.subtract(const Duration(days: 2)),
+      day.add(const Duration(days: 2)),
     );
-    if (mounted) setState(() => _events = events);
+    if (mounted && widget.focusedDay == day) {
+      setState(() => _events = events);
+    }
   }
 
   @override
@@ -1208,9 +1211,7 @@ class _AllDayBandState extends State<_AllDayBand> {
   }
 
   Widget _buildBand() {
-    if (widget.visibleDays.isEmpty) return const SizedBox.shrink();
-
-    // ── Greedy row-packing ──────────────────────────────────────────────────
+    // ── Greedy row-packing (interval graph coloring) ────────────────────────
     final sorted = [..._events]..sort((a, b) => a.startDate.compareTo(b.startDate));
     final rowMaxEnd = <DateTime>[];
     final rowOf     = <int>[];
@@ -1239,37 +1240,33 @@ class _AllDayBandState extends State<_AllDayBand> {
       alignment: Alignment.topCenter,
       child: totalRows == 0
           ? const SizedBox.shrink()
-          : Container(
+          : SizedBox(
               height: bandH,
-              decoration: BoxDecoration(
-                color: tokens.AppThemeTokens.backgroundColor,
-                border: Border(bottom: BorderSide(
-                    color: tokens.AppThemeTokens.cardBorder, width: 0.5)),
-              ),
-              child: LayoutBuilder(builder: (context, constraints) {
-                final colW = (constraints.maxWidth - DayColumn.labelWidth) /
-                    widget.visibleDays.length;
+              child: LayoutBuilder(builder: (ctx, box) {
+                // Mirror the column label bar's 5-slot geometry exactly.
+                final contentW    = box.maxWidth - DayColumn.labelWidth;
+                final colW        = contentW / 3.0;
+                final t           = widget.stretchValue;
+                final s           = widget.swipeFraction;
+                final effectiveStep = lerpDouble(colW, contentW, t)!;
+                final centerPos   = (1.0 - t) * colW;
+                final slotLefts   = List.generate(5, (i) =>
+                    centerPos + (i - 2) * effectiveStep + s * effectiveStep);
 
-                // Build capsule widgets for all rows (including rows beyond
-                // _maxVis, which the SingleChildScrollView reveals on scroll).
+                // Build capsules. Positions are relative to x=0 of the Expanded
+                // (after the gutter), so no DayColumn.labelWidth offset needed.
                 final capsules = <Widget>[];
                 for (var i = 0; i < sorted.length; i++) {
                   final evt = sorted[i];
                   final row = rowOf[i];
-
-                  // Find first/last visible column this event touches.
-                  var firstCol = -1, lastCol = -1;
-                  for (var c = 0; c < widget.visibleDays.length; c++) {
-                    final day = widget.visibleDays[c];
-                    if (!day.isAfter(evt.endDate) && !day.isBefore(evt.startDate)) {
-                      if (firstCol == -1) firstCol = c;
-                      lastCol = c;
-                    }
-                  }
-                  if (firstCol == -1) continue;
-
-                  final capLeft  = DayColumn.labelWidth + firstCol * colW + 2;
-                  final capWidth = (lastCol - firstCol + 1) * colW - 4;
+                  final startOffset =
+                      evt.startDate.difference(widget.focusedDay).inDays;
+                  final endOffset =
+                      evt.endDate.difference(widget.focusedDay).inDays;
+                  final capLeft  = centerPos +
+                      startOffset * effectiveStep + s * effectiveStep + 2;
+                  final capWidth =
+                      (endOffset - startOffset + 1) * effectiveStep - 4;
                   final capTop   = _AllDayBand._padV +
                       row * (_AllDayBand._rowH + _AllDayBand._rowGap);
 
@@ -1300,35 +1297,57 @@ class _AllDayBandState extends State<_AllDayBand> {
                   ));
                 }
 
-                // The full content (all rows) is placed in a Stack.
+                // Full-height content row (gutter + sliding column area).
                 final fullContent = SizedBox(
                   height: cHeight,
-                  child: Stack(
+                  child: Row(
                     children: [
-                      // "all-day" gutter label, vertically centered in the band.
-                      Positioned(
-                        left: 0,
+                      // Fixed "all-day" gutter label.
+                      SizedBox(
                         width: DayColumn.labelWidth,
-                        top: 0,
-                        bottom: 0,
-                        child: Container(
+                        child: Align(
                           alignment: Alignment.centerRight,
-                          padding: const EdgeInsets.only(right: 8),
-                          child: Text(
-                            'all-day',
-                            style: GoogleFonts.inter(
-                              fontSize: 9,
-                              color: tokens.AppThemeTokens.secondaryTextColor,
+                          child: Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: Text(
+                              'all-day',
+                              style: GoogleFonts.inter(
+                                fontSize: 9,
+                                color: tokens.AppThemeTokens.secondaryTextColor,
+                              ),
                             ),
                           ),
                         ),
                       ),
-                      ...capsules,
+                      // Sliding column area — same structure as _buildColumnLabelBar.
+                      Expanded(
+                        child: ClipRect(
+                          child: Stack(
+                            children: [
+                              // Vertical grid lines (5 slots, same positions as labels).
+                              ...List.generate(5, (i) => Positioned(
+                                left:  slotLefts[i],
+                                width: effectiveStep,
+                                top: 0, bottom: 0,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    border: Border(right: BorderSide(
+                                      color: tokens.AppThemeTokens.cardBorder,
+                                      width: 0.5,
+                                    )),
+                                  ),
+                                ),
+                              )),
+                              // Capsules.
+                              ...capsules,
+                            ],
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 );
 
-                // Scroll when more than _maxVis rows; otherwise just fit.
                 return totalRows > _AllDayBand._maxVis
                     ? SingleChildScrollView(
                         physics: const ClampingScrollPhysics(),

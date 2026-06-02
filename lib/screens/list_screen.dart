@@ -679,8 +679,8 @@ class _ListScreenState extends State<ListScreen>
         final glass    = ThemeService.instance.glassEnabled.value;
         final colorKey = ThemeService.instance.currentColor.value;
         final glassBg  = colorKey == 'dark'
-            ? Colors.white.withValues(alpha: 0.08)
-            : Colors.white.withValues(alpha: 0.50);
+            ? Colors.white.withValues(alpha: 0.06)
+            : Colors.white.withValues(alpha: 0.40);
         final titleColor    = tokens.AppThemeTokens.titleColor;
         final secondaryColor = tokens.AppThemeTokens.secondaryTextColor;
 

@@ -103,7 +103,7 @@ class AppThemeTokens {
   static Widget glassContainer({
     required Widget child,
     double blur = 20,
-    double opacity = 0.15,
+    double opacity = 0.12,
     BorderRadius? borderRadius,
     Color? tintColor,
   }) {
@@ -118,7 +118,7 @@ class AppThemeTokens {
               color: tint.withValues(alpha: opacity),
               borderRadius: borderRadius,
               border: Border.all(
-                color: tint.withValues(alpha: 0.25),
+                color: tint.withValues(alpha: 0.20),
                 width: 0.5,
               ),
             ),

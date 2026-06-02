@@ -245,7 +245,7 @@ class _CourseShellCardState extends State<CourseShellCard>
             );
             if (glass) {
               return tokens.AppThemeTokens.glassContainer(
-                opacity: 0.1,
+                opacity: 0.08,
                 blur: 15,
                 borderRadius: BorderRadius.circular(radius),
                 child: Padding(
@@ -388,8 +388,8 @@ class _GlassMenu extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
 
     final fillColor = isDark
-        ? Colors.black.withValues(alpha: 0.58)
-        : Colors.white.withValues(alpha: 0.82);
+        ? Colors.black.withValues(alpha: 0.46)
+        : Colors.white.withValues(alpha: 0.66);
     final borderColor = isDark
         ? Colors.white.withValues(alpha: 0.13)
         : Colors.black.withValues(alpha: 0.07);

@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../config/app_theme.dart' as tokens;
@@ -81,10 +82,16 @@ class _CalendarScreenState extends State<CalendarScreen>
   late AnimationController _swipeSnapAnim;
   double _swipeFraction = 0.0;
 
+  // Captures the focused page at drag start; used to detect week-boundary crossings.
+  int? _dragStartPage;
+
   Offset _slideBegin = const Offset(0.15, 0);
 
   DateTime _dayForMultiDayPage(int page) =>
       _today.add(Duration(days: page - _kTodayPage));
+
+  DateTime _weekMonday(DateTime d) =>
+      d.subtract(Duration(days: d.weekday - 1));
 
   // ── Computed header dimensions ─────────────────────────────────────────────
 
@@ -251,34 +258,78 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   void _onHorizontalDragUpdate(DragUpdateDetails d, double effectiveStep) {
     if (_stretchAnim.isAnimating) return;
-    setState(() => _swipeFraction =
-        (_swipeFraction + d.delta.dx / effectiveStep).clamp(-1.0, 1.0));
+    var f = _swipeFraction + d.delta.dx / effectiveStep;
+    setState(() {
+      // Rolling commit: when fraction crosses a full column, rotate slots immediately.
+      // The commit at exactly ±1.0 is pixel-perfect and visually seamless.
+      while (f <= -1.0) {
+        _slotKeys = [_slotKeys[1], _slotKeys[2], _slotKeys[3], _slotKeys[4], GlobalKey()];
+        _focusedMultiDayPage += 1;
+        _selectedDate = _dayForMultiDayPage(_focusedMultiDayPage);
+        CalendarService.instance.prefetchEventsForDay(
+            _dayForMultiDayPage(_focusedMultiDayPage + 2));
+        f += 1.0;
+      }
+      while (f >= 1.0) {
+        _slotKeys = [GlobalKey(), _slotKeys[0], _slotKeys[1], _slotKeys[2], _slotKeys[3]];
+        _focusedMultiDayPage -= 1;
+        _selectedDate = _dayForMultiDayPage(_focusedMultiDayPage);
+        CalendarService.instance.prefetchEventsForDay(
+            _dayForMultiDayPage(_focusedMultiDayPage - 2));
+        f -= 1.0;
+      }
+      _swipeFraction = f;
+    });
   }
 
   void _onHorizontalDragEnd(DragEndDetails d, double effectiveStep) {
     if (_stretchAnim.isAnimating) return;
     final vel = d.primaryVelocity ?? 0;
-    if (_swipeFraction < -0.35 || vel < -300) {
-      _snapSwipe(-1.0, then: _advanceDay);
-    } else if (_swipeFraction > 0.35 || vel > 300) {
-      _snapSwipe(1.0, then: _retreatDay);
+
+    // Magnetic snap to nearest day; 50% threshold (was 35%) for a softer feel.
+    double target;
+    if (_swipeFraction < -0.5 || vel < -300) {
+      target = -1.0;
+    } else if (_swipeFraction > 0.5 || vel > 300) {
+      target = 1.0;
     } else {
-      _snapSwipe(0.0);
+      target = 0.0;
     }
+
+    // Detect whether the gesture crossed a week (Mon–Sun) boundary.
+    final didCrossWeek = _dragStartPage != null &&
+        _weekMonday(_dayForMultiDayPage(_dragStartPage!)) !=
+        _weekMonday(_dayForMultiDayPage(_focusedMultiDayPage));
+    _dragStartPage = null;
+
+    VoidCallback? then;
+    if (target < 0) {
+      then = _advanceDay;
+    } else if (target > 0) {
+      then = _retreatDay;
+    }
+
+    _snapSwipe(target, then: then, heavySnap: didCrossWeek && target != 0.0);
   }
 
-  void _snapSwipe(double target, {VoidCallback? then}) {
+  void _snapSwipe(double target, {VoidCallback? then, bool heavySnap = false}) {
     _swipeSnapAnim.stop();
     _swipeSnapAnim.dispose();
     final begin = _swipeFraction;
-    final ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 220),
-    );
+    final distance = (target - begin).abs().clamp(0.2, 1.0);
+
+    if (heavySnap) HapticFeedback.mediumImpact();
+
+    // Duration scales with distance so small springs feel snappy.
+    // Week-boundary crossings use a short, crisp duration for a page-turn feel.
+    final ms = heavySnap ? 130 : (220 * distance).round();
+    final curve = heavySnap ? Curves.easeOut : Curves.easeOutCubic;
+
+    final ctrl = AnimationController(vsync: this, duration: Duration(milliseconds: ms));
     _swipeSnapAnim = ctrl;
     ctrl
       ..addListener(() => setState(() =>
-          _swipeFraction = lerpDouble(begin, target, ctrl.value)!))
+          _swipeFraction = lerpDouble(begin, target, curve.transform(ctrl.value))!))
       ..addStatusListener((s) {
         if (s == AnimationStatus.completed) then?.call();
       })
@@ -308,10 +359,12 @@ class _CalendarScreenState extends State<CalendarScreen>
   }
 
   void _preloadRange(int centerPage) {
-    for (int delta = -2; delta <= 2; delta++) {
-      if (delta == 0) continue;
+    final center = _dayForMultiDayPage(centerPage);
+    final monday = _weekMonday(center);
+    // Preload the full Mon–Sun week containing centerPage, plus one buffer day each side.
+    for (int delta = -1; delta <= 7; delta++) {
       CalendarService.instance.prefetchEventsForDay(
-          _dayForMultiDayPage(centerPage + delta));
+          monday.add(Duration(days: delta)));
     }
   }
 
@@ -332,8 +385,8 @@ class _CalendarScreenState extends State<CalendarScreen>
         final glass    = ThemeService.instance.glassEnabled.value;
         final colorKey = ThemeService.instance.currentColor.value;
         final glassBg  = colorKey == 'dark'
-            ? Colors.white.withValues(alpha: 0.08)
-            : Colors.white.withValues(alpha: 0.50);
+            ? Colors.white.withValues(alpha: 0.06)
+            : Colors.white.withValues(alpha: 0.40);
         final titleColor    = tokens.AppThemeTokens.titleColor;
         final secondaryColor = tokens.AppThemeTokens.secondaryTextColor;
 
@@ -688,6 +741,9 @@ class _CalendarScreenState extends State<CalendarScreen>
               _buildHourAxisWidget(),
               Expanded(
                 child: GestureDetector(
+                  onHorizontalDragStart: (_) {
+                    _dragStartPage = _focusedMultiDayPage;
+                  },
                   onHorizontalDragUpdate: (d) =>
                       _onHorizontalDragUpdate(d, effectiveStep),
                   onHorizontalDragEnd: (d) =>

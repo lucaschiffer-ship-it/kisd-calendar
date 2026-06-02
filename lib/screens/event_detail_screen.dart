@@ -171,8 +171,8 @@ class _EventDetailSheet extends StatelessWidget {
 
     if (glass) {
       final bg = colorKey == 'dark'
-          ? Colors.black.withValues(alpha: 0.80)
-          : Colors.white.withValues(alpha: 0.88);
+          ? Colors.black.withValues(alpha: 0.64)
+          : Colors.white.withValues(alpha: 0.70);
       return ClipRRect(
         borderRadius: radius,
         child: BackdropFilter(

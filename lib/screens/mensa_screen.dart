@@ -94,8 +94,8 @@ class _MensaScreenState extends State<MensaScreen>
 
     final glass = ThemeService.instance.glassEnabled.value;
     final glassBg = ThemeService.instance.currentColor.value == 'dark'
-        ? Colors.white.withValues(alpha: 0.08)
-        : Colors.white.withValues(alpha: 0.50);
+        ? Colors.white.withValues(alpha: 0.06)
+        : Colors.white.withValues(alpha: 0.40);
 
     final headerBody = Container(
       decoration: glass

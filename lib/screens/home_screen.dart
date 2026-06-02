@@ -363,7 +363,7 @@ class _MiniBrowserBar extends StatelessWidget {
                 ? tokens.AppThemeTokens.glassContainer(
                     borderRadius: BorderRadius.circular(8),
                     tintColor: const Color(0xFFEB5A01),
-                    opacity: 0.55,
+                    opacity: 0.44,
                     child: barContent,
                   )
                 : Container(

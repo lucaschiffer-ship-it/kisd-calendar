@@ -644,20 +644,6 @@ class _CalendarScreenState extends State<CalendarScreen>
                             ),
                           ),
                         ),
-                        // Accent circle for today (independent of pill)
-                        if (todayIndex >= 0)
-                          Positioned(
-                            left: todayIndex * cellW + (cellW - cellH) / 2,
-                            top: 0,
-                            width: cellH,
-                            height: cellH,
-                            child: Container(
-                              decoration: const BoxDecoration(
-                                color: AppColors.accent,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                          ),
                         // Number text row
                         Row(
                           children: List.generate(7, (i) {
@@ -675,7 +661,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                                       fontSize: 14,
                                       fontWeight: isToday ? FontWeight.w700 : FontWeight.w400,
                                       color: isToday
-                                          ? Colors.white
+                                          ? AppColors.accent
                                           : (isWeekend
                                               ? tokens.AppThemeTokens.secondaryTextColor
                                               : tokens.AppThemeTokens.titleColor),

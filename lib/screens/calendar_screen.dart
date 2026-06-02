@@ -579,15 +579,10 @@ class _CalendarScreenState extends State<CalendarScreen>
                 'dark' => Colors.white.withValues(alpha: 0.22),
                 _      => const Color(0xFFC8C8C8),
               };
-        // Pill left edge = circle left edge within the focused cell (multi-day),
-        // collapsing to the cell's own left edge in single-day.
-        // pillInset and pillWidth change with stretch; targetCellLeft changes on tap.
-        // The two are orthogonal so they animate without interfering.
-        final t            = _stretchCurved.value;
-        final d            = cellH; // accent circle diameter
-        final pillInset    = (1.0 - t) * (cellW - d) / 2;
-        final pillWidth    = lerpDouble(2 * cellW + d, cellW, t)!;
-        final targetCellLeft = focusIndex * cellW;
+        final t               = _stretchCurved.value;
+        final d               = cellH;
+        final pillWidth       = lerpDouble(2 * cellW + d, cellW, t)!;
+        final targetFocusLeft = focusIndex.toDouble() * cellW;
 
         return Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -615,78 +610,85 @@ class _CalendarScreenState extends State<CalendarScreen>
               }),
             ),
             const SizedBox(height: 4),
-            // Row 2: Day numbers with horizontal pill and today accent circle.
-            // TweenAnimationBuilder animates the cell offset on tap; pillInset
-            // and pillWidth change during stretch — they compose without interfering.
+            // Row 2: Day numbers with pill centered on focused day + today accent circle.
+            // TweenAnimationBuilder animates the focused-cell left on tap.
+            // Pill is clipped naturally at strip edges by ClipRect — no clamping.
             TweenAnimationBuilder<double>(
-              tween: Tween<double>(begin: targetCellLeft, end: targetCellLeft),
+              tween: Tween<double>(begin: targetFocusLeft, end: targetFocusLeft),
               duration: const Duration(milliseconds: 220),
               curve: Curves.easeInOut,
-              builder: (context, animCellLeft, _) {
-                final pillLeft = (animCellLeft + pillInset - (1.0 - t) * cellW)
-                    .clamp(0.0, 7 * cellW - pillInset - pillWidth);
-                return SizedBox(
-              height: cellH,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  // Horizontal grey capsule: 3 cells (multi-day) → 1 cell (single-day)
-                  Positioned(
-                    left: pillLeft,
-                    width: pillWidth,
-                    top: 0,
+              builder: (context, animFocusLeft, _) {
+                // Multi-day (t=0): pill centered on focused cell, spans 3 cells.
+                // Single-day (t=1): pill collapses to the focused cell.
+                final pillLeft = lerpDouble(
+                  animFocusLeft - cellW + (cellW - d) / 2,
+                  animFocusLeft,
+                  t,
+                )!;
+                return ClipRect(
+                  child: SizedBox(
                     height: cellH,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: pillColor,
-                        borderRadius: BorderRadius.circular(cellH / 2),
-                      ),
-                    ),
-                  ),
-                  // Accent circle for today (behind today's number text)
-                  if (todayIndex >= 0)
-                    Positioned(
-                      left: todayIndex * cellW + (cellW - cellH) / 2,
-                      top: 0,
-                      width: cellH,
-                      height: cellH,
-                      child: Container(
-                        decoration: const BoxDecoration(
-                          color: AppColors.accent,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ),
-                  // Number text row
-                  Row(
-                    children: List.generate(7, (i) {
-                      final day = monday.add(Duration(days: i));
-                      final isToday = todayIndex == i;
-                      final isWeekend = i >= 5;
-                      return Expanded(
-                        child: GestureDetector(
-                          onTap: () => _drillToDay(day),
-                          behavior: HitTestBehavior.opaque,
-                          child: Center(
-                            child: Text(
-                              '${day.day}',
-                              style: GoogleFonts.inter(
-                                fontSize: 14,
-                                fontWeight: isToday ? FontWeight.w700 : FontWeight.w400,
-                                color: isToday
-                                    ? Colors.white
-                                    : (isWeekend
-                                        ? tokens.AppThemeTokens.secondaryTextColor
-                                        : tokens.AppThemeTokens.titleColor),
-                              ),
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        // Horizontal grey capsule: 3 cells (multi-day) → 1 cell (single-day)
+                        Positioned(
+                          left: pillLeft,
+                          width: pillWidth,
+                          top: 0,
+                          height: cellH,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: pillColor,
+                              borderRadius: BorderRadius.circular(cellH / 2),
                             ),
                           ),
                         ),
-                      );
-                    }),
+                        // Accent circle for today (independent of pill)
+                        if (todayIndex >= 0)
+                          Positioned(
+                            left: todayIndex * cellW + (cellW - cellH) / 2,
+                            top: 0,
+                            width: cellH,
+                            height: cellH,
+                            child: Container(
+                              decoration: const BoxDecoration(
+                                color: AppColors.accent,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ),
+                        // Number text row
+                        Row(
+                          children: List.generate(7, (i) {
+                            final day = monday.add(Duration(days: i));
+                            final isToday = todayIndex == i;
+                            final isWeekend = i >= 5;
+                            return Expanded(
+                              child: GestureDetector(
+                                onTap: () => _drillToDay(day),
+                                behavior: HitTestBehavior.opaque,
+                                child: Center(
+                                  child: Text(
+                                    '${day.day}',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      fontWeight: isToday ? FontWeight.w700 : FontWeight.w400,
+                                      color: isToday
+                                          ? Colors.white
+                                          : (isWeekend
+                                              ? tokens.AppThemeTokens.secondaryTextColor
+                                              : tokens.AppThemeTokens.titleColor),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }),
+                        ),
+                      ],
+                    ),
                   ),
-                ],
-              ),
                 );
               },
             ),

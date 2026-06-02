@@ -414,6 +414,15 @@ class _CalendarScreenState extends State<CalendarScreen>
                 ),
               ),
             ),
+            // Today button: floats above the Spaces mini bar.
+            // Derivation: mini bar height(50) + its bottom gap(8) + extra gap(8) = 66.
+            // Coupled to _MiniBrowserBar in home_screen.dart (height=50, bottom=navBarH+8).
+            if (_navLevel == _NavLevel.day && _dayViewMode != _DayViewMode.list)
+              Positioned(
+                bottom: 66,
+                right: 16,
+                child: _TodayButton(onTap: _goToToday),
+              ),
           ],
         );
       },
@@ -748,6 +757,56 @@ class _CalendarScreenState extends State<CalendarScreen>
   // ── Day view: list fades in/out, timeline is always live ─────────────────
 
   Widget _buildDayView(BuildContext context, double topOffset) {
+    final colorKey = ThemeService.instance.currentColor.value;
+    final glass    = ThemeService.instance.glassEnabled.value;
+
+    // Unified base tint — the transparent DayColumn grid shows this.
+    final Color baseColor = switch (colorKey) {
+      'dark'   => const Color(0xFF141414),
+      'pastel' => tokens.AppThemeTokens.backgroundColor,
+      _        => const Color(0xFFF7F4F1),
+    };
+
+    // Column label bar + all-day band content (shared by both glass paths).
+    final bandContent = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildColumnLabelBar(),
+        _AllDayBand(
+          focusedDay: _dayForMultiDayPage(_focusedMultiDayPage),
+          swipeFraction: _swipeFraction,
+          stretchValue: _stretchCurved.value,
+        ),
+      ],
+    );
+
+    // Glass path: blur samples scrolling timeline beneath the band.
+    // Non-glass path: solid base color so the band blends into the body.
+    final Widget band = glass
+        ? ClipRect(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: colorKey == 'dark'
+                      ? Colors.white.withValues(alpha: 0.08)
+                      : Colors.white.withValues(alpha: 0.50),
+                  border: Border(bottom: BorderSide(
+                      color: tokens.AppThemeTokens.cardBorder, width: 0.5)),
+                ),
+                child: bandContent,
+              ),
+            ),
+          )
+        : Container(
+            decoration: BoxDecoration(
+              color: baseColor,
+              border: Border(bottom: BorderSide(
+                  color: tokens.AppThemeTokens.cardBorder, width: 0.5)),
+            ),
+            child: bandContent,
+          );
+
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 200),
       child: _dayViewMode == _DayViewMode.list
@@ -760,33 +819,15 @@ class _CalendarScreenState extends State<CalendarScreen>
           : Stack(
               key: const ValueKey('timeline'),
               children: [
+                // Base layer — gives the transparent timeline cells a unified tint.
+                Positioned.fill(child: ColoredBox(color: baseColor)),
                 _buildUnifiedTimeline(topOffset),
-                // Column label bar + all-day band share one Positioned block so
-                // the bottom border lives on the outer wrapper. When the band is
-                // empty it collapses to zero height and the border sits flush
-                // below the day labels — no gap, no double line.
+                // Day-header + all-day band pinned above the scrolling timeline.
                 Positioned(
                   top: topOffset,
                   left: 0,
                   right: 0,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: tokens.AppThemeTokens.backgroundColor,
-                      border: Border(bottom: BorderSide(
-                          color: tokens.AppThemeTokens.cardBorder, width: 0.5)),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _buildColumnLabelBar(),
-                        _AllDayBand(
-                          focusedDay: _dayForMultiDayPage(_focusedMultiDayPage),
-                          swipeFraction: _swipeFraction,
-                          stretchValue: _stretchCurved.value,
-                        ),
-                      ],
-                    ),
-                  ),
+                  child: band,
                 ),
               ],
             ),
@@ -1493,6 +1534,88 @@ class _EventListViewState extends State<_EventListView> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ─── Today button ──────────────────────────────────────────────────────────────
+
+class _TodayButton extends StatefulWidget {
+  const _TodayButton({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  State<_TodayButton> createState() => _TodayButtonState();
+}
+
+class _TodayButtonState extends State<_TodayButton> {
+  bool _pressed = false;
+
+  static const _radius = BorderRadius.all(Radius.circular(18));
+  static const _shadow = BoxShadow(
+    color: Color(0x28000000),
+    blurRadius: 16,
+    offset: Offset(0, 4),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: ThemeService.instance.glassEnabled,
+      builder: (context, glass, _) => ValueListenableBuilder<String>(
+        valueListenable: ThemeService.instance.currentColor,
+        builder: (context, colorKey, _) => _buildPill(glass, colorKey),
+      ),
+    );
+  }
+
+  Widget _buildPill(bool glass, String colorKey) {
+    final isDark = colorKey == 'dark';
+    final fillColor = isDark
+        ? Colors.white.withValues(alpha: 0.15)
+        : Colors.white.withValues(alpha: 0.35);
+
+    final label = Text(
+      'Today',
+      style: GoogleFonts.inter(
+        fontSize: 14,
+        fontWeight: FontWeight.w600,
+        color: isDark ? Colors.white : Colors.black,
+      ),
+    );
+
+    final pill = Container(
+      decoration: const BoxDecoration(
+        borderRadius: _radius,
+        boxShadow: [_shadow],
+      ),
+      child: ClipRRect(
+        borderRadius: _radius,
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Container(
+            height: 35,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+              color: fillColor,
+              borderRadius: _radius,
+            ),
+            child: Center(child: label),
+          ),
+        ),
+      ),
+    );
+
+    return GestureDetector(
+      onTap: widget.onTap,
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      child: AnimatedScale(
+        scale: _pressed ? 0.96 : 1.0,
+        duration: const Duration(milliseconds: 100),
+        child: IntrinsicWidth(child: pill),
       ),
     );
   }

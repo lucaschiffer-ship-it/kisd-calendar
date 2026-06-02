@@ -580,11 +580,10 @@ class _CalendarScreenState extends State<CalendarScreen>
                 _      => const Color(0xFFC8C8C8),
               };
         // Pill width lerps 3→1 cell as stretch goes 0 (multi-day) → 1 (single-day).
-        // Center stays fixed on the focused day; clamp so pill never exits the strip.
+        // Center is animated independently on tap so slide and stretch compose cleanly.
         final t = _stretchCurved.value;
-        final pillWidth = lerpDouble(3 * cellW, cellW, t)!;
-        final center    = (focusIndex + 0.5) * cellW;
-        final pillLeft  = (center - pillWidth / 2).clamp(0.0, 7 * cellW - pillWidth);
+        final pillWidth    = lerpDouble(3 * cellW, cellW, t)!;
+        final targetCenter = (focusIndex + 0.5) * cellW;
 
         return Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -612,8 +611,17 @@ class _CalendarScreenState extends State<CalendarScreen>
               }),
             ),
             const SizedBox(height: 4),
-            // Row 2: Day numbers with horizontal pill and today accent circle
-            SizedBox(
+            // Row 2: Day numbers with horizontal pill and today accent circle.
+            // TweenAnimationBuilder animates the pill center on tap; pillWidth
+            // changes independently during stretch — the two don't interfere.
+            TweenAnimationBuilder<double>(
+              tween: Tween<double>(begin: targetCenter, end: targetCenter),
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeInOut,
+              builder: (context, animCenter, _) {
+                final pillLeft = (animCenter - pillWidth / 2)
+                    .clamp(0.0, 7 * cellW - pillWidth);
+                return SizedBox(
               height: cellH,
               child: Stack(
                 clipBehavior: Clip.none,
@@ -675,6 +683,8 @@ class _CalendarScreenState extends State<CalendarScreen>
                   ),
                 ],
               ),
+                );
+              },
             ),
           ],
         );

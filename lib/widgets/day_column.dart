@@ -214,7 +214,7 @@ class _DayColumnState extends State<DayColumn> {
   List<Widget> _buildEventCards(double eventAreaWidth, double leftOffset) {
     if (_events.isEmpty) return const [];
 
-    final items = _events.map((e) {
+    final items = _events.where((e) => !e.allDay).map((e) {
       final startMin = e.start.hour * 60 + e.start.minute;
       final endMin = (e.end.hour * 60 + e.end.minute).clamp(startMin + 15, 24 * 60);
       return _EvtItem(event: e, startMin: startMin, endMin: endMin);

@@ -22,6 +22,9 @@ class DeviceCalendarEvent {
   final String? location;
   final Color calendarColor;
   final String calendarName;
+  // True when allDay == true OR duration >= 24 h — same predicate used by
+  // getAllDayEventsForRange so the band and the timeline are always consistent.
+  final bool allDay;
 
   const DeviceCalendarEvent({
     required this.title,
@@ -30,7 +33,26 @@ class DeviceCalendarEvent {
     this.location,
     required this.calendarColor,
     this.calendarName = '',
+    this.allDay = false,
   });
+}
+
+// ─── All-day / multi-day event (date-range model for the all-day band) ─────────
+
+class AllDayEvent {
+  const AllDayEvent({
+    required this.title,
+    required this.startDate,
+    required this.endDate,
+    required this.calendarColor,
+    this.calendarName = '',
+  });
+
+  final String title;
+  final DateTime startDate; // inclusive
+  final DateTime endDate;   // inclusive (last calendar day the event spans)
+  final Color calendarColor;
+  final String calendarName;
 }
 
 // ─── Service ──────────────────────────────────────────────────────────────────
@@ -58,9 +80,19 @@ class CalendarService {
   // In-memory event cache — keyed by "yyyy-MM-dd". Populated on first fetch per
   // day and reused by subsequent DayColumn mounts so events appear immediately.
   final _eventCache = <String, List<DeviceCalendarEvent>>{};
+  // All-day event cache — keyed by "startKey_endKey".
+  final _allDayCache = <String, List<AllDayEvent>>{};
 
   static String _dayKey(DateTime d) =>
       '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+  static String _rangeKey(DateTime s, DateTime e) => '${_dayKey(s)}_${_dayKey(e)}';
+
+  // Shared predicate: an event is "all-day" if flagged allDay OR spans >= 24 h.
+  static bool _isAllDay(Event e) {
+    if (e.allDay == true) return true;
+    if (e.start == null || e.end == null) return false;
+    return e.end!.difference(e.start!).inHours >= 24;
+  }
 
   /// Synchronous cache read — null means the day has not been fetched yet.
   List<DeviceCalendarEvent>? getCachedEvents(DateTime day) =>
@@ -73,7 +105,10 @@ class CalendarService {
   }
 
   /// Clears the in-memory event cache so the next fetch re-reads from the device calendar.
-  void clearCache() => _eventCache.clear();
+  void clearCache() {
+    _eventCache.clear();
+    _allDayCache.clear();
+  }
 
   // Lazy timezone init — runs once, subsequent awaits resolve immediately.
   Future<void>? _tzFuture;
@@ -502,6 +537,7 @@ class CalendarService {
             location: e.location?.isEmpty == true ? null : e.location,
             calendarColor: cal.color != null ? Color(cal.color as int) : _kisdColor,
             calendarName: cal.name ?? '',
+            allDay: _isAllDay(e),
           ));
         }
       }
@@ -520,6 +556,56 @@ class CalendarService {
 
   Future<List<DeviceCalendarEvent>> getTodayEvents() =>
       getEventsForDay(DateTime.now());
+
+  // ── Query: all-day / multi-day events overlapping [startDate, endDate] ─────
+
+  Future<List<AllDayEvent>> getAllDayEventsForRange(
+      DateTime startDate, DateTime endDate) async {
+    if (_isSimulator) return const [];
+    final key = _rangeKey(startDate, endDate);
+    if (_allDayCache.containsKey(key)) return _allDayCache[key]!;
+    try {
+      if (!await _hasPermission()) return const [];
+      final from = DateTime(startDate.year, startDate.month, startDate.day);
+      final to   = DateTime(endDate.year,   endDate.month,   endDate.day, 23, 59, 59);
+      final cals = await _plugin.retrieveCalendars();
+      if (!cals.isSuccess || cals.data == null) return const [];
+      final events = <AllDayEvent>[];
+      for (final cal in cals.data!.where((c) => c.id != null)) {
+        final r = await _plugin.retrieveEvents(
+            cal.id!, RetrieveEventsParams(startDate: from, endDate: to));
+        if (!r.isSuccess || r.data == null) continue;
+        for (final e in r.data!) {
+          if (e.start == null || e.end == null || (e.title ?? '').isEmpty) continue;
+          if (!_isAllDay(e)) continue;
+          var startDay = DateTime(e.start!.year, e.start!.month, e.start!.day);
+          var endDay   = DateTime(e.end!.year,   e.end!.month,   e.end!.day);
+          // iOS stores all-day event end as midnight of the *next* day; adjust to
+          // the last inclusive calendar day.
+          if ((e.allDay == true) &&
+              e.end!.hour == 0 && e.end!.minute == 0 &&
+              endDay.isAfter(startDay)) {
+            endDay = endDay.subtract(const Duration(days: 1));
+          }
+          events.add(AllDayEvent(
+            title: e.title!,
+            startDate: startDay,
+            endDate: endDay,
+            calendarColor: cal.color != null ? Color(cal.color as int) : _kisdColor,
+            calendarName: cal.name ?? '',
+          ));
+        }
+      }
+      // Deduplicate by title + startDate.
+      final seen = <String>{};
+      events.retainWhere((e) => seen.add('${e.title}_${_dayKey(e.startDate)}'));
+      _allDayCache[key] = events;
+      return events;
+    } catch (e) {
+      print('[calendar] getAllDayEventsForRange: $e');
+      return const [];
+    }
+  }
 
   // ── Query: all events in a month, grouped by day-of-month ──────────────────
 

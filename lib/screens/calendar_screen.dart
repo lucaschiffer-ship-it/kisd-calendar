@@ -815,6 +815,14 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   // ── Day view: list fades in/out, timeline is always live ─────────────────
 
+  List<DateTime> get _allDayBandDays => _dayViewMode == _DayViewMode.singleDay
+      ? [_selectedDate]
+      : [
+          _dayForMultiDayPage(_focusedMultiDayPage - 1),
+          _dayForMultiDayPage(_focusedMultiDayPage),
+          _dayForMultiDayPage(_focusedMultiDayPage + 1),
+        ];
+
   Widget _buildDayView(BuildContext context, double topOffset) {
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 200),
@@ -834,6 +842,12 @@ class _CalendarScreenState extends State<CalendarScreen>
                   left: 0,
                   right: 0,
                   child: _buildColumnLabelBar(),
+                ),
+                Positioned(
+                  top: topOffset + _kColLabelH,
+                  left: 0,
+                  right: 0,
+                  child: _AllDayBand(visibleDays: _allDayBandDays),
                 ),
               ],
             ),
@@ -1125,6 +1139,204 @@ class _ReloadButtonState extends State<_ReloadButton>
                 ),
         ),
       ),
+    );
+  }
+}
+
+// ─── All-day event band ───────────────────────────────────────────────────────
+
+class _AllDayBand extends StatefulWidget {
+  const _AllDayBand({required this.visibleDays});
+
+  final List<DateTime> visibleDays;
+
+  static const double _rowH    = 24.0;
+  static const double _rowGap  = 2.0;
+  static const double _padV    = 4.0;
+  static const int    _maxVis  = 3;
+  static const double _maxH    = _padV + _maxVis * _rowH + (_maxVis - 1) * _rowGap + _padV; // 84
+
+  static double _contentH(int rows) => rows == 0
+      ? 0
+      : _padV + rows * _rowH + (rows - 1) * _rowGap + _padV;
+
+  @override
+  State<_AllDayBand> createState() => _AllDayBandState();
+}
+
+class _AllDayBandState extends State<_AllDayBand> {
+  List<AllDayEvent> _events = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(_AllDayBand old) {
+    super.didUpdateWidget(old);
+    if (!_sameDays(old.visibleDays, widget.visibleDays)) _load();
+  }
+
+  bool _sameDays(List<DateTime> a, List<DateTime> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  Future<void> _load() async {
+    if (widget.visibleDays.isEmpty) return;
+    final events = await CalendarService.instance.getAllDayEventsForRange(
+      widget.visibleDays.first,
+      widget.visibleDays.last,
+    );
+    if (mounted) setState(() => _events = events);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: Listenable.merge([
+        ThemeService.instance.currentColor,
+        ThemeService.instance.currentStyle,
+      ]),
+      builder: (context, _) => _buildBand(),
+    );
+  }
+
+  Widget _buildBand() {
+    if (widget.visibleDays.isEmpty) return const SizedBox.shrink();
+
+    // ── Greedy row-packing ──────────────────────────────────────────────────
+    final sorted = [..._events]..sort((a, b) => a.startDate.compareTo(b.startDate));
+    final rowMaxEnd = <DateTime>[];
+    final rowOf     = <int>[];
+
+    for (final evt in sorted) {
+      var row = -1;
+      for (var r = 0; r < rowMaxEnd.length; r++) {
+        if (rowMaxEnd[r].isBefore(evt.startDate)) { row = r; break; }
+      }
+      if (row == -1) {
+        row = rowMaxEnd.length;
+        rowMaxEnd.add(evt.endDate);
+      } else {
+        if (evt.endDate.isAfter(rowMaxEnd[row])) rowMaxEnd[row] = evt.endDate;
+      }
+      rowOf.add(row);
+    }
+
+    final totalRows = rowMaxEnd.length;
+    final cHeight   = _AllDayBand._contentH(totalRows);
+    final bandH     = cHeight.clamp(0.0, _AllDayBand._maxH);
+
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+      alignment: Alignment.topCenter,
+      child: totalRows == 0
+          ? const SizedBox.shrink()
+          : Container(
+              height: bandH,
+              decoration: BoxDecoration(
+                color: tokens.AppThemeTokens.backgroundColor,
+                border: Border(bottom: BorderSide(
+                    color: tokens.AppThemeTokens.cardBorder, width: 0.5)),
+              ),
+              child: LayoutBuilder(builder: (context, constraints) {
+                final colW = (constraints.maxWidth - DayColumn.labelWidth) /
+                    widget.visibleDays.length;
+
+                // Build capsule widgets for all rows (including rows beyond
+                // _maxVis, which the SingleChildScrollView reveals on scroll).
+                final capsules = <Widget>[];
+                for (var i = 0; i < sorted.length; i++) {
+                  final evt = sorted[i];
+                  final row = rowOf[i];
+
+                  // Find first/last visible column this event touches.
+                  var firstCol = -1, lastCol = -1;
+                  for (var c = 0; c < widget.visibleDays.length; c++) {
+                    final day = widget.visibleDays[c];
+                    if (!day.isAfter(evt.endDate) && !day.isBefore(evt.startDate)) {
+                      if (firstCol == -1) firstCol = c;
+                      lastCol = c;
+                    }
+                  }
+                  if (firstCol == -1) continue;
+
+                  final capLeft  = DayColumn.labelWidth + firstCol * colW + 2;
+                  final capWidth = (lastCol - firstCol + 1) * colW - 4;
+                  final capTop   = _AllDayBand._padV +
+                      row * (_AllDayBand._rowH + _AllDayBand._rowGap);
+
+                  capsules.add(Positioned(
+                    left:   capLeft,
+                    width:  capWidth,
+                    top:    capTop,
+                    height: _AllDayBand._rowH,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: evt.calendarColor.withValues(alpha: 0.25),
+                        borderRadius: BorderRadius.circular(
+                            tokens.AppThemeTokens.cardBorderRadius),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      child: Text(
+                        evt.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: evt.calendarColor,
+                        ),
+                      ),
+                    ),
+                  ));
+                }
+
+                // The full content (all rows) is placed in a Stack.
+                final fullContent = SizedBox(
+                  height: cHeight,
+                  child: Stack(
+                    children: [
+                      // "all-day" gutter label, vertically centered in the band.
+                      Positioned(
+                        left: 0,
+                        width: DayColumn.labelWidth,
+                        top: 0,
+                        bottom: 0,
+                        child: Container(
+                          alignment: Alignment.centerRight,
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Text(
+                            'all-day',
+                            style: GoogleFonts.inter(
+                              fontSize: 9,
+                              color: tokens.AppThemeTokens.secondaryTextColor,
+                            ),
+                          ),
+                        ),
+                      ),
+                      ...capsules,
+                    ],
+                  ),
+                );
+
+                // Scroll when more than _maxVis rows; otherwise just fit.
+                return totalRows > _AllDayBand._maxVis
+                    ? SingleChildScrollView(
+                        physics: const ClampingScrollPhysics(),
+                        child: fullContent,
+                      )
+                    : fullContent;
+              }),
+            ),
     );
   }
 }

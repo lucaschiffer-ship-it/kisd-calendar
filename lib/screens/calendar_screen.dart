@@ -96,7 +96,7 @@ class _CalendarScreenState extends State<CalendarScreen>
   // ── Computed header dimensions ─────────────────────────────────────────────
 
   double _headerHeight(double statusH) =>
-      statusH + _kTitleRowH + _kButtonsRowH +
+      statusH + _kTitleRowH +
       (_navLevel == _NavLevel.day ? _kDayBarH * _dayBarCurved.value : 0);
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -434,12 +434,6 @@ class _CalendarScreenState extends State<CalendarScreen>
         ? const Color(0x1AFFFFFF)
         : tokens.AppThemeTokens.cardBorder;
 
-    final backLabel = switch (_navLevel) {
-      _NavLevel.month => '${_displayedMonth.year}',
-      _NavLevel.day   => _kMonthNames[_selectedDate.month - 1],
-      _NavLevel.year  => '',
-    };
-
     final body = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -476,49 +470,6 @@ class _CalendarScreenState extends State<CalendarScreen>
                             color: secondaryColor, size: 22),
                       ),
                     ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // ── Buttons row ────────────────────────────────────────────────
-          SizedBox(
-            height: _kButtonsRowH,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  if (_navLevel != _NavLevel.year)
-                    _NavChip(
-                      label: backLabel,
-                      onTap: _goBack,
-                    ),
-                  const Spacer(),
-                  if (_navLevel == _NavLevel.day) ...[
-                    _ModeChip(
-                      icon: Icons.calendar_view_day,
-                      isSelected: _dayViewMode == _DayViewMode.singleDay,
-                      onTap: () => _onDayViewModeChanged(_DayViewMode.singleDay),
-                    ),
-                    const SizedBox(width: 8),
-                    _ModeChip(
-                      icon: Icons.calendar_view_week,
-                      isSelected: _dayViewMode == _DayViewMode.multiDay,
-                      onTap: () => _onDayViewModeChanged(_DayViewMode.multiDay),
-                    ),
-                    const SizedBox(width: 8),
-                    _ModeChip(
-                      icon: Icons.format_list_bulleted,
-                      isSelected: _dayViewMode == _DayViewMode.list,
-                      onTap: () => _onDayViewModeChanged(_DayViewMode.list),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                  _IconChip(
-                    icon: Icons.today,
-                    onTap: _goToToday,
                   ),
                 ],
               ),

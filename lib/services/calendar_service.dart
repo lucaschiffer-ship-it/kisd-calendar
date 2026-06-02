@@ -580,11 +580,10 @@ class CalendarService {
           if (!_isAllDay(e)) continue;
           var startDay = DateTime(e.start!.year, e.start!.month, e.start!.day);
           var endDay   = DateTime(e.end!.year,   e.end!.month,   e.end!.day);
-          // iOS stores all-day event end as midnight of the *next* day; adjust to
-          // the last inclusive calendar day.
-          if ((e.allDay == true) &&
-              e.end!.hour == 0 && e.end!.minute == 0 &&
-              endDay.isAfter(startDay)) {
+          // iOS stores all-day event end as midnight of the *next* day (exclusive).
+          // Subtract 1 day to get the last inclusive calendar day.
+          // Don't guard on .hour == 0 — TZDateTime may not be in local tz yet.
+          if (e.allDay == true && endDay.isAfter(startDay)) {
             endDay = endDay.subtract(const Duration(days: 1));
           }
           events.add(AllDayEvent(

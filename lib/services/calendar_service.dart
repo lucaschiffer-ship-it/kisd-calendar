@@ -565,6 +565,7 @@ class CalendarService {
     final key = _rangeKey(startDate, endDate);
     if (_allDayCache.containsKey(key)) return _allDayCache[key]!;
     try {
+      await _ensureTz(); // must run before retrieveEvents so tz.local is set
       if (!await _hasPermission()) return const [];
       final from = DateTime(startDate.year, startDate.month, startDate.day);
       final to   = DateTime(endDate.year,   endDate.month,   endDate.day, 23, 59, 59);

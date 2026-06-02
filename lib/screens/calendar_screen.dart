@@ -579,11 +579,15 @@ class _CalendarScreenState extends State<CalendarScreen>
                 'dark' => Colors.white.withValues(alpha: 0.22),
                 _      => const Color(0xFFC8C8C8),
               };
-        // Pill width lerps 3→1 cell as stretch goes 0 (multi-day) → 1 (single-day).
-        // Center is animated independently on tap so slide and stretch compose cleanly.
-        final t = _stretchCurved.value;
-        final pillWidth    = lerpDouble(3 * cellW, cellW, t)!;
-        final targetCenter = (focusIndex + 0.5) * cellW;
+        // Pill left edge = circle left edge within the focused cell (multi-day),
+        // collapsing to the cell's own left edge in single-day.
+        // pillInset and pillWidth change with stretch; targetCellLeft changes on tap.
+        // The two are orthogonal so they animate without interfering.
+        final t            = _stretchCurved.value;
+        final d            = cellH; // accent circle diameter
+        final pillInset    = (1.0 - t) * (cellW - d) / 2;
+        final pillWidth    = lerpDouble(2 * cellW + d, cellW, t)!;
+        final targetCellLeft = focusIndex * cellW;
 
         return Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -612,15 +616,15 @@ class _CalendarScreenState extends State<CalendarScreen>
             ),
             const SizedBox(height: 4),
             // Row 2: Day numbers with horizontal pill and today accent circle.
-            // TweenAnimationBuilder animates the pill center on tap; pillWidth
-            // changes independently during stretch — the two don't interfere.
+            // TweenAnimationBuilder animates the cell offset on tap; pillInset
+            // and pillWidth change during stretch — they compose without interfering.
             TweenAnimationBuilder<double>(
-              tween: Tween<double>(begin: targetCenter, end: targetCenter),
+              tween: Tween<double>(begin: targetCellLeft, end: targetCellLeft),
               duration: const Duration(milliseconds: 220),
               curve: Curves.easeInOut,
-              builder: (context, animCenter, _) {
-                final pillLeft = (animCenter - pillWidth / 2)
-                    .clamp(0.0, 7 * cellW - pillWidth);
+              builder: (context, animCellLeft, _) {
+                final pillLeft = (animCellLeft + pillInset - (1.0 - t) * cellW)
+                    .clamp(0.0, 7 * cellW - pillInset - pillWidth);
                 return SizedBox(
               height: cellH,
               child: Stack(

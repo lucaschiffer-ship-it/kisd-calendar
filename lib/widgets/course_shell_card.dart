@@ -917,6 +917,16 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                               : Border.all(
                                   color: tokens.AppThemeTokens.cardBorder),
                           borderRadius: BorderRadius.circular(radius),
+                          boxShadow: glass
+                              ? [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.22),
+                                    blurRadius: 32,
+                                    spreadRadius: 0,
+                                    offset: const Offset(0, 8),
+                                  ),
+                                ]
+                              : null,
                         ),
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(radius),
@@ -947,12 +957,13 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                     decoration: BoxDecoration(
                                       border: Border.all(
                                         color: Colors.white
-                                            .withValues(alpha: 0.18),
+                                            .withValues(alpha: 0.28),
                                         width: 0.5,
                                       ),
                                       borderRadius:
                                           BorderRadius.circular(radius),
                                     ),
+                                    child: const SizedBox.expand(),
                                   ),
                                 ),
                               ],

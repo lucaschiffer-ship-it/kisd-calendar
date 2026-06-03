@@ -14,6 +14,16 @@ import '../theme/app_theme.dart';
 const double _kMenuWidth = 240.0;
 const double _kItemHeight = 44.0;
 
+// ─── shared formatting helpers ────────────────────────────────────────────────
+
+String _formatMeetingTimes(List<MeetingTime> meetingTimes) =>
+    meetingTimes
+        .map((m) =>
+            '${m.weekday.label.toUpperCase()}  '
+            '${CourseShellCard.fmtTime(m.startTime)} – '
+            '${CourseShellCard.fmtTime(m.endTime)}')
+        .join('  ·  ');
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 class CourseShellCard extends StatefulWidget {
@@ -81,13 +91,7 @@ class _CourseShellCardState extends State<CourseShellCard>
     widget.onFavouriteChanged?.call(next);
   }
 
-  // "TUE  13:00 – 16:00  ·  THU  13:00 – 16:00"
-  String get _allMeetingsText => widget.shell.meetingTimes
-      .map((m) =>
-          '${m.weekday.label.toUpperCase()}  '
-          '${CourseShellCard.fmtTime(m.startTime)} – '
-          '${CourseShellCard.fmtTime(m.endTime)}')
-      .join('  ·  ');
+  String get _allMeetingsText => _formatMeetingTimes(widget.shell.meetingTimes);
 
   void _openPrimary() {
     if (widget.shell.links.isEmpty) return;
@@ -136,7 +140,10 @@ class _CourseShellCardState extends State<CourseShellCard>
       transitionDuration: const Duration(milliseconds: 250),
       reverseTransitionDuration: const Duration(milliseconds: 250),
       transitionsBuilder: (context, animation, secondaryAnimation, child) => child,
-      pageBuilder: (ctx, animation, secondaryAnimation) => _ExpandedCardOverlay(shell: shell),
+      pageBuilder: (ctx, animation, secondaryAnimation) => _ExpandedCardOverlay(
+        shell: shell,
+        onFavouriteChanged: widget.onFavouriteChanged,
+      ),
     ));
   }
 
@@ -679,17 +686,60 @@ class _InfoSheet extends StatelessWidget {
 
 // ─── Expanded card overlay ────────────────────────────────────────────────────
 
-// Stage 2: replace placeholder content with full expanded layout.
 // Stage 3: replace PageRouteBuilder with custom Hero-style rect-lerp animation.
-class _ExpandedCardOverlay extends StatelessWidget {
-  const _ExpandedCardOverlay({required this.shell});
+class _ExpandedCardOverlay extends StatefulWidget {
+  const _ExpandedCardOverlay({
+    required this.shell,
+    this.onFavouriteChanged,
+  });
+
   final CourseShell shell;
+  final void Function(bool isFavourite)? onFavouriteChanged;
+
+  @override
+  State<_ExpandedCardOverlay> createState() => _ExpandedCardOverlayState();
+}
+
+class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
+    with SingleTickerProviderStateMixin {
+  late bool _liked;
+  late final AnimationController _heartCtrl;
+  late final Animation<double> _heartScale;
+  bool _descriptionExpanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _liked = widget.shell.isFavourite;
+    _heartCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 160),
+      reverseDuration: const Duration(milliseconds: 110),
+    );
+    _heartScale = Tween<double>(begin: 1.0, end: 1.40).animate(
+      CurvedAnimation(parent: _heartCtrl, curve: Curves.easeOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _heartCtrl.dispose();
+    super.dispose();
+  }
+
+  void _toggleLike() {
+    final next = !_liked;
+    setState(() => _liked = next);
+    _heartCtrl.forward(from: 0.0).then((_) => _heartCtrl.reverse());
+    widget.onFavouriteChanged?.call(next);
+  }
 
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
     final style = ThemeService.instance.currentStyle.value;
     final radius = style == 'vivid' ? 10.0 : 5.0;
+    final shell = widget.shell;
 
     return GestureDetector(
       onVerticalDragEnd: (d) {
@@ -700,21 +750,204 @@ class _ExpandedCardOverlay extends StatelessWidget {
       child: Material(
         type: MaterialType.transparency,
         child: Center(
-          child: Container(
-            width: size.width * 0.9,
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: tokens.AppThemeTokens.cardBackground,
-              border: Border.all(color: tokens.AppThemeTokens.cardBorder),
-              borderRadius: BorderRadius.circular(radius),
-            ),
-            child: Text(
-              shell.title,
-              style: AppTextStyle.cardTitle.copyWith(
-                fontSize: style == 'vivid' ? 27 : 23,
-                color: tokens.AppThemeTokens.titleColor,
-                fontWeight:
-                    style == 'vivid' ? FontWeight.w700 : FontWeight.w400,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: size.height * 0.8),
+            child: Container(
+              width: size.width * 0.9,
+              decoration: BoxDecoration(
+                color: tokens.AppThemeTokens.cardBackground,
+                border: Border.all(color: tokens.AppThemeTokens.cardBorder),
+                borderRadius: BorderRadius.circular(radius),
+              ),
+              child: SingleChildScrollView(
+                physics: const ClampingScrollPhysics(),
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // ── 1. Title + heart ───────────────────────────────────
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            shell.title,
+                            style: AppTextStyle.cardTitle.copyWith(
+                              fontSize: style == 'vivid' ? 27 : 23,
+                              color: tokens.AppThemeTokens.titleColor,
+                              fontWeight: style == 'vivid'
+                                  ? FontWeight.w700
+                                  : FontWeight.w400,
+                            ),
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: _toggleLike,
+                          behavior: HitTestBehavior.opaque,
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 14, top: 3),
+                            child: ScaleTransition(
+                              scale: _heartScale,
+                              child: Icon(
+                                _liked
+                                    ? CupertinoIcons.heart_fill
+                                    : CupertinoIcons.heart,
+                                size: 22,
+                                color: _liked
+                                    ? AppColors.heartActive
+                                    : tokens.AppThemeTokens.secondaryTextColor,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    // ── 2. Schedule ────────────────────────────────────────
+                    if (shell.meetingTimes.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        _formatMeetingTimes(shell.meetingTimes),
+                        style: AppTextStyle.body.copyWith(
+                          color: tokens.AppThemeTokens.timesColor,
+                        ),
+                      ),
+                    ],
+
+                    // ── 3. Location (always shown; null → "SEE DESCRIPTION")
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Icon(
+                          CupertinoIcons.location,
+                          size: 10,
+                          color: tokens.AppThemeTokens.locationColor,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          shell.location?.toUpperCase() ?? 'SEE DESCRIPTION',
+                          style: AppTextStyle.label.copyWith(
+                            color: tokens.AppThemeTokens.locationColor,
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    // ── 4. Description ─────────────────────────────────────
+                    if (shell.description.trim().isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        'DESCRIPTION',
+                        style: AppTextStyle.label.copyWith(
+                          color: tokens.AppThemeTokens.secondaryTextColor,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeInOut,
+                        alignment: Alignment.topCenter,
+                        child: Text(
+                          shell.description,
+                          maxLines: _descriptionExpanded ? null : 3,
+                          overflow: _descriptionExpanded
+                              ? TextOverflow.visible
+                              : TextOverflow.ellipsis,
+                          style: AppTextStyle.body.copyWith(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w400,
+                            color: tokens.AppThemeTokens.titleColor,
+                          ),
+                        ),
+                      ),
+                      if (shell.description.length > 180) ...[
+                        const SizedBox(height: 6),
+                        GestureDetector(
+                          onTap: () => setState(
+                              () => _descriptionExpanded = !_descriptionExpanded),
+                          child: Text(
+                            _descriptionExpanded ? 'Show less' : 'Show more',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w400,
+                              color: tokens.AppThemeTokens.secondaryTextColor,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+
+                    // ── 5. Links ───────────────────────────────────────────
+                    if (shell.links.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        'LINKS',
+                        style: AppTextStyle.label.copyWith(
+                          color: tokens.AppThemeTokens.secondaryTextColor,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      ...shell.links.map((l) {
+                        final display = l.label.isNotEmpty
+                            ? l.label
+                            : Uri.tryParse(l.url)?.host ?? l.url;
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: GestureDetector(
+                            onTap: () {
+                              Navigator.pop(context);
+                              SpacesBrowser.open(l.url);
+                            },
+                            child: Row(
+                              children: [
+                                Icon(
+                                  l.url.contains('spaces.kisd.de')
+                                      ? CupertinoIcons.rectangle_stack
+                                      : CupertinoIcons.globe,
+                                  size: 14,
+                                  color: AppColors.accent,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    display,
+                                    style: AppTextStyle.body.copyWith(
+                                      color: AppColors.accent,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }),
+                    ],
+
+                    // ── 6. Edit button ─────────────────────────────────────
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: () {
+                          // TODO Stage 4: in-place editing.
+                        },
+                        style: TextButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: Text(
+                          'Edit',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w400,
+                            color: tokens.AppThemeTokens.secondaryTextColor,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

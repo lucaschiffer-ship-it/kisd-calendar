@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../config/app_theme.dart' as tokens;
 import '../models/course_shell.dart';
@@ -93,6 +94,7 @@ class _CourseShellCardState extends State<CourseShellCard>
     SpacesBrowser.open(widget.shell.links.first.url);
   }
 
+  // ignore: unused_element — kept for Stage 2 repurposing
   void _showContextMenu(BuildContext context, Offset tapPosition) {
     final shell = widget.shell;
     // Capture the card's context before the dialog opens so _showInfoSheet
@@ -122,6 +124,20 @@ class _CourseShellCardState extends State<CourseShellCard>
         },
       ),
     );
+  }
+
+  void _openExpandedOverlay(BuildContext context, CourseShell shell) {
+    HapticFeedback.mediumImpact();
+    Navigator.of(context).push(PageRouteBuilder<void>(
+      opaque: false,
+      barrierDismissible: false,
+      barrierColor: Colors.black.withValues(alpha: 0.35),
+      barrierLabel: 'expanded card',
+      transitionDuration: const Duration(milliseconds: 250),
+      reverseTransitionDuration: const Duration(milliseconds: 250),
+      transitionsBuilder: (context, animation, secondaryAnimation, child) => child,
+      pageBuilder: (ctx, animation, secondaryAnimation) => _ExpandedCardOverlay(shell: shell),
+    ));
   }
 
   void _showInfoSheet(BuildContext context) {
@@ -157,7 +173,7 @@ class _CourseShellCardState extends State<CourseShellCard>
         onTapCancel: () => setState(() => _pressing = false),
         onLongPressStart: (d) {
           setState(() => _pressing = false);
-          _showContextMenu(context, d.globalPosition);
+          _openExpandedOverlay(context, widget.shell);
         },
         child: ValueListenableBuilder<String>(
           valueListenable: ThemeService.instance.currentColor,
@@ -656,6 +672,53 @@ class _InfoSheet extends StatelessWidget {
                 )),
           ],
         ],
+      ),
+    );
+  }
+}
+
+// ─── Expanded card overlay ────────────────────────────────────────────────────
+
+// Stage 2: replace placeholder content with full expanded layout.
+// Stage 3: replace PageRouteBuilder with custom Hero-style rect-lerp animation.
+class _ExpandedCardOverlay extends StatelessWidget {
+  const _ExpandedCardOverlay({required this.shell});
+  final CourseShell shell;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final style = ThemeService.instance.currentStyle.value;
+    final radius = style == 'vivid' ? 10.0 : 5.0;
+
+    return GestureDetector(
+      onVerticalDragEnd: (d) {
+        if (d.velocity.pixelsPerSecond.dy > 200) {
+          Navigator.pop(context);
+        }
+      },
+      child: Material(
+        type: MaterialType.transparency,
+        child: Center(
+          child: Container(
+            width: size.width * 0.9,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: tokens.AppThemeTokens.cardBackground,
+              border: Border.all(color: tokens.AppThemeTokens.cardBorder),
+              borderRadius: BorderRadius.circular(radius),
+            ),
+            child: Text(
+              shell.title,
+              style: AppTextStyle.cardTitle.copyWith(
+                fontSize: style == 'vivid' ? 27 : 23,
+                color: tokens.AppThemeTokens.titleColor,
+                fontWeight:
+                    style == 'vivid' ? FontWeight.w700 : FontWeight.w400,
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

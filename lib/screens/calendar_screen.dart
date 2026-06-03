@@ -43,7 +43,7 @@ class _CalendarScreenState extends State<CalendarScreen>
   // Header layout constants
   static const double _kTitleRowH   = 56.0;
   static const double _kButtonsRowH = 60.0;
-  static const double _kDayBarH     = 60.0;
+  static const double _kDayBarH     = 70.0;
   static const double _kColLabelH   = 28.0;
 
   // Timeline constants
@@ -649,7 +649,7 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   Widget _buildWeekStrip() {
     const letters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-    const double cellH = 28.0;
+    const double cellH = 38.0;
     final monday = _weekMonday(_dayForMultiDayPage(_focusedMultiDayPage));
 
     return SizedBox(
@@ -690,11 +690,27 @@ class _CalendarScreenState extends State<CalendarScreen>
                     Positioned(
                       left: pillLeft,
                       width: pillWidth,
-                      top: 0, height: cellH,
+                      top: (cellH - 40) / 2, height: 40,
                       child: Container(
                         decoration: BoxDecoration(
                           color: pillColor,
-                          borderRadius: BorderRadius.circular(cellH / 2),
+                          borderRadius: BorderRadius.circular(22),
+                        ),
+                      ),
+                    ),
+                  // Filled circle behind the focused day's number.
+                  if (focusIndex >= 0)
+                    Positioned(
+                      left: focusIndex * cellW + (cellW - 36) / 2,
+                      top: (cellH - 36) / 2,
+                      width: 36,
+                      height: 36,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: todayIndex == focusIndex
+                              ? AppColors.accent
+                              : (colorKey == 'dark' ? Colors.white : Colors.black),
+                          shape: BoxShape.circle,
                         ),
                       ),
                     ),
@@ -711,13 +727,15 @@ class _CalendarScreenState extends State<CalendarScreen>
                             child: Text(
                               '${day.day}',
                               style: GoogleFonts.inter(
-                                fontSize: 14,
-                                fontWeight: isToday ? FontWeight.w700 : FontWeight.w400,
-                                color: isToday
-                                    ? AppColors.accent
-                                    : (isWeekend
-                                        ? tokens.AppThemeTokens.secondaryTextColor
-                                        : tokens.AppThemeTokens.titleColor),
+                                fontSize: 18,
+                                fontWeight: isToday ? FontWeight.w700 : FontWeight.w500,
+                                color: focusIndex == i
+                                    ? Colors.white
+                                    : (isToday
+                                        ? AppColors.accent
+                                        : (isWeekend
+                                            ? tokens.AppThemeTokens.secondaryTextColor
+                                            : tokens.AppThemeTokens.titleColor)),
                               ),
                             ),
                           ),
@@ -744,8 +762,8 @@ class _CalendarScreenState extends State<CalendarScreen>
                         child: Text(
                           letters[i],
                           style: GoogleFonts.inter(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w500,
+                            fontSize: 13,
+                            fontWeight: i < 5 ? FontWeight.w600 : FontWeight.w500,
                             letterSpacing: 0.6,
                             color: tokens.AppThemeTokens.secondaryTextColor,
                           ),

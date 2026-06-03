@@ -51,6 +51,7 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   _NavLevel _navLevel = _NavLevel.day;
   _DayViewMode _dayViewMode = _DayViewMode.multiDay;
+  bool _viewMenuOpen = false;
 
   late final DateTime _today;
   late int _displayedYear;
@@ -81,6 +82,10 @@ class _CalendarScreenState extends State<CalendarScreen>
   // Horizontal swipe spring (re-created per swipe, placeholder at rest)
   late AnimationController _swipeSnapAnim;
   double _swipeFraction = 0.0;
+
+  // Week-strip swipe (re-created per snap, placeholder at rest)
+  late AnimationController _weekStripSnapAnim;
+  double _weekStripFx = 0.0;
 
   // Captures the focused page at drag start; used to detect week-boundary crossings.
   int? _dragStartPage;
@@ -123,6 +128,7 @@ class _CalendarScreenState extends State<CalendarScreen>
     );
     _dayBarCurved = CurvedAnimation(parent: _dayBarAnim, curve: Curves.easeOut);
     _swipeSnapAnim = AnimationController(vsync: this);
+    _weekStripSnapAnim = AnimationController(vsync: this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollToDefaultTime();
       // Pre-warm ±2 days so adjacent slots are always rendered before a swipe.
@@ -133,6 +139,7 @@ class _CalendarScreenState extends State<CalendarScreen>
   @override
   void dispose() {
     _timelineScrollController.dispose();
+    _weekStripSnapAnim.dispose();
     _swipeSnapAnim.dispose();
     _dayBarCurved.dispose();
     _dayBarAnim.dispose();
@@ -145,7 +152,10 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   void _goBack() {
     _slideBegin = const Offset(-0.15, 0);
+    _weekStripSnapAnim.stop();
     setState(() {
+      _viewMenuOpen = false;
+      _weekStripFx = 0.0;
       switch (_navLevel) {
         case _NavLevel.month:
           _navLevel = _NavLevel.year;
@@ -170,10 +180,18 @@ class _CalendarScreenState extends State<CalendarScreen>
   void _drillToDay(DateTime day) {
     _slideBegin = const Offset(0.15, 0);
     if (_dayViewMode != _DayViewMode.list) _dayBarAnim.value = 1.0;
+
+    final targetPage = _kTodayPage + day.difference(_today).inDays;
+
+    if (_navLevel == _NavLevel.day && _dayViewMode != _DayViewMode.list) {
+      _jumpToPage(targetPage);
+      return;
+    }
+
     setState(() {
       _selectedDate = day;
       _navLevel = _NavLevel.day;
-      _focusedMultiDayPage = _kTodayPage + day.difference(_today).inDays;
+      _focusedMultiDayPage = targetPage;
       _slotKeys = List.generate(5, (_) => GlobalKey());
       _swipeFraction = 0.0;
     });
@@ -182,6 +200,13 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   void _goToToday() {
     _slideBegin = const Offset(0.15, 0);
+
+    if (_navLevel == _NavLevel.day && _dayViewMode != _DayViewMode.list) {
+      _dayBarAnim.value = 1.0;
+      _jumpToPage(_kTodayPage);
+      return;
+    }
+
     setState(() {
       _selectedDate = _today;
       _navLevel = _NavLevel.day;
@@ -228,6 +253,30 @@ class _CalendarScreenState extends State<CalendarScreen>
     }
   }
 
+  void _selectViewMode(String mode) {
+    setState(() => _viewMenuOpen = false);
+    switch (mode) {
+      case 'Year':
+        _slideBegin = const Offset(-0.15, 0);
+        setState(() {
+          _displayedYear = _selectedDate.year;
+          _navLevel = _NavLevel.year;
+        });
+      case 'Month':
+        _slideBegin = const Offset(-0.15, 0);
+        setState(() {
+          _displayedMonth = DateTime(_selectedDate.year, _selectedDate.month);
+          _navLevel = _NavLevel.month;
+        });
+      case 'Multi Day':
+        _onDayViewModeChanged(_DayViewMode.multiDay);
+      case 'Single Day':
+        _onDayViewModeChanged(_DayViewMode.singleDay);
+      case 'List':
+        _onDayViewModeChanged(_DayViewMode.list);
+    }
+  }
+
   void _openSettings() {
     Navigator.push(
       context,
@@ -259,6 +308,7 @@ class _CalendarScreenState extends State<CalendarScreen>
   void _onHorizontalDragUpdate(DragUpdateDetails d, double effectiveStep) {
     if (_stretchAnim.isAnimating) return;
     var f = _swipeFraction + d.delta.dx / effectiveStep;
+    final prevPage = _focusedMultiDayPage;
     setState(() {
       // Rolling commit: when fraction crosses a full column, rotate slots immediately.
       // The commit at exactly ±1.0 is pixel-perfect and visually seamless.
@@ -280,6 +330,11 @@ class _CalendarScreenState extends State<CalendarScreen>
       }
       _swipeFraction = f;
     });
+    // One tick per day boundary crossed during a slow drag.
+    final crossed = (_focusedMultiDayPage - prevPage).abs();
+    for (var i = 0; i < crossed; i++) {
+      HapticFeedback.selectionClick();
+    }
   }
 
   void _onHorizontalDragEnd(DragEndDetails d, double effectiveStep) {
@@ -309,10 +364,12 @@ class _CalendarScreenState extends State<CalendarScreen>
       then = _retreatDay;
     }
 
+    // One tick when a flick/snap commits to a new day (week cross uses mediumImpact instead).
+    if (target != 0 && !didCrossWeek) HapticFeedback.selectionClick();
     _snapSwipe(target, then: then, heavySnap: didCrossWeek && target != 0.0);
   }
 
-  void _snapSwipe(double target, {VoidCallback? then, bool heavySnap = false}) {
+  void _snapSwipe(double target, {VoidCallback? then, bool heavySnap = false, int? durationMs}) {
     _swipeSnapAnim.stop();
     _swipeSnapAnim.dispose();
     final begin = _swipeFraction;
@@ -322,7 +379,7 @@ class _CalendarScreenState extends State<CalendarScreen>
 
     // Duration scales with distance so small springs feel snappy.
     // Week-boundary crossings use a short, crisp duration for a page-turn feel.
-    final ms = heavySnap ? 130 : (220 * distance).round();
+    final ms = durationMs ?? (heavySnap ? 130 : (220 * distance).round());
     final curve = heavySnap ? Curves.easeOut : Curves.easeOutCubic;
 
     final ctrl = AnimationController(vsync: this, duration: Duration(milliseconds: ms));
@@ -332,6 +389,32 @@ class _CalendarScreenState extends State<CalendarScreen>
           _swipeFraction = lerpDouble(begin, target, curve.transform(ctrl.value))!))
       ..addStatusListener((s) {
         if (s == AnimationStatus.completed) then?.call();
+      })
+      ..forward();
+  }
+
+  void _snapWeekStrip(double target, {bool? advance}) {
+    _weekStripSnapAnim.stop();
+    _weekStripSnapAnim.dispose();
+
+    final begin = _weekStripFx;
+    final ms = ((target - begin).abs() * 180).clamp(80.0, 180.0).round();
+
+    final ctrl = AnimationController(vsync: this, duration: Duration(milliseconds: ms));
+    _weekStripSnapAnim = ctrl;
+    ctrl
+      ..addListener(() => setState(() =>
+          _weekStripFx = lerpDouble(begin, target, Curves.easeOut.transform(ctrl.value))!))
+      ..addStatusListener((s) {
+        if (s == AnimationStatus.completed && advance != null) {
+          setState(() {
+            _focusedMultiDayPage += advance ? 7 : -7;
+            _selectedDate = _dayForMultiDayPage(_focusedMultiDayPage);
+            _slotKeys = List.generate(5, (_) => GlobalKey());
+            _weekStripFx = 0.0;
+          });
+          _preloadRange(_focusedMultiDayPage);
+        }
       })
       ..forward();
   }
@@ -356,6 +439,38 @@ class _CalendarScreenState extends State<CalendarScreen>
       _swipeFraction = 0.0;
     });
     _preloadRange(_focusedMultiDayPage);
+  }
+
+  void _jumpToPage(int targetPage) {
+    final delta = targetPage - _focusedMultiDayPage;
+    if (delta == 0) return;
+
+    final goingForward = delta > 0;
+    const kMs = 140;
+
+    if (delta.abs() == 1) {
+      // Perfect case: adjacent slot already holds the target day.
+      _snapSwipe(
+        goingForward ? -1.0 : 1.0,
+        then: goingForward ? _advanceDay : _retreatDay,
+        durationMs: kMs,
+      );
+      return;
+    }
+
+    // Multi-step: pre-position the center one slot away from target so the
+    // sliding-in column always shows the target.
+    _preloadRange(targetPage);
+    setState(() {
+      _focusedMultiDayPage = targetPage + (goingForward ? -1 : 1);
+      _slotKeys = List.generate(5, (_) => GlobalKey());
+      _swipeFraction = 0.0;
+    });
+    _snapSwipe(
+      goingForward ? -1.0 : 1.0,
+      then: goingForward ? _advanceDay : _retreatDay,
+      durationMs: kMs,
+    );
   }
 
   void _preloadRange(int centerPage) {
@@ -414,15 +529,34 @@ class _CalendarScreenState extends State<CalendarScreen>
                 ),
               ),
             ),
-            // Today button: floats above the Spaces mini bar.
-            // Derivation: mini bar height(50) + its bottom gap(8) + extra gap(8) = 66.
-            // Coupled to _MiniBrowserBar in home_screen.dart (height=50, bottom=navBarH+8).
-            if (_navLevel == _NavLevel.day && _dayViewMode != _DayViewMode.list)
-              Positioned(
-                bottom: 66,
-                right: 16,
-                child: _TodayButton(onTap: _goToToday),
+            // Dismiss overlay: absorbs taps outside the View menu when it is open.
+            if (_viewMenuOpen)
+              Positioned.fill(
+                child: GestureDetector(
+                  onTap: () => setState(() => _viewMenuOpen = false),
+                  behavior: HitTestBehavior.opaque,
+                  child: const SizedBox.expand(),
+                ),
               ),
+            // View button: left side, always visible above the Spaces mini bar.
+            Positioned(
+              bottom: 66,
+              left: 16,
+              child: _ViewButton(
+                isOpen: _viewMenuOpen,
+                onToggle: () =>
+                    setState(() => _viewMenuOpen = !_viewMenuOpen),
+                onSelect: _selectViewMode,
+                navLevel: _navLevel,
+                dayViewMode: _dayViewMode,
+              ),
+            ),
+            // Today button: right side, always visible above the Spaces mini bar.
+            Positioned(
+              bottom: 66,
+              right: 16,
+              child: _TodayButton(onTap: _goToToday),
+            ),
           ],
         );
       },
@@ -511,22 +645,18 @@ class _CalendarScreenState extends State<CalendarScreen>
     );
   }
 
-  // ── Week strip: full Mon–Sun for the current week ────────────────────────
+  // ── Week strip: full Mon–Sun, horizontally swipeable to adjacent weeks ──────
 
   Widget _buildWeekStrip() {
     const letters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-    final monday = _weekMonday(_dayForMultiDayPage(_focusedMultiDayPage));
-    final focusedDay = _dayForMultiDayPage(_focusedMultiDayPage);
-    final focusIndex = focusedDay.difference(monday).inDays.clamp(0, 6);
-    final todayDiff = _today.difference(monday).inDays;
-    final todayIndex = (todayDiff >= 0 && todayDiff <= 6) ? todayDiff : -1;
-
     const double cellH = 28.0;
+    final monday = _weekMonday(_dayForMultiDayPage(_focusedMultiDayPage));
 
     return SizedBox(
       height: _kDayBarH,
       child: LayoutBuilder(builder: (context, constraints) {
-        final cellW = constraints.maxWidth / 7.0;
+        final stripW   = constraints.maxWidth;
+        final cellW    = stripW / 7.0;
         final glass    = ThemeService.instance.glassEnabled.value;
         final colorKey = ThemeService.instance.currentColor.value;
         final pillColor = glass
@@ -539,106 +669,152 @@ class _CalendarScreenState extends State<CalendarScreen>
                 'dark' => Colors.white.withValues(alpha: 0.22),
                 _      => const Color(0xFFC8C8C8),
               };
-        final t               = _stretchCurved.value;
-        final d               = cellH;
-        final pillWidth       = lerpDouble(2 * cellW + d, cellW, t)!;
-        final targetFocusLeft = focusIndex.toDouble() * cellW;
+        final t         = _stretchCurved.value;
+        final pillWidth = lerpDouble(2 * cellW + cellH, cellW, t)!;
 
-        return Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // Row 1: Weekday letters — plain text, no background
-            Row(
-              children: List.generate(7, (i) {
-                return Expanded(
-                  child: GestureDetector(
-                    onTap: () => _drillToDay(monday.add(Duration(days: i))),
-                    behavior: HitTestBehavior.opaque,
-                    child: Center(
-                      child: Text(
-                        letters[i],
-                        style: GoogleFonts.inter(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w500,
-                          letterSpacing: 0.6,
-                          color: tokens.AppThemeTokens.secondaryTextColor,
+        // Builds one week's content. [showPill] enables the focus capsule.
+        Widget buildWeek(DateTime mon, {required bool showPill}) {
+          final focusedDay  = _dayForMultiDayPage(_focusedMultiDayPage);
+          final focusIndex  = showPill ? focusedDay.difference(mon).inDays.clamp(0, 6) : -1;
+          final todayDiff   = _today.difference(mon).inDays;
+          final todayIndex  = (todayDiff >= 0 && todayDiff <= 6) ? todayDiff : -1;
+          final focusLeft   = focusIndex >= 0 ? focusIndex.toDouble() * cellW : 0.0;
+
+          Widget numberRow(double pillLeft, bool drawPill) => ClipRect(
+            child: SizedBox(
+              height: cellH,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  if (drawPill)
+                    Positioned(
+                      left: pillLeft,
+                      width: pillWidth,
+                      top: 0, height: cellH,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: pillColor,
+                          borderRadius: BorderRadius.circular(cellH / 2),
                         ),
                       ),
                     ),
-                  ),
-                );
-              }),
-            ),
-            const SizedBox(height: 4),
-            // Row 2: Day numbers with pill centered on focused day + today accent circle.
-            // TweenAnimationBuilder animates the focused-cell left on tap.
-            // Pill is clipped naturally at strip edges by ClipRect — no clamping.
-            TweenAnimationBuilder<double>(
-              tween: Tween<double>(begin: targetFocusLeft, end: targetFocusLeft),
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeInOut,
-              builder: (context, animFocusLeft, _) {
-                // Multi-day (t=0): pill centered on focused cell, spans 3 cells.
-                // Single-day (t=1): pill collapses to the focused cell.
-                final pillLeft = lerpDouble(
-                  animFocusLeft - cellW + (cellW - d) / 2,
-                  animFocusLeft,
-                  t,
-                )!;
-                return ClipRect(
-                  child: SizedBox(
-                    height: cellH,
-                    child: Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        // Horizontal grey capsule: 3 cells (multi-day) → 1 cell (single-day)
-                        Positioned(
-                          left: pillLeft,
-                          width: pillWidth,
-                          top: 0,
-                          height: cellH,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: pillColor,
-                              borderRadius: BorderRadius.circular(cellH / 2),
+                  Row(
+                    children: List.generate(7, (i) {
+                      final day = mon.add(Duration(days: i));
+                      final isToday   = todayIndex == i;
+                      final isWeekend = i >= 5;
+                      return Expanded(
+                        child: GestureDetector(
+                          onTap: () => _drillToDay(day),
+                          behavior: HitTestBehavior.opaque,
+                          child: Center(
+                            child: Text(
+                              '${day.day}',
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: isToday ? FontWeight.w700 : FontWeight.w400,
+                                color: isToday
+                                    ? AppColors.accent
+                                    : (isWeekend
+                                        ? tokens.AppThemeTokens.secondaryTextColor
+                                        : tokens.AppThemeTokens.titleColor),
+                              ),
                             ),
                           ),
                         ),
-                        // Number text row
-                        Row(
-                          children: List.generate(7, (i) {
-                            final day = monday.add(Duration(days: i));
-                            final isToday = todayIndex == i;
-                            final isWeekend = i >= 5;
-                            return Expanded(
-                              child: GestureDetector(
-                                onTap: () => _drillToDay(day),
-                                behavior: HitTestBehavior.opaque,
-                                child: Center(
-                                  child: Text(
-                                    '${day.day}',
-                                    style: GoogleFonts.inter(
-                                      fontSize: 14,
-                                      fontWeight: isToday ? FontWeight.w700 : FontWeight.w400,
-                                      color: isToday
-                                          ? AppColors.accent
-                                          : (isWeekend
-                                              ? tokens.AppThemeTokens.secondaryTextColor
-                                              : tokens.AppThemeTokens.titleColor),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            );
-                          }),
-                        ),
-                      ],
-                    ),
+                      );
+                    }),
                   ),
-                );
-              },
+                ],
+              ),
             ),
-          ],
+          );
+
+          return SizedBox(
+            width: stripW,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Row(
+                  children: List.generate(7, (i) => Expanded(
+                    child: GestureDetector(
+                      onTap: () => _drillToDay(mon.add(Duration(days: i))),
+                      behavior: HitTestBehavior.opaque,
+                      child: Center(
+                        child: Text(
+                          letters[i],
+                          style: GoogleFonts.inter(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w500,
+                            letterSpacing: 0.6,
+                            color: tokens.AppThemeTokens.secondaryTextColor,
+                          ),
+                        ),
+                      ),
+                    ),
+                  )),
+                ),
+                const SizedBox(height: 4),
+                // Pill animates to new focused cell on tap; absent in adjacent weeks.
+                showPill
+                    ? TweenAnimationBuilder<double>(
+                        tween: Tween<double>(begin: focusLeft, end: focusLeft),
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeInOut,
+                        builder: (context, animLeft, _) {
+                          final pillLeft = lerpDouble(
+                            animLeft - cellW + (cellW - cellH) / 2,
+                            animLeft,
+                            t,
+                          )!;
+                          return numberRow(pillLeft, true);
+                        },
+                      )
+                    : numberRow(0.0, false),
+              ],
+            ),
+          );
+        }
+
+        return GestureDetector(
+          onHorizontalDragUpdate: (d) {
+            setState(() {
+              _weekStripFx = (_weekStripFx + d.delta.dx / stripW).clamp(-1.0, 1.0);
+            });
+          },
+          onHorizontalDragEnd: (d) {
+            final vel = d.primaryVelocity ?? 0;
+            if (_weekStripFx < -0.3 || vel < -500) {
+              HapticFeedback.selectionClick();
+              _snapWeekStrip(-1.0, advance: true);
+            } else if (_weekStripFx > 0.3 || vel > 500) {
+              HapticFeedback.selectionClick();
+              _snapWeekStrip(1.0, advance: false);
+            } else {
+              _snapWeekStrip(0.0);
+            }
+          },
+          child: ClipRect(
+            child: Stack(
+              children: [
+                Positioned(
+                  left: (-1 + _weekStripFx) * stripW,
+                  width: stripW, top: 0, bottom: 0,
+                  child: buildWeek(monday.subtract(const Duration(days: 7)), showPill: false),
+                ),
+                Positioned(
+                  left: _weekStripFx * stripW,
+                  width: stripW, top: 0, bottom: 0,
+                  child: buildWeek(monday, showPill: true),
+                ),
+                Positioned(
+                  left: (1 + _weekStripFx) * stripW,
+                  width: stripW, top: 0, bottom: 0,
+                  child: buildWeek(monday.add(const Duration(days: 7)), showPill: false),
+                ),
+              ],
+            ),
+          ),
         );
       }),
     );
@@ -1169,8 +1345,8 @@ class _AllDayBandState extends State<_AllDayBand> {
   Future<void> _load() async {
     final day = widget.focusedDay;
     final events = await CalendarService.instance.getAllDayEventsForRange(
-      day.subtract(const Duration(days: 2)),
-      day.add(const Duration(days: 2)),
+      day.subtract(const Duration(days: 1)),
+      day.add(const Duration(days: 1)),
     );
     if (mounted && widget.focusedDay == day) {
       setState(() => _events = events);
@@ -1616,6 +1792,180 @@ class _TodayButtonState extends State<_TodayButton> {
         scale: _pressed ? 0.96 : 1.0,
         duration: const Duration(milliseconds: 100),
         child: IntrinsicWidth(child: pill),
+      ),
+    );
+  }
+}
+
+// ─── View button ───────────────────────────────────────────────────────────────
+
+class _ViewButton extends StatefulWidget {
+  const _ViewButton({
+    required this.isOpen,
+    required this.onToggle,
+    required this.onSelect,
+    required this.navLevel,
+    required this.dayViewMode,
+  });
+
+  final bool isOpen;
+  final VoidCallback onToggle;
+  final void Function(String) onSelect;
+  final _NavLevel navLevel;
+  final _DayViewMode dayViewMode;
+
+  @override
+  State<_ViewButton> createState() => _ViewButtonState();
+}
+
+class _ViewButtonState extends State<_ViewButton> {
+  bool _pressed = false;
+
+  static const _radius = BorderRadius.all(Radius.circular(18));
+  static const _shadow = BoxShadow(
+    color: Color(0x28000000),
+    blurRadius: 16,
+    offset: Offset(0, 4),
+  );
+
+  static const _items = ['Year', 'Month', 'Multi Day', 'Single Day', 'List'];
+
+  String get _activeItem => switch (widget.navLevel) {
+        _NavLevel.year => 'Year',
+        _NavLevel.month => 'Month',
+        _NavLevel.day => switch (widget.dayViewMode) {
+            _DayViewMode.multiDay => 'Multi Day',
+            _DayViewMode.singleDay => 'Single Day',
+            _DayViewMode.list => 'List',
+          },
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: ThemeService.instance.glassEnabled,
+      builder: (context, glass, _) => ValueListenableBuilder<String>(
+        valueListenable: ThemeService.instance.currentColor,
+        builder: (context, colorKey, _) => _buildPill(glass, colorKey),
+      ),
+    );
+  }
+
+  Widget _buildPill(bool glass, String colorKey) {
+    final isDark = colorKey == 'dark';
+    final fillColor = isDark
+        ? Colors.white.withValues(alpha: 0.15)
+        : Colors.white.withValues(alpha: 0.35);
+
+    return AnimatedScale(
+      scale: _pressed ? 0.96 : 1.0,
+      duration: const Duration(milliseconds: 100),
+      child: Container(
+        decoration: const BoxDecoration(
+          borderRadius: _radius,
+          boxShadow: [_shadow],
+        ),
+        child: ClipRRect(
+          borderRadius: _radius,
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            child: AnimatedSize(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.bottomCenter,
+              clipBehavior: Clip.hardEdge,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: fillColor,
+                  borderRadius: _radius,
+                ),
+                child: IntrinsicWidth(
+                  child: widget.isOpen
+                      ? _buildMenu(isDark, colorKey)
+                      : _buildCollapsed(isDark),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCollapsed(bool isDark) {
+    return GestureDetector(
+      onTap: widget.onToggle,
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      child: SizedBox(
+        height: 35,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Center(
+            child: Text(
+              'View',
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: isDark ? Colors.white : Colors.black,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMenu(bool isDark, String colorKey) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < _items.length; i++) ...[
+          if (i > 0)
+            Container(
+              height: 0.5,
+              color: tokens.AppThemeTokens.cardBorder,
+            ),
+          _buildRow(_items[i], isDark),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildRow(String label, bool isDark) {
+    final isActive = label == _activeItem;
+    const accent = Color(0xFFEB5A01);
+    final textColor = isActive
+        ? accent
+        : (isDark ? Colors.white : tokens.AppThemeTokens.titleColor);
+
+    return GestureDetector(
+      onTap: () => widget.onSelect(label),
+      behavior: HitTestBehavior.opaque,
+      child: SizedBox(
+        height: 40,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                  color: textColor,
+                ),
+              ),
+              if (isActive) ...[
+                const SizedBox(width: 8),
+                const Icon(CupertinoIcons.checkmark, size: 14, color: accent),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }

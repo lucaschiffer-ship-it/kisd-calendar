@@ -538,17 +538,22 @@ class _CalendarScreenState extends State<CalendarScreen>
                   child: const SizedBox.expand(),
                 ),
               ),
-            // View button: left side, always visible above the Spaces mini bar.
+            // View button: hidden for now, functionality preserved.
             Positioned(
               bottom: 66,
               left: 16,
-              child: _ViewButton(
-                isOpen: _viewMenuOpen,
-                onToggle: () =>
-                    setState(() => _viewMenuOpen = !_viewMenuOpen),
-                onSelect: _selectViewMode,
-                navLevel: _navLevel,
-                dayViewMode: _dayViewMode,
+              child: Opacity(
+                opacity: 0.0,
+                child: IgnorePointer(
+                  child: _ViewButton(
+                    isOpen: _viewMenuOpen,
+                    onToggle: () =>
+                        setState(() => _viewMenuOpen = !_viewMenuOpen),
+                    onSelect: _selectViewMode,
+                    navLevel: _navLevel,
+                    dayViewMode: _dayViewMode,
+                  ),
+                ),
               ),
             ),
             // Today button: right side, always visible above the Spaces mini bar.
@@ -690,11 +695,11 @@ class _CalendarScreenState extends State<CalendarScreen>
                     Positioned(
                       left: pillLeft,
                       width: pillWidth,
-                      top: (cellH - 40) / 2, height: 40,
+                      top: (cellH - 36) / 2, height: 36,
                       child: Container(
                         decoration: BoxDecoration(
                           color: pillColor,
-                          borderRadius: BorderRadius.circular(22),
+                          borderRadius: BorderRadius.circular(18),
                         ),
                       ),
                     ),

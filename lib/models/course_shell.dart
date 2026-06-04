@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'one_off_event.dart';
+
 enum Weekday {
   mon, tue, wed, thu, fri, sat, sun;
 
@@ -45,6 +47,7 @@ class CourseShell {
   final String title;
   final String description;
   final List<MeetingTime> meetingTimes;
+  final List<OneOffEvent> oneOffEvents;
   final DateTime startDate;
   final DateTime endDate;
   final String? location;
@@ -60,6 +63,7 @@ class CourseShell {
     required this.title,
     required this.description,
     required this.meetingTimes,
+    this.oneOffEvents = const [],
     required this.startDate,
     required this.endDate,
     this.location,
@@ -76,6 +80,7 @@ class CourseShell {
     String? title,
     String? description,
     List<MeetingTime>? meetingTimes,
+    List<OneOffEvent>? oneOffEvents,
     DateTime? startDate,
     DateTime? endDate,
     String? location,
@@ -90,6 +95,7 @@ class CourseShell {
     title: title ?? this.title,
     description: description ?? this.description,
     meetingTimes: meetingTimes ?? this.meetingTimes,
+    oneOffEvents: oneOffEvents ?? this.oneOffEvents,
     startDate: startDate ?? this.startDate,
     endDate: endDate ?? this.endDate,
     location: location ?? this.location,

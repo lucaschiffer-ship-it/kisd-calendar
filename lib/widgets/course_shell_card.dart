@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../config/app_theme.dart' as tokens;
 import '../models/course_shell.dart';
+import '../models/one_off_event.dart';
 import '../services/spaces_browser.dart';
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
@@ -781,6 +782,24 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
   // ── Scroll controller (manual scroll via drag) ────────────────────────────
   final ScrollController _scrollController = ScrollController();
 
+  // ── Edit form controllers (Stage B.3) ────────────────────────────────────
+  late TextEditingController _titleCtrl;
+  late TextEditingController _locationCtrl;
+  late TextEditingController _lecturerCtrl;
+  late TextEditingController _descriptionCtrl;
+  // ignore: unused_field — used in Pass 2 (meeting list)
+  late List<MeetingTime> _editMeetings;
+  late DateTime _editStartDate;
+  late DateTime _editEndDate;
+  // ignore: unused_field — used in Pass 2 (one-off list)
+  late List<OneOffEvent> _editOneOffs;
+  // ignore: unused_field — used in Pass 2 (links list)
+  late List<CourseLink> _editLinks;
+  List<TextEditingController> _linkLabelCtrls = [];
+  List<TextEditingController> _linkUrlCtrls = [];
+  List<TextEditingController> _oneOffTitleCtrls = [];
+  List<TextEditingController> _oneOffLocationCtrls = [];
+
   @override
   void initState() {
     super.initState();
@@ -833,6 +852,8 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
       duration: const Duration(milliseconds: 280),
     );
     _editController.addListener(() => setState(() {}));
+
+    _initEditState();
   }
 
   @override
@@ -843,7 +864,42 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
     _closeController.dispose();
     _editController.dispose();
     _scrollController.dispose();
+    _titleCtrl.dispose();
+    _locationCtrl.dispose();
+    _lecturerCtrl.dispose();
+    _descriptionCtrl.dispose();
+    for (final c in _linkLabelCtrls) { c.dispose(); }
+    for (final c in _linkUrlCtrls) { c.dispose(); }
+    for (final c in _oneOffTitleCtrls) { c.dispose(); }
+    for (final c in _oneOffLocationCtrls) { c.dispose(); }
     super.dispose();
+  }
+
+  void _initEditState() {
+    final shell = widget.shell;
+    _titleCtrl = TextEditingController(text: shell.title);
+    _locationCtrl = TextEditingController(text: shell.location ?? '');
+    _lecturerCtrl = TextEditingController(text: shell.lecturer ?? '');
+    _descriptionCtrl = TextEditingController(text: shell.description);
+    _editMeetings = List.from(shell.meetingTimes);
+    _editStartDate = shell.startDate;
+    _editEndDate = shell.endDate;
+    _editOneOffs = List.from(shell.oneOffEvents);
+    _editLinks = List.from(shell.links);
+    _linkLabelCtrls = [
+      for (final l in shell.links) TextEditingController(text: l.label)
+    ];
+    _linkUrlCtrls = [
+      for (final l in shell.links) TextEditingController(text: l.url)
+    ];
+    _oneOffTitleCtrls = [
+      for (final e in shell.oneOffEvents)
+        TextEditingController(text: e.title ?? '')
+    ];
+    _oneOffLocationCtrls = [
+      for (final e in shell.oneOffEvents)
+        TextEditingController(text: e.location ?? '')
+    ];
   }
 
   void _toggleLike() {
@@ -1044,17 +1100,18 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                   ),
                                 ),
                               ],
-                              SingleChildScrollView(
-                                controller: _scrollController,
-                                physics: const NeverScrollableScrollPhysics(),
-                                clipBehavior: Clip.none,
-                            child: Padding(
-                            padding: lerpedPadding,
-                            child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            // ── 1. Top row (crossfades: read ↔ edit mode) ────
+                              Positioned.fill(
+                                child: Padding(
+                                  padding: EdgeInsets.only(
+                                    left: lerpedPadding.left,
+                                    right: lerpedPadding.right,
+                                    top: lerpedPadding.top,
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                            // ── 1. Top row (hoisted — always visible) ────────
                             Stack(
                               children: [
                                 // Read-mode row: title + heart
@@ -1173,6 +1230,30 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                 ),
                               ],
                             ),
+                            const SizedBox(height: 8),
+                            // ── Body: read/edit crossfade ─────────────────────
+                            Expanded(
+                              child: Stack(
+                                children: [
+                                  // Layer 1 — read mode
+                                  Positioned.fill(
+                                    child: IgnorePointer(
+                                      ignoring:
+                                          _editController.value > 0.5,
+                                      child: Opacity(
+                                        opacity: (1.0 -
+                                                _editController.value)
+                                            .clamp(0.0, 1.0),
+                                        child: SingleChildScrollView(
+                                          controller: _scrollController,
+                                          physics:
+                                              const NeverScrollableScrollPhysics(),
+                                          clipBehavior: Clip.none,
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
 
                             // ── 2. Schedule ───────────────────────────────────
                             if (shell.meetingTimes.isNotEmpty) ...[
@@ -1357,6 +1438,62 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                       ],
                                     ],
 
+                                    // One-off events
+                                    if (shell.oneOffEvents.isNotEmpty) ...[
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        'ONE-OFF EVENTS',
+                                        style: AppTextStyle.label.copyWith(
+                                          color: tokens.AppThemeTokens
+                                              .secondaryTextColor,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      ...shell.oneOffEvents.map((e) => Padding(
+                                            padding: const EdgeInsets.only(
+                                                bottom: 6),
+                                            child: RichText(
+                                              text: TextSpan(
+                                                style: const TextStyle(
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w400,
+                                                ),
+                                                children: [
+                                                  TextSpan(
+                                                    text: '${e.date.day.toString().padLeft(2, '0')}.${e.date.month.toString().padLeft(2, '0')}.  ',
+                                                    style: const TextStyle(
+                                                        color: AppColors.accent),
+                                                  ),
+                                                  TextSpan(
+                                                    text: '${CourseShellCard.fmtTime(e.startTime)}–${CourseShellCard.fmtTime(e.endTime)}  ',
+                                                    style: TextStyle(
+                                                        color: tokens
+                                                            .AppThemeTokens
+                                                            .titleColor),
+                                                  ),
+                                                  TextSpan(
+                                                    text: e.title ??
+                                                        'Special meeting',
+                                                    style: TextStyle(
+                                                        color: tokens
+                                                            .AppThemeTokens
+                                                            .titleColor),
+                                                  ),
+                                                  if (e.location != null)
+                                                    TextSpan(
+                                                      text:
+                                                          '  ${e.location}',
+                                                      style: TextStyle(
+                                                          color: tokens
+                                                              .AppThemeTokens
+                                                              .secondaryTextColor),
+                                                    ),
+                                                ],
+                                              ),
+                                            ),
+                                          )),
+                                    ],
+
                                     // Links
                                     if (shell.links.isNotEmpty) ...[
                                       const SizedBox(height: 12),
@@ -1445,10 +1582,366 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                 ),
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-                      ),
+                            const SizedBox(height: 24),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  // ── Layer 2: edit mode ────────────────────
+                                  Positioned.fill(
+                                    child: IgnorePointer(
+                                      ignoring: _editController.value < 0.5,
+                                      child: Opacity(
+                                        opacity: _editController.value
+                                            .clamp(0.0, 1.0),
+                                        child: SingleChildScrollView(
+                                          physics:
+                                              const ClampingScrollPhysics(),
+                                          padding: EdgeInsets.only(
+                                            bottom: MediaQuery.of(context)
+                                                    .viewInsets.bottom +
+                                                24,
+                                          ),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              // A: Title
+                                              TextField(
+                                                controller: _titleCtrl,
+                                                maxLines: null,
+                                                style: AppTextStyle.cardTitle
+                                                    .copyWith(
+                                                  fontSize: style == 'vivid'
+                                                      ? 27
+                                                      : 23,
+                                                  color: tokens.AppThemeTokens
+                                                      .titleColor,
+                                                  fontWeight: style == 'vivid'
+                                                      ? FontWeight.w700
+                                                      : FontWeight.w400,
+                                                ),
+                                                decoration:
+                                                    _underlineDecoration(
+                                                  tokens.AppThemeTokens
+                                                      .secondaryTextColor,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 16),
+                                              // B: Schedule
+                                              const _EditSectionLabel(
+                                                  'SCHEDULE'),
+                                              ...List.generate(
+                                                _editMeetings.length,
+                                                (i) => _MeetingEditRow(
+                                                  meeting: _editMeetings[i],
+                                                  onChanged: (m) => setState(
+                                                      () =>
+                                                          _editMeetings[i] = m),
+                                                  onDelete: () => setState(() =>
+                                                      _editMeetings.removeAt(i)),
+                                                ),
+                                              ),
+                                              _AddRowButton(
+                                                '+ Add meeting',
+                                                () => setState(
+                                                  () => _editMeetings.add(
+                                                    const MeetingTime(
+                                                      weekday: Weekday.mon,
+                                                      startTime: TimeOfDay(
+                                                          hour: 9, minute: 0),
+                                                      endTime: TimeOfDay(
+                                                          hour: 12, minute: 0),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                              const SizedBox(height: 16),
+                                              // C: Timeframe
+                                              const _EditSectionLabel(
+                                                  'TIMEFRAME'),
+                                              const SizedBox(height: 4),
+                                              Row(
+                                                children: [
+                                                  Expanded(
+                                                    child: InkWell(
+                                                      onTap: () async {
+                                                        final picked =
+                                                            await showDatePicker(
+                                                          context: context,
+                                                          initialDate:
+                                                              _editStartDate,
+                                                          firstDate:
+                                                              DateTime(2020),
+                                                          lastDate:
+                                                              DateTime(2030),
+                                                        );
+                                                        if (picked != null &&
+                                                            mounted) {
+                                                          setState(() =>
+                                                              _editStartDate =
+                                                                  picked);
+                                                        }
+                                                      },
+                                                      child: Container(
+                                                        padding: const EdgeInsets
+                                                            .symmetric(
+                                                            vertical: 8),
+                                                        decoration:
+                                                            BoxDecoration(
+                                                          border: Border(
+                                                            bottom: BorderSide(
+                                                              color: tokens
+                                                                  .AppThemeTokens
+                                                                  .secondaryTextColor
+                                                                  .withValues(
+                                                                      alpha:
+                                                                          0.4),
+                                                              width: 0.5,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                        child: Text(
+                                                          '${_editStartDate.day.toString().padLeft(2, '0')}'
+                                                          '.${_editStartDate.month.toString().padLeft(2, '0')}'
+                                                          '.${_editStartDate.year}',
+                                                          style: TextStyle(
+                                                            fontSize: 15,
+                                                            fontWeight:
+                                                                FontWeight.w400,
+                                                            color: tokens
+                                                                .AppThemeTokens
+                                                                .titleColor,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  Padding(
+                                                    padding:
+                                                        const EdgeInsets
+                                                            .symmetric(
+                                                            horizontal: 8),
+                                                    child: Text(
+                                                      '—',
+                                                      style: TextStyle(
+                                                        color: tokens
+                                                            .AppThemeTokens
+                                                            .secondaryTextColor,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  Expanded(
+                                                    child: InkWell(
+                                                      onTap: () async {
+                                                        final picked =
+                                                            await showDatePicker(
+                                                          context: context,
+                                                          initialDate:
+                                                              _editEndDate,
+                                                          firstDate:
+                                                              DateTime(2020),
+                                                          lastDate:
+                                                              DateTime(2030),
+                                                        );
+                                                        if (picked != null &&
+                                                            mounted) {
+                                                          setState(() =>
+                                                              _editEndDate =
+                                                                  picked);
+                                                        }
+                                                      },
+                                                      child: Container(
+                                                        padding: const EdgeInsets
+                                                            .symmetric(
+                                                            vertical: 8),
+                                                        decoration:
+                                                            BoxDecoration(
+                                                          border: Border(
+                                                            bottom: BorderSide(
+                                                              color: tokens
+                                                                  .AppThemeTokens
+                                                                  .secondaryTextColor
+                                                                  .withValues(
+                                                                      alpha:
+                                                                          0.4),
+                                                              width: 0.5,
+                                                            ),
+                                                          ),
+                                                        ),
+                                                        child: Text(
+                                                          '${_editEndDate.day.toString().padLeft(2, '0')}'
+                                                          '.${_editEndDate.month.toString().padLeft(2, '0')}'
+                                                          '.${_editEndDate.year}',
+                                                          style: TextStyle(
+                                                            fontSize: 15,
+                                                            fontWeight:
+                                                                FontWeight.w400,
+                                                            color: tokens
+                                                                .AppThemeTokens
+                                                                .titleColor,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              const SizedBox(height: 16),
+                                              // D: Location
+                                              const _EditSectionLabel(
+                                                  'LOCATION'),
+                                              TextField(
+                                                controller: _locationCtrl,
+                                                style: TextStyle(
+                                                  fontSize: 15,
+                                                  fontWeight: FontWeight.w400,
+                                                  color: tokens.AppThemeTokens
+                                                      .titleColor,
+                                                ),
+                                                decoration:
+                                                    _underlineDecoration(
+                                                  tokens.AppThemeTokens
+                                                      .secondaryTextColor,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 16),
+                                              // E: Lecturer
+                                              const _EditSectionLabel(
+                                                  'LECTURER'),
+                                              TextField(
+                                                controller: _lecturerCtrl,
+                                                style: TextStyle(
+                                                  fontSize: 15,
+                                                  fontWeight: FontWeight.w400,
+                                                  color: tokens.AppThemeTokens
+                                                      .titleColor,
+                                                ),
+                                                decoration:
+                                                    _underlineDecoration(
+                                                  tokens.AppThemeTokens
+                                                      .secondaryTextColor,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 16),
+                                              // F: Description
+                                              const _EditSectionLabel(
+                                                  'DESCRIPTION'),
+                                              TextField(
+                                                controller: _descriptionCtrl,
+                                                minLines: 6,
+                                                maxLines: 12,
+                                                style: TextStyle(
+                                                  fontSize: 15,
+                                                  fontWeight: FontWeight.w400,
+                                                  color: tokens.AppThemeTokens
+                                                      .titleColor,
+                                                ),
+                                                decoration:
+                                                    _underlineDecoration(
+                                                  tokens.AppThemeTokens
+                                                      .secondaryTextColor,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 16),
+                                              // G: One-off events
+                                              const _EditSectionLabel(
+                                                  'ONE-OFF EVENTS'),
+                                              ...List.generate(
+                                                _editOneOffs.length,
+                                                (i) => _OneOffEditRow(
+                                                  event: _editOneOffs[i],
+                                                  titleCtrl:
+                                                      _oneOffTitleCtrls[i],
+                                                  locationCtrl:
+                                                      _oneOffLocationCtrls[i],
+                                                  courseTitle:
+                                                      widget.shell.title,
+                                                  courseLocation:
+                                                      widget.shell.location,
+                                                  onChanged: (e) => setState(
+                                                      () =>
+                                                          _editOneOffs[i] = e),
+                                                  onDelete: () =>
+                                                      setState(() {
+                                                    _editOneOffs.removeAt(i);
+                                                    _oneOffTitleCtrls
+                                                        .removeAt(i)
+                                                        .dispose();
+                                                    _oneOffLocationCtrls
+                                                        .removeAt(i)
+                                                        .dispose();
+                                                  }),
+                                                ),
+                                              ),
+                                              _AddRowButton(
+                                                '+ Add one-off event',
+                                                () => setState(() {
+                                                  _editOneOffs.add(OneOffEvent(
+                                                    id: DateTime.now()
+                                                        .microsecondsSinceEpoch
+                                                        .toString(),
+                                                    date: DateTime.now(),
+                                                    startTime: const TimeOfDay(
+                                                        hour: 9, minute: 0),
+                                                    endTime: const TimeOfDay(
+                                                        hour: 12, minute: 0),
+                                                  ));
+                                                  _oneOffTitleCtrls.add(
+                                                      TextEditingController());
+                                                  _oneOffLocationCtrls.add(
+                                                      TextEditingController());
+                                                }),
+                                              ),
+                                              const SizedBox(height: 16),
+                                              // H: Links
+                                              const _EditSectionLabel('LINKS'),
+                                              ...List.generate(
+                                                _editLinks.length,
+                                                (i) => _LinkEditRow(
+                                                  labelCtrl: _linkLabelCtrls[i],
+                                                  urlCtrl: _linkUrlCtrls[i],
+                                                  onDelete: () =>
+                                                      setState(() {
+                                                    _editLinks.removeAt(i);
+                                                    _linkLabelCtrls
+                                                        .removeAt(i)
+                                                        .dispose();
+                                                    _linkUrlCtrls
+                                                        .removeAt(i)
+                                                        .dispose();
+                                                  }),
+                                                ),
+                                              ),
+                                              _AddRowButton(
+                                                '+ Add link',
+                                                () => setState(() {
+                                                  _editLinks.add(
+                                                      const CourseLink(
+                                                          label: '', url: ''));
+                                                  _linkLabelCtrls.add(
+                                                      TextEditingController());
+                                                  _linkUrlCtrls.add(
+                                                      TextEditingController());
+                                                }),
+                                              ),
+                                              const SizedBox(height: 16),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                                    ],
+                                  ),
+                                ),
+                              ),
                             ],
                           ),
                     ),
@@ -1459,6 +1952,370 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
           ),
         );
       },
+    );
+  }
+}
+
+// ─── Edit form helpers ────────────────────────────────────────────────────────
+
+InputDecoration _underlineDecoration(Color secondary) => InputDecoration(
+      border: UnderlineInputBorder(
+        borderSide:
+            BorderSide(color: secondary.withValues(alpha: 0.4), width: 0.5),
+      ),
+      enabledBorder: UnderlineInputBorder(
+        borderSide:
+            BorderSide(color: secondary.withValues(alpha: 0.4), width: 0.5),
+      ),
+      focusedBorder: const UnderlineInputBorder(
+        borderSide: BorderSide(color: AppColors.accent, width: 1.0),
+      ),
+      contentPadding: const EdgeInsets.symmetric(vertical: 8),
+      isDense: true,
+    );
+
+class _EditSectionLabel extends StatelessWidget {
+  const _EditSectionLabel(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(top: 8, bottom: 4),
+        child: Text(
+          text,
+          style: AppTextStyle.label.copyWith(
+            color: tokens.AppThemeTokens.secondaryTextColor,
+          ),
+        ),
+      );
+}
+
+class _AddRowButton extends StatelessWidget {
+  const _AddRowButton(this.label, this.onTap);
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => TextButton(
+        onPressed: onTap,
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.add, size: 14, color: AppColors.accent),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: AppColors.accent,
+              ),
+            ),
+          ],
+        ),
+      );
+}
+
+class _MeetingEditRow extends StatelessWidget {
+  const _MeetingEditRow({
+    required this.meeting,
+    required this.onDelete,
+    required this.onChanged,
+  });
+
+  final MeetingTime meeting;
+  final VoidCallback onDelete;
+  final ValueChanged<MeetingTime> onChanged;
+
+  static const _labels = [
+    'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final secondary = tokens.AppThemeTokens.secondaryTextColor;
+    final titleColor = tokens.AppThemeTokens.titleColor;
+    final borderDeco = BoxDecoration(
+      border: Border(
+        bottom: BorderSide(
+          color: secondary.withValues(alpha: 0.4),
+          width: 0.5,
+        ),
+      ),
+    );
+
+    Widget timePill(TimeOfDay t, ValueChanged<TimeOfDay> onPick) => InkWell(
+          onTap: () async {
+            final picked =
+                await showTimePicker(context: context, initialTime: t);
+            if (picked != null) onPick(picked);
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            decoration: borderDeco,
+            child: Text(
+              CourseShellCard.fmtTime(t),
+              style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w400,
+                  color: titleColor),
+            ),
+          ),
+        );
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          DropdownButton<Weekday>(
+            value: meeting.weekday,
+            isDense: true,
+            underline: Container(
+              height: 0.5,
+              color: secondary.withValues(alpha: 0.4),
+            ),
+            style: TextStyle(fontSize: 14, color: titleColor),
+            items: Weekday.values
+                .map((w) => DropdownMenuItem(
+                      value: w,
+                      child: Text(_labels[w.index]),
+                    ))
+                .toList(),
+            onChanged: (v) {
+              if (v != null) onChanged(meeting.copyWith(weekday: v));
+            },
+          ),
+          const SizedBox(width: 8),
+          timePill(meeting.startTime,
+              (t) => onChanged(meeting.copyWith(startTime: t))),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text('–', style: TextStyle(color: secondary)),
+          ),
+          timePill(
+              meeting.endTime, (t) => onChanged(meeting.copyWith(endTime: t))),
+          const Spacer(),
+          IconButton(
+            icon: Icon(Icons.delete_outline, size: 20, color: secondary),
+            onPressed: onDelete,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OneOffEditRow extends StatelessWidget {
+  const _OneOffEditRow({
+    required this.event,
+    required this.titleCtrl,
+    required this.locationCtrl,
+    required this.courseTitle,
+    this.courseLocation,
+    required this.onDelete,
+    required this.onChanged,
+  });
+
+  final OneOffEvent event;
+  final TextEditingController titleCtrl;
+  final TextEditingController locationCtrl;
+  final String courseTitle;
+  final String? courseLocation;
+  final VoidCallback onDelete;
+  final ValueChanged<OneOffEvent> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final secondary = tokens.AppThemeTokens.secondaryTextColor;
+    final titleColor = tokens.AppThemeTokens.titleColor;
+    final borderDeco = BoxDecoration(
+      border: Border(
+        bottom: BorderSide(
+          color: secondary.withValues(alpha: 0.4),
+          width: 0.5,
+        ),
+      ),
+    );
+
+    Widget timePill(TimeOfDay t, ValueChanged<TimeOfDay> onPick) => InkWell(
+          onTap: () async {
+            final picked =
+                await showTimePicker(context: context, initialTime: t);
+            if (picked != null) onPick(picked);
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            decoration: borderDeco,
+            child: Text(
+              CourseShellCard.fmtTime(t),
+              style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w400,
+                  color: titleColor),
+            ),
+          ),
+        );
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              InkWell(
+                onTap: () async {
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: event.date,
+                    firstDate: DateTime(2020),
+                    lastDate: DateTime(2030),
+                  );
+                  if (picked != null) onChanged(event.copyWith(date: picked));
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  decoration: borderDeco,
+                  child: Text(
+                    '${event.date.day.toString().padLeft(2, '0')}'
+                    '.${event.date.month.toString().padLeft(2, '0')}'
+                    '.${event.date.year}',
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w400,
+                        color: titleColor),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              timePill(event.startTime,
+                  (t) => onChanged(event.copyWith(startTime: t))),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text('–', style: TextStyle(color: secondary)),
+              ),
+              timePill(event.endTime,
+                  (t) => onChanged(event.copyWith(endTime: t))),
+              const Spacer(),
+              IconButton(
+                icon: Icon(Icons.delete_outline, size: 20, color: secondary),
+                onPressed: onDelete,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: titleCtrl,
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w400,
+                      color: titleColor),
+                  decoration: _underlineDecoration(secondary).copyWith(
+                    hintText: courseTitle,
+                    hintStyle:
+                        TextStyle(color: secondary.withValues(alpha: 0.6)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: locationCtrl,
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w400,
+                      color: titleColor),
+                  decoration: _underlineDecoration(secondary).copyWith(
+                    hintText: courseLocation ?? 'Location',
+                    hintStyle:
+                        TextStyle(color: secondary.withValues(alpha: 0.6)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LinkEditRow extends StatelessWidget {
+  const _LinkEditRow({
+    required this.labelCtrl,
+    required this.urlCtrl,
+    required this.onDelete,
+  });
+
+  final TextEditingController labelCtrl;
+  final TextEditingController urlCtrl;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final secondary = tokens.AppThemeTokens.secondaryTextColor;
+    final titleColor = tokens.AppThemeTokens.titleColor;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: labelCtrl,
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w400,
+                      color: titleColor),
+                  decoration: _underlineDecoration(secondary).copyWith(
+                    hintText: 'Label',
+                    hintStyle:
+                        TextStyle(color: secondary.withValues(alpha: 0.6)),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                TextField(
+                  controller: urlCtrl,
+                  keyboardType: TextInputType.url,
+                  style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w400,
+                      color: titleColor),
+                  decoration: _underlineDecoration(secondary).copyWith(
+                    hintText: 'https://...',
+                    hintStyle:
+                        TextStyle(color: secondary.withValues(alpha: 0.6)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            icon: Icon(Icons.delete_outline, size: 20, color: secondary),
+            onPressed: onDelete,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+        ],
+      ),
     );
   }
 }

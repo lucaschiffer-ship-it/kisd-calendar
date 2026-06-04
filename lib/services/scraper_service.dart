@@ -7,6 +7,7 @@ import 'package:html/parser.dart' show parse;
 import 'package:http/http.dart' as http;
 
 import '../models/course_shell.dart';
+import '../models/one_off_event.dart';
 import '../models/kisd_event.dart';
 import 'cache_service.dart';
 import 'calendar_service.dart';
@@ -165,11 +166,19 @@ class ScraperService extends ChangeNotifier {
       final shells = scraped.map((s) {
         final cached = cachedById[s.id];
         if (cached == null) return s; // new course → isFavourite: true (default)
+        // Always preserve any user-added one-off events from the cache.
+        final cachedEvents = (cached['oneOffEvents'] as List<dynamic>?)
+                ?.map((e) => OneOffEvent.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            const <OneOffEvent>[];
         final wasMyCourse = (cached['isMyCourse'] as bool?) ?? false;
-        if (!wasMyCourse) return s; // was non-enrolled → treat as newly enrolled, keep true
+        if (!wasMyCourse) {
+          // Was non-enrolled → treat as newly enrolled, keep isFavourite: true.
+          return cachedEvents.isEmpty ? s : s.copyWith(oneOffEvents: cachedEvents);
+        }
         // Was already enrolled: honour the user's explicit isFavourite toggle.
         final cachedFav = (cached['isFavourite'] as bool?) ?? true;
-        return s.copyWith(isFavourite: cachedFav);
+        return s.copyWith(isFavourite: cachedFav, oneOffEvents: cachedEvents);
       }).toList();
 
       await saveToCache(shells);
@@ -902,6 +911,7 @@ class ScraperService extends ChangeNotifier {
         'isLiked': s.isLiked,
         'isMyCourse': s.isMyCourse,
         'isFavourite': s.isFavourite,
+        'oneOffEvents': s.oneOffEvents.map((e) => e.toJson()).toList(),
       };
 
   static CourseShell _fromJson(Map<String, dynamic> j) => CourseShell(
@@ -937,6 +947,10 @@ class ScraperService extends ChangeNotifier {
         isLiked: (j['isLiked'] as bool?) ?? false,
         isMyCourse: (j['isMyCourse'] as bool?) ?? false,
         isFavourite: (j['isFavourite'] as bool?) ?? false,
+        oneOffEvents: (j['oneOffEvents'] as List<dynamic>?)
+                ?.map((e) => OneOffEvent.fromJson(e as Map<String, dynamic>))
+                .toList() ??
+            const [],
       );
 
   // ─── Parse a date string from the wp-admin events table ──────────────────

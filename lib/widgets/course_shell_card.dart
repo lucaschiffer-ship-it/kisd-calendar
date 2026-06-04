@@ -748,6 +748,14 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
   // ── Description expand (Stage 2) ─────────────────────────────────────────
   bool _descriptionExpanded = false;
 
+  // ── Edit mode (Stage A) ──────────────────────────────────────────────────
+  late AnimationController _editController;
+  // ignore: unused_element — referenced by Stage B
+  bool get _isEditing => _editController.value > 0.0;
+
+  // ── Scroll controller (manual scroll via drag) ────────────────────────────
+  final ScrollController _scrollController = ScrollController();
+
   @override
   void initState() {
     super.initState();
@@ -794,6 +802,12 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
         Navigator.of(context).pop();
       }
     });
+
+    _editController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
+    );
+    _editController.addListener(() => setState(() {}));
   }
 
   @override
@@ -802,6 +816,8 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
     _curved.dispose();
     _snapBackCtrl.dispose();
     _closeController.dispose();
+    _editController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -813,23 +829,52 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
   }
 
   void _onDragStart(DragStartDetails _) {
+    if (_editController.value > 0.5) return;
     setState(() {
       _isDragging = true;
       _dragDistance = 0.0;
+      _dragProgress = 0.0;
     });
   }
 
   void _onDragUpdate(DragUpdateDetails d) {
+    if (_editController.value > 0.5) return;
     final screenHeight = MediaQuery.of(context).size.height;
-    setState(() {
-      _dragDistance =
-          (_dragDistance + d.delta.dy).clamp(0.0, double.infinity);
-      _dragProgress =
-          (_dragDistance / (screenHeight * 0.35)).clamp(0.0, 1.0);
-    });
+    final delta = d.delta.dy;
+
+    // If already in dismiss mode, keep accumulating dismiss progress.
+    if (_dragDistance > 0) {
+      setState(() {
+        _dragDistance = (_dragDistance + delta).clamp(0.0, double.infinity);
+        _dragProgress = (_dragDistance / (screenHeight * 0.35)).clamp(0.0, 1.0);
+      });
+      return;
+    }
+
+    // Try to route the drag to the scroll view first.
+    if (_scrollController.hasClients &&
+        _scrollController.position.maxScrollExtent > 0) {
+      final offset = _scrollController.offset;
+      if (delta < 0 || offset > 0) {
+        // Scrolling up (delta<0) or scrolling back down while not at top.
+        final newOffset =
+            (offset - delta).clamp(0.0, _scrollController.position.maxScrollExtent);
+        _scrollController.jumpTo(newOffset);
+        return;
+      }
+    }
+
+    // At scroll top, dragging down → dismiss.
+    if (delta > 0) {
+      setState(() {
+        _dragDistance = (_dragDistance + delta).clamp(0.0, double.infinity);
+        _dragProgress = (_dragDistance / (screenHeight * 0.35)).clamp(0.0, 1.0);
+      });
+    }
   }
 
   void _onDragEnd(DragEndDetails d) {
+    if (_editController.value > 0.5) return;
     if (_dragProgress > 0.35 || d.velocity.pixelsPerSecond.dy > 800) {
       _closeStartProgress = _dragProgress;
       _closeController.forward(from: 0);
@@ -859,13 +904,17 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
     final radius = style == 'vivid' ? 10.0 : 5.0;
     final shell = widget.shell;
 
-    final expandedW = size.width * 0.9;
-    final expandedH = size.height * 0.6;
-    final expandedRect = Rect.fromLTWH(
-      (size.width - expandedW) / 2,
-      (size.height - expandedH) / 2,
-      expandedW,
-      expandedH,
+    final readRect = Rect.fromLTWH(
+      (size.width - size.width * 0.9) / 2,
+      (size.height - size.height * 0.6) / 2,
+      size.width * 0.9,
+      size.height * 0.6,
+    );
+    final editRect = Rect.fromLTWH(
+      (size.width - size.width * 0.92) / 2,
+      size.height * 0.05,
+      size.width * 0.92,
+      size.height * 0.90,
     );
 
     return AnimatedBuilder(
@@ -875,11 +924,14 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
             ? (1.0 - _dragProgress).clamp(0.0, 1.0)
             : _curved.value;
 
-        final lerpedRect =
-            Rect.lerp(widget.originRect, expandedRect, t)!;
+        final double editC =
+            Curves.easeOutCubic.transform(_editController.value);
+
+        final targetRect = Rect.lerp(readRect, editRect, editC)!;
+        final lerpedRect = Rect.lerp(widget.originRect, targetRect, t)!;
         final lerpedPadding = EdgeInsets.lerp(
           const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
-          const EdgeInsets.all(24),
+          EdgeInsets.all(lerpDouble(24, 32, editC)!),
           t,
         )!;
         final newContentOpacity = ((t - 0.5) / 0.5).clamp(0.0, 1.0);
@@ -968,6 +1020,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                 ),
                               ],
                               SingleChildScrollView(
+                                controller: _scrollController,
                                 physics: const NeverScrollableScrollPhysics(),
                                 clipBehavior: Clip.none,
                             child: Padding(
@@ -976,51 +1029,120 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            // ── 1. Title + heart ─────────────────────────────
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                            // ── 1. Top row (crossfades: read ↔ edit mode) ────
+                            Stack(
                               children: [
-                                Expanded(
-                                  child: AnimatedSize(
-                                    duration:
-                                        const Duration(milliseconds: 100),
-                                    alignment: Alignment.topLeft,
-                                    child: Text(
-                                      shell.title,
-                                      maxLines: titleMaxLines,
-                                      overflow: titleMaxLines < 10
-                                          ? TextOverflow.ellipsis
-                                          : TextOverflow.visible,
-                                      style: AppTextStyle.cardTitle.copyWith(
-                                        fontSize:
-                                            style == 'vivid' ? 27 : 23,
-                                        color:
-                                            tokens.AppThemeTokens.titleColor,
-                                        fontWeight: style == 'vivid'
-                                            ? FontWeight.w700
-                                            : FontWeight.w400,
-                                      ),
+                                // Read-mode row: title + heart
+                                IgnorePointer(
+                                  ignoring: _editController.value > 0.5,
+                                  child: Opacity(
+                                    opacity: (1.0 - _editController.value)
+                                        .clamp(0.0, 1.0),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(
+                                          child: AnimatedSize(
+                                            duration: const Duration(
+                                                milliseconds: 100),
+                                            alignment: Alignment.topLeft,
+                                            child: Text(
+                                              shell.title,
+                                              maxLines: titleMaxLines,
+                                              overflow: titleMaxLines < 10
+                                                  ? TextOverflow.ellipsis
+                                                  : TextOverflow.visible,
+                                              style: AppTextStyle.cardTitle
+                                                  .copyWith(
+                                                fontSize: style == 'vivid'
+                                                    ? 27
+                                                    : 23,
+                                                color: tokens
+                                                    .AppThemeTokens.titleColor,
+                                                fontWeight: style == 'vivid'
+                                                    ? FontWeight.w700
+                                                    : FontWeight.w400,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        GestureDetector(
+                                          onTap: _toggleLike,
+                                          behavior: HitTestBehavior.opaque,
+                                          child: Padding(
+                                            padding: const EdgeInsets.only(
+                                                left: 14, top: 3),
+                                            child: ScaleTransition(
+                                              scale: _heartScale,
+                                              child: Icon(
+                                                _liked
+                                                    ? CupertinoIcons.heart_fill
+                                                    : CupertinoIcons.heart,
+                                                size: 22,
+                                                color: _liked
+                                                    ? AppColors.heartActive
+                                                    : tokens.AppThemeTokens
+                                                        .secondaryTextColor,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ),
-                                GestureDetector(
-                                  onTap: _toggleLike,
-                                  behavior: HitTestBehavior.opaque,
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(
-                                        left: 14, top: 3),
-                                    child: ScaleTransition(
-                                      scale: _heartScale,
-                                      child: Icon(
-                                        _liked
-                                            ? CupertinoIcons.heart_fill
-                                            : CupertinoIcons.heart,
-                                        size: 22,
-                                        color: _liked
-                                            ? AppColors.heartActive
-                                            : tokens.AppThemeTokens
-                                                .secondaryTextColor,
-                                      ),
+                                // Edit-mode row: Cancel + Save
+                                IgnorePointer(
+                                  ignoring: _editController.value < 0.5,
+                                  child: Opacity(
+                                    opacity:
+                                        _editController.value.clamp(0.0, 1.0),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        TextButton(
+                                          onPressed: () =>
+                                              _editController.reverse(),
+                                          style: TextButton.styleFrom(
+                                            padding: const EdgeInsets.symmetric(
+                                                vertical: 12),
+                                            minimumSize: Size.zero,
+                                            tapTargetSize: MaterialTapTargetSize
+                                                .shrinkWrap,
+                                          ),
+                                          child: Text(
+                                            'Cancel',
+                                            style: TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w500,
+                                              color: tokens
+                                                  .AppThemeTokens.titleColor,
+                                            ),
+                                          ),
+                                        ),
+                                        TextButton(
+                                          onPressed: () {
+                                            // TODO Stage C: persist edits.
+                                          },
+                                          style: TextButton.styleFrom(
+                                            padding: const EdgeInsets.symmetric(
+                                                vertical: 12),
+                                            minimumSize: Size.zero,
+                                            tapTargetSize: MaterialTapTargetSize
+                                                .shrinkWrap,
+                                          ),
+                                          child: const Text(
+                                            'Save',
+                                            style: TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w500,
+                                              color: AppColors.accent,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ),
@@ -1179,26 +1301,33 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                       }),
                                     ],
 
-                                    // Edit button
-                                    Align(
-                                      alignment: Alignment.centerRight,
-                                      child: TextButton(
-                                        onPressed: () {
-                                          // TODO Stage 4: in-place editing.
-                                        },
-                                        style: TextButton.styleFrom(
-                                          padding: EdgeInsets.zero,
-                                          minimumSize: Size.zero,
-                                          tapTargetSize: MaterialTapTargetSize
-                                              .shrinkWrap,
-                                        ),
-                                        child: Text(
-                                          'Edit',
-                                          style: TextStyle(
-                                            fontSize: 13,
-                                            fontWeight: FontWeight.w400,
-                                            color: tokens.AppThemeTokens
-                                                .secondaryTextColor,
+                                    // Edit button (fades out as edit mode opens)
+                                    IgnorePointer(
+                                      ignoring: _editController.value > 0.5,
+                                      child: Opacity(
+                                        opacity: (1.0 - _editController.value)
+                                            .clamp(0.0, 1.0),
+                                        child: Align(
+                                          alignment: Alignment.centerRight,
+                                          child: TextButton(
+                                            onPressed: () =>
+                                                _editController.forward(),
+                                            style: TextButton.styleFrom(
+                                              padding: EdgeInsets.zero,
+                                              minimumSize: Size.zero,
+                                              tapTargetSize:
+                                                  MaterialTapTargetSize
+                                                      .shrinkWrap,
+                                            ),
+                                            child: Text(
+                                              'Edit',
+                                              style: TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w400,
+                                                color: tokens.AppThemeTokens
+                                                    .secondaryTextColor,
+                                              ),
+                                            ),
                                           ),
                                         ),
                                       ),

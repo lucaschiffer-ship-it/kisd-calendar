@@ -393,12 +393,16 @@ class ScraperService extends ChangeNotifier {
       String? location = (map['location'] as String?)?.trim();
       String? spaceUrl;
       String? description;
+      String? lecturer;
+      String? timeframe;
       final detailUrl = (map['detailUrl'] as String?)?.trim() ?? '';
       if (detailUrl.isNotEmpty) {
         final detail = await _fetchDetailData(ctrl, detailUrl);
         if (location == null || location.isEmpty) location = detail.location;
         spaceUrl = detail.spaceUrl;
         description = detail.description;
+        lecturer = detail.lecturer;
+        timeframe = detail.timeframe;
       }
 
       final shell = _buildShell(
@@ -406,6 +410,8 @@ class ScraperService extends ChangeNotifier {
         location?.trim().isEmpty == true ? null : location?.trim(),
         spaceUrl: spaceUrl,
         detailDesc: description,
+        lecturer: lecturer,
+        detailTimeframe: timeframe,
         isMyCourse: isMyCourse,
         isFavourite: isMyCourse,
       );
@@ -419,7 +425,7 @@ class ScraperService extends ChangeNotifier {
     return shells;
   }
 
-  Future<({String? location, String? spaceUrl, String? description})>
+  Future<({String? location, String? spaceUrl, String? description, String? lecturer, String? timeframe})>
       _fetchDetailData(InAppWebViewController ctrl, String detailUrl) async {
     try {
       final result = await ctrl.callAsyncJavaScript(
@@ -428,23 +434,27 @@ class ScraperService extends ChangeNotifier {
       ).timeout(const Duration(seconds: 15));
       final val = result?.value;
       if (val == null || val.toString() == 'null' || val.toString().isEmpty) {
-        return (location: null, spaceUrl: null, description: null);
+        return (location: null, spaceUrl: null, description: null, lecturer: null, timeframe: null);
       }
       final map = json.decode(val.toString()) as Map<String, dynamic>;
-      final loc  = (map['location']    as String?)?.trim();
-      final slug = (map['spaceSlug']   as String?)?.trim();
-      final desc = (map['description'] as String?)?.trim();
+      final loc    = (map['location']    as String?)?.trim();
+      final slug   = (map['spaceSlug']   as String?)?.trim();
+      final desc   = (map['description'] as String?)?.trim();
+      final lctr   = (map['lecturer']    as String?)?.trim();
+      final tframe = (map['timeframe']   as String?)?.trim();
       final spaceUrl = (slug != null && slug.isNotEmpty)
           ? (slug.startsWith('http') ? slug : 'https://spaces.kisd.de/$slug/')
           : null;
       return (
-        location:    loc?.isEmpty  == true ? null : loc,
+        location:    loc?.isEmpty    == true ? null : loc,
         spaceUrl:    spaceUrl,
-        description: desc?.isEmpty == true ? null : desc,
+        description: desc?.isEmpty   == true ? null : desc,
+        lecturer:    lctr?.isEmpty   == true ? null : lctr,
+        timeframe:   tframe?.isEmpty == true ? null : tframe,
       );
     } catch (e) {
       print('[scraper] detail fetch failed for $detailUrl: $e');
-      return (location: null, spaceUrl: null, description: null);
+      return (location: null, spaceUrl: null, description: null, lecturer: null, timeframe: null);
     }
   }
 
@@ -639,9 +649,41 @@ class ScraperService extends ChangeNotifier {
         }
       }
 
-      return JSON.stringify({ location, spaceSlug, description });
+      // Lecturer: walk up to the .cell wrapper, then find .lecturer-avatars inside it.
+      // Names live in .avatar-name divs — NOT in <a> tags (those are secondary actions).
+      let lecturer = null;
+      doc.querySelectorAll('div.info-label').forEach(function(label) {
+        if (!lecturer && /lecturers?/i.test(label.textContent)) {
+          const wrapper = label.parentElement;
+          if (wrapper) {
+            const avatarsEl = wrapper.querySelector('.lecturer-avatars');
+            if (avatarsEl) {
+              const nameEls = Array.from(avatarsEl.querySelectorAll('.avatar-name'));
+              if (nameEls.length > 0) {
+                const names = nameEls
+                  .map(el => el.textContent.replace(/\s+/g, ' ').trim())
+                  .filter(Boolean);
+                if (names.length) lecturer = names.join(', ');
+              }
+              // Fallback: img alt text
+              if (!lecturer) {
+                const imgs = Array.from(avatarsEl.querySelectorAll('img.user-avatar'));
+                const alts = imgs
+                  .map(img => (img.getAttribute('alt') || '').trim())
+                  .filter(Boolean);
+                if (alts.length) lecturer = alts.join(', ');
+              }
+            }
+          }
+        }
+      });
+
+      // Timeframe: plain-text date range, e.g. "21.04.2026 — 19.06.2026"
+      const timeframe = valForLabel(/timeframe/i);
+
+      return JSON.stringify({ location, spaceSlug, description, lecturer, timeframe });
     } catch (e) {
-      return JSON.stringify({ location: null, spaceSlug: null, description: null });
+      return JSON.stringify({ location: null, spaceSlug: null, description: null, lecturer: null, timeframe: null });
     }
   """;
 
@@ -652,6 +694,8 @@ class ScraperService extends ChangeNotifier {
     String? location, {
     String? spaceUrl,
     String? detailDesc,
+    String? lecturer,
+    String? detailTimeframe,
     bool isMyCourse = false,
     bool isFavourite = false,
   }) {
@@ -676,7 +720,10 @@ class ScraperService extends ChangeNotifier {
             ?.map((e) => e.toString())
             .toList() ??
         [];
-    final (startDate, endDate) = _parseDates(dateTexts);
+    final (startDate, endDate) =
+        (detailTimeframe != null && detailTimeframe.isNotEmpty)
+            ? _parseDates([detailTimeframe])
+            : _parseDates(dateTexts);
 
     final spacesUrl = (map['spacesUrl'] as String?)?.trim() ?? '';
     final detailUrl = (map['detailUrl'] as String?)?.trim() ?? '';
@@ -722,6 +769,7 @@ class ScraperService extends ChangeNotifier {
       startDate: startDate,
       endDate: endDate,
       location: location,
+      lecturer: lecturer,
       links: links,
       isManual: false,
       isMyCourse: isMyCourse,
@@ -846,6 +894,7 @@ class ScraperService extends ChangeNotifier {
         'startDate': s.startDate.toIso8601String(),
         'endDate': s.endDate.toIso8601String(),
         'location': s.location,
+        'lecturer': s.lecturer,
         'links': s.links
             .map((l) => {'url': l.url, 'label': l.label})
             .toList(),
@@ -876,6 +925,7 @@ class ScraperService extends ChangeNotifier {
         startDate: DateTime.parse(j['startDate'] as String),
         endDate: DateTime.parse(j['endDate'] as String),
         location: j['location'] as String?,
+        lecturer: j['lecturer'] as String?,
         links: (j['links'] as List<dynamic>).map((l) {
           final map = l as Map<String, dynamic>;
           return CourseLink(

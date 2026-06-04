@@ -48,6 +48,7 @@ class CourseShell {
   final DateTime startDate;
   final DateTime endDate;
   final String? location;
+  final String? lecturer;
   final List<CourseLink> links;
   final bool isManual;
   final bool isLiked;
@@ -62,6 +63,7 @@ class CourseShell {
     required this.startDate,
     required this.endDate,
     this.location,
+    this.lecturer,
     required this.links,
     required this.isManual,
     this.isLiked = false,
@@ -77,6 +79,7 @@ class CourseShell {
     DateTime? startDate,
     DateTime? endDate,
     String? location,
+    String? lecturer,
     List<CourseLink>? links,
     bool? isManual,
     bool? isLiked,
@@ -90,6 +93,7 @@ class CourseShell {
     startDate: startDate ?? this.startDate,
     endDate: endDate ?? this.endDate,
     location: location ?? this.location,
+    lecturer: lecturer ?? this.lecturer,
     links: links ?? this.links,
     isManual: isManual ?? this.isManual,
     isLiked: isLiked ?? this.isLiked,

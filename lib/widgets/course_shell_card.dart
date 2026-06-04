@@ -267,26 +267,51 @@ class _CourseShellCardState extends State<CourseShellCard>
                   ),
                 ],
 
-                // ── 3. Location ────────────────────────────────────────────
-                if (shell.location != null) ...[
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      Icon(
-                        CupertinoIcons.location,
-                        size: 10,
-                        color: tokens.AppThemeTokens.locationColor,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        shell.location!.toUpperCase(),
-                        style: AppTextStyle.label.copyWith(
-                          color: tokens.AppThemeTokens.locationColor,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+                // ── 3. Timeframe + Location (side-by-side) ─────────────────
+                const SizedBox(height: 6),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: !(shell.startDate.month == 4 &&
+                              shell.startDate.day == 1 &&
+                              shell.endDate.month == 7 &&
+                              shell.endDate.day == 31)
+                          ? Text(
+                              '${shell.startDate.day.toString().padLeft(2, '0')}.'
+                              '${shell.startDate.month.toString().padLeft(2, '0')}. — '
+                              '${shell.endDate.day.toString().padLeft(2, '0')}.'
+                              '${shell.endDate.month.toString().padLeft(2, '0')}.',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w400,
+                                color: tokens.AppThemeTokens.secondaryTextColor,
+                              ),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                    Expanded(
+                      child: shell.location != null
+                          ? Row(
+                              children: [
+                                Icon(
+                                  CupertinoIcons.location,
+                                  size: 10,
+                                  color: tokens.AppThemeTokens.locationColor,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  shell.location!.toUpperCase(),
+                                  style: AppTextStyle.label.copyWith(
+                                    color: tokens.AppThemeTokens.locationColor,
+                                  ),
+                                ),
+                              ],
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                  ],
+                ),
               ],
             );
             if (glass) {
@@ -1160,23 +1185,85 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                               ),
                             ],
 
-                            // ── 3. Location ───────────────────────────────────
-                            const SizedBox(height: 6),
+                            // ── 3. Timeframe + Location (side-by-side) ────────
+                            const SizedBox(height: 10),
                             Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Icon(
-                                  CupertinoIcons.location,
-                                  size: 10,
-                                  color:
-                                      tokens.AppThemeTokens.locationColor,
+                                // Left: TIMEFRAME
+                                Expanded(
+                                  child: !(shell.startDate.month == 4 &&
+                                          shell.startDate.day == 1 &&
+                                          shell.endDate.month == 7 &&
+                                          shell.endDate.day == 31)
+                                      ? Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Text(
+                                              'TIMEFRAME',
+                                              style: AppTextStyle.label
+                                                  .copyWith(
+                                                color: tokens.AppThemeTokens
+                                                    .secondaryTextColor,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              '${shell.startDate.day.toString().padLeft(2, '0')}.'
+                                              '${shell.startDate.month.toString().padLeft(2, '0')}. — '
+                                              '${shell.endDate.day.toString().padLeft(2, '0')}.'
+                                              '${shell.endDate.month.toString().padLeft(2, '0')}.',
+                                              style: TextStyle(
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w400,
+                                                color: tokens.AppThemeTokens
+                                                    .secondaryTextColor,
+                                              ),
+                                            ),
+                                          ],
+                                        )
+                                      : const SizedBox.shrink(),
                                 ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  shell.location?.toUpperCase() ??
-                                      'SEE DESCRIPTION',
-                                  style: AppTextStyle.label.copyWith(
-                                    color:
-                                        tokens.AppThemeTokens.locationColor,
+                                // Right: LOCATION
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        'LOCATION',
+                                        style: AppTextStyle.label.copyWith(
+                                          color: tokens.AppThemeTokens
+                                              .secondaryTextColor,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            CupertinoIcons.location,
+                                            size: 10,
+                                            color: tokens
+                                                .AppThemeTokens.locationColor,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Expanded(
+                                            child: Text(
+                                              shell.location?.toUpperCase() ??
+                                                  'SEE DESCRIPTION',
+                                              style: AppTextStyle.label
+                                                  .copyWith(
+                                                color: tokens.AppThemeTokens
+                                                    .locationColor,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
@@ -1192,6 +1279,28 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                       CrossAxisAlignment.start,
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
+                                    // Lecturer
+                                    if (shell.lecturer != null &&
+                                        shell.lecturer!.trim().isNotEmpty) ...[
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        'LECTURER',
+                                        style: AppTextStyle.label.copyWith(
+                                          color: tokens.AppThemeTokens
+                                              .secondaryTextColor,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        shell.lecturer!,
+                                        style: AppTextStyle.body.copyWith(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w400,
+                                          color: tokens.AppThemeTokens.titleColor,
+                                        ),
+                                      ),
+                                    ],
+
                                     // Description
                                     if (shell.description
                                         .trim()

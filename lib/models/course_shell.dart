@@ -106,4 +106,29 @@ class CourseShell {
     isMyCourse: isMyCourse ?? this.isMyCourse,
     isFavourite: isFavourite ?? this.isFavourite,
   );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'description': description,
+        'meetingTimes': meetingTimes
+            .map((m) => {
+                  'weekday': m.weekday.index,
+                  'startHour': m.startTime.hour,
+                  'startMinute': m.startTime.minute,
+                  'endHour': m.endTime.hour,
+                  'endMinute': m.endTime.minute,
+                })
+            .toList(),
+        'startDate': startDate.toIso8601String(),
+        'endDate': endDate.toIso8601String(),
+        'location': location,
+        'lecturer': lecturer,
+        'links': links.map((l) => {'url': l.url, 'label': l.label}).toList(),
+        'isManual': isManual,
+        'isLiked': isLiked,
+        'isMyCourse': isMyCourse,
+        'isFavourite': isFavourite,
+        'oneOffEvents': oneOffEvents.map((e) => e.toJson()).toList(),
+      };
 }

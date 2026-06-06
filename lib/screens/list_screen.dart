@@ -359,6 +359,14 @@ class _ListScreenState extends State<ListScreen>
     scraperService.saveToCache(_shells);
   }
 
+  void _onShellUpdated(CourseShell updated) {
+    setState(() {
+      final i = _shells.indexWhere((s) => s.id == updated.id);
+      if (i >= 0) _shells[i] = updated;
+      _rebuildFilteredLists();
+    });
+  }
+
   // ── Glass overlay ─────────────────────────────────────────────────────────
 
   Widget _buildGlassOverlay({
@@ -779,6 +787,7 @@ class _ListScreenState extends State<ListScreen>
                               onDelete: () => _delete(shell),
                               onFavouriteChanged: (isFav) =>
                                   _onFavouriteChanged(shell, isFav),
+                              onShellUpdated: _onShellUpdated,
                             ),
                           );
                         },

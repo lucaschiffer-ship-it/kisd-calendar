@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/course_shell.dart';
+
 class CacheService {
   static const _keyCourses    = 'kisd_courses';
   static const _keyUpdated    = 'kisd_courses_updated';
@@ -32,7 +34,9 @@ class CacheService {
     final raw = prefs.getString(_keyCourses);
     if (raw == null) return [];
     final decoded = json.decode(raw) as List;
-    return decoded.cast<Map<String, dynamic>>();
+    final courses = decoded.cast<Map<String, dynamic>>();
+    print('loadCourses: read ${courses.length} courses, sample[0] title=${courses.isNotEmpty ? courses[0]['title'] : 'EMPTY'}');
+    return courses;
   }
 
   Future<void> markScraped() async {
@@ -44,6 +48,20 @@ class CacheService {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_keyScrapeTime);
     return raw != null ? DateTime.tryParse(raw) : null;
+  }
+
+  Future<void> updateShell(CourseShell shell) async {
+    final courses = await loadCourses();
+    final idx = courses.indexWhere((c) => c['id'] == shell.id);
+    if (idx < 0) {
+      print('updateShell: id=${shell.id} NOT FOUND in ${courses.length} courses — write skipped');
+      return;
+    }
+    courses[idx] = shell.toJson();
+    final prefs = await SharedPreferences.getInstance();
+    print('updateShell: writing ${courses.length} courses, edited shell id=${shell.id} title=${shell.title}');
+    await prefs.setString(_keyCourses, json.encode(courses));
+    await prefs.setString(_keyUpdated, DateTime.now().toIso8601String());
   }
 
   Future<void> updateCourseFavourite(String id, bool isFavourite) async {

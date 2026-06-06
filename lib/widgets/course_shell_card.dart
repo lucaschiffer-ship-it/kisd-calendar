@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../config/app_theme.dart' as tokens;
 import '../models/course_shell.dart';
 import '../models/one_off_event.dart';
+import '../services/cache_service.dart';
 import '../services/spaces_browser.dart';
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
@@ -34,12 +35,14 @@ class CourseShellCard extends StatefulWidget {
     required this.onEdit,
     required this.onDelete,
     this.onFavouriteChanged,
+    this.onShellUpdated,
   });
 
   final CourseShell shell;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   final void Function(bool isFavourite)? onFavouriteChanged;
+  final void Function(CourseShell)? onShellUpdated;
 
   static String fmtTime(TimeOfDay t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
@@ -159,6 +162,7 @@ class _CourseShellCardState extends State<CourseShellCard>
         originRect: originRect,
         animation: animation,
         onFavouriteChanged: widget.onFavouriteChanged,
+        onShellUpdated: widget.onShellUpdated,
       ),
     ));
 
@@ -742,12 +746,14 @@ class _ExpandedCardOverlay extends StatefulWidget {
     required this.originRect,
     required this.animation,
     this.onFavouriteChanged,
+    this.onShellUpdated,
   });
 
   final CourseShell shell;
   final Rect originRect;
   final Animation<double> animation;
   final void Function(bool isFavourite)? onFavouriteChanged;
+  final void Function(CourseShell)? onShellUpdated;
 
   @override
   State<_ExpandedCardOverlay> createState() => _ExpandedCardOverlayState();
@@ -773,6 +779,9 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
 
   // ── Description expand (Stage 2) ─────────────────────────────────────────
   bool _descriptionExpanded = false;
+
+  // ── Mutable shell — updated on Save (Stage C) ────────────────────────────
+  late CourseShell _currentShell;
 
   // ── Edit mode (Stage A) ──────────────────────────────────────────────────
   late AnimationController _editController;
@@ -803,6 +812,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
   @override
   void initState() {
     super.initState();
+    _currentShell = widget.shell;
     _liked = widget.shell.isFavourite;
 
     _heartCtrl = AnimationController(
@@ -909,6 +919,154 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
     widget.onFavouriteChanged?.call(next);
   }
 
+  // ── Save / Cancel (Stage C) ──────────────────────────────────────────────
+
+  Future<void> _onSave() async {
+    final titleText = _titleCtrl.text.trim();
+    final locText = _locationCtrl.text.trim();
+    final lecText = _lecturerCtrl.text.trim();
+
+    final updatedLinks = List.generate(
+      _editLinks.length,
+      (i) => CourseLink(
+        label: _linkLabelCtrls[i].text.trim(),
+        url: _linkUrlCtrls[i].text.trim(),
+      ),
+    );
+
+    final updatedOneOffs = List.generate(_editOneOffs.length, (i) {
+      final titleOverride = _oneOffTitleCtrls[i].text.trim();
+      final locOverride = _oneOffLocationCtrls[i].text.trim();
+      return OneOffEvent(
+        id: _editOneOffs[i].id,
+        date: _editOneOffs[i].date,
+        startTime: _editOneOffs[i].startTime,
+        endTime: _editOneOffs[i].endTime,
+        title: titleOverride.isEmpty ? null : titleOverride,
+        location: locOverride.isEmpty ? null : locOverride,
+      );
+    });
+
+    final updated = CourseShell(
+      id: _currentShell.id,
+      title: titleText.isEmpty ? 'Untitled' : titleText,
+      description: _descriptionCtrl.text.trim(),
+      meetingTimes: List.from(_editMeetings),
+      oneOffEvents: updatedOneOffs,
+      startDate: _editStartDate,
+      endDate: _editEndDate,
+      location: locText.isEmpty ? null : locText,
+      lecturer: lecText.isEmpty ? null : lecText,
+      links: updatedLinks,
+      isManual: _currentShell.isManual,
+      isLiked: _currentShell.isLiked,
+      isMyCourse: _currentShell.isMyCourse,
+      isFavourite: _currentShell.isFavourite,
+    );
+
+    await CacheService().updateShell(updated);
+
+    if (!mounted) return;
+    setState(() => _currentShell = updated);
+    widget.onShellUpdated?.call(updated);
+    _editController.reverse();
+  }
+
+  Future<void> _onCancel() async {
+    if (!_detectChanges()) {
+      _editController.reverse();
+      return;
+    }
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Discard changes?'),
+        content: const Text('Your edits will be lost.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Keep editing'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Discard',
+                style: TextStyle(color: AppColors.accent)),
+          ),
+        ],
+      ),
+    );
+    if (discard == true && mounted) {
+      _resetEditState();
+      _editController.reverse();
+    }
+  }
+
+  bool _detectChanges() {
+    if (_titleCtrl.text != _currentShell.title) return true;
+    if (_locationCtrl.text != (_currentShell.location ?? '')) return true;
+    if (_lecturerCtrl.text != (_currentShell.lecturer ?? '')) return true;
+    if (_descriptionCtrl.text != _currentShell.description) return true;
+    if (_editStartDate != _currentShell.startDate) return true;
+    if (_editEndDate != _currentShell.endDate) return true;
+    if (_editMeetings.length != _currentShell.meetingTimes.length) return true;
+    for (int i = 0; i < _editMeetings.length; i++) {
+      final a = _editMeetings[i];
+      final b = _currentShell.meetingTimes[i];
+      if (a.weekday != b.weekday ||
+          a.startTime != b.startTime ||
+          a.endTime != b.endTime) { return true; }
+    }
+    if (_editLinks.length != _currentShell.links.length) return true;
+    for (int i = 0; i < _editLinks.length; i++) {
+      if (_linkLabelCtrls[i].text != _currentShell.links[i].label) {
+        return true;
+      }
+      if (_linkUrlCtrls[i].text != _currentShell.links[i].url) { return true; }
+    }
+    if (_editOneOffs.length != _currentShell.oneOffEvents.length) return true;
+    for (int i = 0; i < _editOneOffs.length; i++) {
+      if (_oneOffTitleCtrls[i].text !=
+          (_currentShell.oneOffEvents[i].title ?? '')) { return true; }
+      if (_oneOffLocationCtrls[i].text !=
+          (_currentShell.oneOffEvents[i].location ?? '')) { return true; }
+    }
+    return false;
+  }
+
+  void _resetEditState() {
+    for (final c in _linkLabelCtrls) { c.dispose(); }
+    for (final c in _linkUrlCtrls) { c.dispose(); }
+    for (final c in _oneOffTitleCtrls) { c.dispose(); }
+    for (final c in _oneOffLocationCtrls) { c.dispose(); }
+    setState(() {
+      _titleCtrl.text = _currentShell.title;
+      _locationCtrl.text = _currentShell.location ?? '';
+      _lecturerCtrl.text = _currentShell.lecturer ?? '';
+      _descriptionCtrl.text = _currentShell.description;
+      _editStartDate = _currentShell.startDate;
+      _editEndDate = _currentShell.endDate;
+      _editMeetings = List.from(_currentShell.meetingTimes);
+      _editLinks = List.from(_currentShell.links);
+      _linkLabelCtrls = [
+        for (final l in _currentShell.links)
+          TextEditingController(text: l.label)
+      ];
+      _linkUrlCtrls = [
+        for (final l in _currentShell.links)
+          TextEditingController(text: l.url)
+      ];
+      _editOneOffs = List.from(_currentShell.oneOffEvents);
+      _oneOffTitleCtrls = [
+        for (final e in _currentShell.oneOffEvents)
+          TextEditingController(text: e.title ?? '')
+      ];
+      _oneOffLocationCtrls = [
+        for (final e in _currentShell.oneOffEvents)
+          TextEditingController(text: e.location ?? '')
+      ];
+    });
+  }
+
   void _onDragStart(DragStartDetails _) {
     if (_editController.value > 0.5) return;
     setState(() {
@@ -983,7 +1141,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
     final size = MediaQuery.of(context).size;
     final style = ThemeService.instance.currentStyle.value;
     final radius = style == 'vivid' ? 10.0 : 5.0;
-    final shell = widget.shell;
+    final shell = _currentShell;
 
     final readRect = Rect.fromLTWH(
       (size.width - size.width * 0.9) / 2,
@@ -1185,8 +1343,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                           MainAxisAlignment.spaceBetween,
                                       children: [
                                         TextButton(
-                                          onPressed: () =>
-                                              _editController.reverse(),
+                                          onPressed: _onCancel,
                                           style: TextButton.styleFrom(
                                             padding: const EdgeInsets.symmetric(
                                                 vertical: 12),
@@ -1205,9 +1362,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                           ),
                                         ),
                                         TextButton(
-                                          onPressed: () {
-                                            // TODO Stage C: persist edits.
-                                          },
+                                          onPressed: _onSave,
                                           style: TextButton.styleFrom(
                                             padding: const EdgeInsets.symmetric(
                                                 vertical: 12),

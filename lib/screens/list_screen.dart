@@ -80,6 +80,7 @@ class _ListScreenState extends State<ListScreen>
 
   DateTime _now = DateTime.now();
   late final Timer _clock;
+  Timer? _calendarWriteTimer;
 
   final _scrollCtrl = ScrollController();
 
@@ -315,6 +316,7 @@ class _ListScreenState extends State<ListScreen>
   @override
   void dispose() {
     _clock.cancel();
+    _calendarWriteTimer?.cancel();
     _searchCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
@@ -357,6 +359,14 @@ class _ListScreenState extends State<ListScreen>
       _rebuildFilteredLists();
     });
     scraperService.saveToCache(_shells);
+    _calendarWriteTimer?.cancel();
+    _calendarWriteTimer = Timer(const Duration(milliseconds: 500), () {
+      try {
+        CalendarService.instance.writeCourses(_shells).ignore();
+      } catch (e) {
+        print('[list] _onFavouriteChanged: calendar write error: $e');
+      }
+    });
   }
 
   void _onShellUpdated(CourseShell updated) {

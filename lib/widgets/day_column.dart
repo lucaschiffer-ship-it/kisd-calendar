@@ -66,6 +66,7 @@ class _DayColumnState extends State<DayColumn> {
     // Seed from cache synchronously so the first frame shows events rather than blank.
     _events = CalendarService.instance.getCachedEvents(widget.day) ?? [];
     _loadEvents();
+    CalendarService.instance.writeRevision.addListener(_onWriteRevisionChanged);
     _timer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() => _now = DateTime.now());
     });
@@ -90,10 +91,13 @@ class _DayColumnState extends State<DayColumn> {
 
   @override
   void dispose() {
+    CalendarService.instance.writeRevision.removeListener(_onWriteRevisionChanged);
     _timer.cancel();
     _scrollController?.dispose();
     super.dispose();
   }
+
+  void _onWriteRevisionChanged() => _loadEvents();
 
   Future<void> _loadEvents() async {
     final events = await CalendarService.instance.getEventsForDay(widget.day);

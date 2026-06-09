@@ -166,19 +166,80 @@ class ScraperService extends ChangeNotifier {
       final shells = scraped.map((s) {
         final cached = cachedById[s.id];
         if (cached == null) return s; // new course → isFavourite: true (default)
+
+        final cachedEditedFields = (cached['editedFields'] as List<dynamic>?)
+                ?.cast<String>()
+                .toSet() ??
+            <String>{};
         // Always preserve any user-added one-off events from the cache.
         final cachedEvents = (cached['oneOffEvents'] as List<dynamic>?)
                 ?.map((e) => OneOffEvent.fromJson(e as Map<String, dynamic>))
                 .toList() ??
             const <OneOffEvent>[];
         final wasMyCourse = (cached['isMyCourse'] as bool?) ?? false;
+        final cachedFav = (cached['isFavourite'] as bool?) ?? true;
+
+        // Override scraped values with user-edited cached values.
+        var merged = s;
+        if (cachedEditedFields.contains('title')) {
+          merged = merged.copyWith(title: cached['title'] as String);
+        }
+        if (cachedEditedFields.contains('description')) {
+          merged = merged.copyWith(description: (cached['description'] as String?) ?? '');
+        }
+        if (cachedEditedFields.contains('location')) {
+          merged = merged.copyWith(location: cached['location'] as String?);
+        }
+        if (cachedEditedFields.contains('lecturer')) {
+          merged = merged.copyWith(lecturer: cached['lecturer'] as String?);
+        }
+        if (cachedEditedFields.contains('timeframe')) {
+          merged = merged.copyWith(
+            startDate: DateTime.parse(cached['startDate'] as String),
+            endDate: DateTime.parse(cached['endDate'] as String),
+          );
+        }
+        if (cachedEditedFields.contains('meetingTimes')) {
+          final cachedMeetings = (cached['meetingTimes'] as List<dynamic>)
+              .map((m) {
+                final map = m as Map<String, dynamic>;
+                return MeetingTime(
+                  weekday: Weekday.values[map['weekday'] as int],
+                  startTime: TimeOfDay(
+                      hour: map['startHour'] as int,
+                      minute: map['startMinute'] as int),
+                  endTime: TimeOfDay(
+                      hour: map['endHour'] as int,
+                      minute: map['endMinute'] as int),
+                );
+              })
+              .toList();
+          merged = merged.copyWith(meetingTimes: cachedMeetings);
+        }
+        if (cachedEditedFields.contains('links')) {
+          final cachedLinks = (cached['links'] as List<dynamic>)
+              .map((l) {
+                final map = l as Map<String, dynamic>;
+                return CourseLink(
+                    label: map['label'] as String, url: map['url'] as String);
+              })
+              .toList();
+          merged = merged.copyWith(links: cachedLinks);
+        }
+
         if (!wasMyCourse) {
           // Was non-enrolled → treat as newly enrolled, keep isFavourite: true.
-          return cachedEvents.isEmpty ? s : s.copyWith(oneOffEvents: cachedEvents);
+          return merged.copyWith(
+            oneOffEvents: cachedEvents,
+            editedFields: cachedEditedFields,
+          );
         }
-        // Was already enrolled: honour the user's explicit isFavourite toggle.
-        final cachedFav = (cached['isFavourite'] as bool?) ?? true;
-        return s.copyWith(isFavourite: cachedFav, oneOffEvents: cachedEvents);
+        // Was already enrolled: honour isFavourite toggle and accumulated overrides.
+        return merged.copyWith(
+          isFavourite: cachedFav,
+          oneOffEvents: cachedEvents,
+          editedFields: cachedEditedFields,
+        );
       }).toList();
 
       await saveToCache(shells);
@@ -912,6 +973,7 @@ class ScraperService extends ChangeNotifier {
         'isMyCourse': s.isMyCourse,
         'isFavourite': s.isFavourite,
         'oneOffEvents': s.oneOffEvents.map((e) => e.toJson()).toList(),
+        'editedFields': s.editedFields.toList(),
       };
 
   static CourseShell _fromJson(Map<String, dynamic> j) => CourseShell(
@@ -951,7 +1013,13 @@ class ScraperService extends ChangeNotifier {
                 ?.map((e) => OneOffEvent.fromJson(e as Map<String, dynamic>))
                 .toList() ??
             const [],
+        editedFields: (j['editedFields'] as List<dynamic>?)
+                ?.cast<String>()
+                .toSet() ??
+            const {},
       );
+
+  static CourseShell parseCachedJson(Map<String, dynamic> json) => _fromJson(json);
 
   // ─── Parse a date string from the wp-admin events table ──────────────────
   // Handles formats like "May 27, 2026 @ 1:00 pm", "2026-05-27 13:00",

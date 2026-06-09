@@ -57,6 +57,7 @@ class CourseShell {
   final bool isLiked;
   final bool isMyCourse;
   final bool isFavourite;
+  final Set<String> editedFields;
 
   const CourseShell({
     required this.id,
@@ -73,6 +74,7 @@ class CourseShell {
     this.isLiked = false,
     this.isMyCourse = false,
     this.isFavourite = false,
+    this.editedFields = const {},
   });
 
   CourseShell copyWith({
@@ -90,6 +92,7 @@ class CourseShell {
     bool? isLiked,
     bool? isMyCourse,
     bool? isFavourite,
+    Set<String>? editedFields,
   }) => CourseShell(
     id: id ?? this.id,
     title: title ?? this.title,
@@ -105,6 +108,7 @@ class CourseShell {
     isLiked: isLiked ?? this.isLiked,
     isMyCourse: isMyCourse ?? this.isMyCourse,
     isFavourite: isFavourite ?? this.isFavourite,
+    editedFields: editedFields ?? this.editedFields,
   );
 
   Map<String, dynamic> toJson() => {
@@ -130,5 +134,6 @@ class CourseShell {
         'isMyCourse': isMyCourse,
         'isFavourite': isFavourite,
         'oneOffEvents': oneOffEvents.map((e) => e.toJson()).toList(),
+        'editedFields': editedFields.toList(),
       };
 }

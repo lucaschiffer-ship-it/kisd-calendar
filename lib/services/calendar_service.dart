@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io' show Platform;
 
 import 'package:device_calendar/device_calendar.dart';
-import 'package:flutter/material.dart' show Color, TimeOfDay;
+import 'package:flutter/material.dart' show Color, TimeOfDay, ValueNotifier;
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest.dart' as tz;
@@ -76,6 +76,10 @@ class CalendarService {
       Platform.environment.containsKey('SIMULATOR_DEVICE_NAME');
 
   final _plugin = DeviceCalendarPlugin();
+
+  /// Incremented (and cache cleared) every time writeCourses completes successfully.
+  /// Widgets that display calendar data should listen and re-fetch when this changes.
+  final ValueNotifier<int> writeRevision = ValueNotifier<int>(0);
 
   // In-memory event cache — keyed by "yyyy-MM-dd". Populated on first fetch per
   // day and reused by subsequent DayColumn mounts so events appear immediately.
@@ -216,6 +220,8 @@ class CalendarService {
       final loc = tz.local;
 
       for (final shell in shells) {
+        if (!shell.isFavourite) continue; // weekly recurrences only for favourited courses
+
         final desc = shell.links.isNotEmpty ? shell.links.first.url : null;
 
         for (final mt in shell.meetingTimes) {
@@ -251,9 +257,37 @@ class CalendarService {
         }
       }
 
+      // ── e2. Write one-off events for favourited shells ───────────────────────────
+      for (final shell in shells) {
+        if (!shell.isFavourite) continue;
+        final desc = shell.links.isNotEmpty ? shell.links.first.url : null;
+        for (final e in shell.oneOffEvents) {
+          final evtStart = tz.TZDateTime(loc,
+              e.date.year, e.date.month, e.date.day,
+              e.startTime.hour, e.startTime.minute);
+          final evtEnd = tz.TZDateTime(loc,
+              e.date.year, e.date.month, e.date.day,
+              e.endTime.hour, e.endTime.minute);
+          final event = Event(calId)
+            ..title = e.title ?? shell.title
+            ..start = evtStart
+            ..end = evtEnd
+            ..location = e.location ?? shell.location
+            ..description = desc;
+          final r = await _plugin.createOrUpdateEvent(event);
+          if (r != null && r.isSuccess && r.data != null) {
+            newIds.add(r.data!);
+          }
+        }
+      }
+
       // ── f. Save new event IDs ─────────────────────────────────────────────
       await prefs.setStringList(_kKeyEvtIds, newIds);
       print('[calendar] writeCourses: saved ${newIds.length} new event IDs');
+
+      // ── g. Invalidate in-memory cache and notify listeners ────────────────
+      clearCache();
+      writeRevision.value++;
     } catch (e) {
       print('[calendar] writeCourses: $e');
     }

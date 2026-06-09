@@ -8,6 +8,9 @@ import '../config/app_theme.dart' as tokens;
 import '../models/course_shell.dart';
 import '../models/one_off_event.dart';
 import '../services/cache_service.dart';
+import '../services/calendar_service.dart';
+import '../services/scraper_service.dart';
+import '../services/service_locator.dart';
 import '../services/spaces_browser.dart';
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
@@ -782,6 +785,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
 
   // ── Mutable shell — updated on Save (Stage C) ────────────────────────────
   late CourseShell _currentShell;
+  bool _isResetting = false;
 
   // ── Edit mode (Stage A) ──────────────────────────────────────────────────
   late AnimationController _editController;
@@ -947,24 +951,74 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
       );
     });
 
+    // Detect which fields changed in this save and union with prior overrides.
+    final detectedChanges = <String>{};
+    final newTitle = titleText.isEmpty ? 'Untitled' : titleText;
+    if (newTitle != _currentShell.title) detectedChanges.add('title');
+    if (_descriptionCtrl.text.trim() != _currentShell.description) {
+      detectedChanges.add('description');
+    }
+    final newLoc = locText.isEmpty ? null : locText;
+    if (newLoc != _currentShell.location) detectedChanges.add('location');
+    final newLec = lecText.isEmpty ? null : lecText;
+    if (newLec != _currentShell.lecturer) detectedChanges.add('lecturer');
+    if (_editStartDate != _currentShell.startDate ||
+        _editEndDate != _currentShell.endDate) {
+      detectedChanges.add('timeframe');
+    }
+    if (_editMeetings.length != _currentShell.meetingTimes.length) {
+      detectedChanges.add('meetingTimes');
+    } else {
+      for (int i = 0; i < _editMeetings.length; i++) {
+        final a = _editMeetings[i];
+        final b = _currentShell.meetingTimes[i];
+        if (a.weekday != b.weekday ||
+            a.startTime != b.startTime ||
+            a.endTime != b.endTime) {
+          detectedChanges.add('meetingTimes');
+          break;
+        }
+      }
+    }
+    bool linksChanged = _editLinks.length != _currentShell.links.length;
+    if (!linksChanged) {
+      for (int i = 0; i < _editLinks.length; i++) {
+        if (_linkLabelCtrls[i].text.trim() != _currentShell.links[i].label ||
+            _linkUrlCtrls[i].text.trim() != _currentShell.links[i].url) {
+          linksChanged = true;
+          break;
+        }
+      }
+    }
+    if (linksChanged) detectedChanges.add('links');
+    final newEditedFields = {..._currentShell.editedFields, ...detectedChanges};
+
     final updated = CourseShell(
       id: _currentShell.id,
-      title: titleText.isEmpty ? 'Untitled' : titleText,
+      title: newTitle,
       description: _descriptionCtrl.text.trim(),
       meetingTimes: List.from(_editMeetings),
       oneOffEvents: updatedOneOffs,
       startDate: _editStartDate,
       endDate: _editEndDate,
-      location: locText.isEmpty ? null : locText,
-      lecturer: lecText.isEmpty ? null : lecText,
+      location: newLoc,
+      lecturer: newLec,
       links: updatedLinks,
       isManual: _currentShell.isManual,
       isLiked: _currentShell.isLiked,
       isMyCourse: _currentShell.isMyCourse,
       isFavourite: _currentShell.isFavourite,
+      editedFields: newEditedFields,
     );
 
     await CacheService().updateShell(updated);
+
+    try {
+      final allShells = await scraperService.loadCached();
+      await CalendarService.instance.writeCourses(allShells);
+    } catch (e) {
+      print('[card] _onSave: calendar resync error: $e');
+    }
 
     if (!mounted) return;
     setState(() => _currentShell = updated);
@@ -998,6 +1052,78 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
     if (discard == true && mounted) {
       _resetEditState();
       _editController.reverse();
+    }
+  }
+
+  Future<void> _onReset() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reset to scraper version?'),
+        content: const Text(
+            'Your edits will be discarded and replaced with the latest data from Spaces. This may take a moment.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('Reset',
+                style: TextStyle(color: Colors.red.shade400)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+
+    setState(() => _isResetting = true);
+    try {
+      // Clear editedFields so the next merge accepts scraper values.
+      final cleared = _currentShell.copyWith(editedFields: const <String>{});
+      await CacheService().updateShell(cleared);
+
+      // Fresh scrape — merge will use scraper values since editedFields is empty.
+      await scraperService.scrapeMyCourses();
+
+      // Read the updated shell back from cache.
+      final allCached = await CacheService().loadCourses();
+      final freshJson = allCached.firstWhere(
+        (m) => m['id'] == _currentShell.id,
+        orElse: () => <String, dynamic>{},
+      );
+
+      if (freshJson.isEmpty) {
+        // Shell no longer in scraper output — keep the cleared version.
+        if (!mounted) return;
+        setState(() {
+          _currentShell = cleared;
+          _isResetting = false;
+        });
+        _resetEditState();
+        _editController.reverse();
+        widget.onShellUpdated?.call(cleared);
+        return;
+      }
+
+      final fresh = ScraperService.parseCachedJson(freshJson);
+      if (!mounted) return;
+      setState(() {
+        _currentShell = fresh;
+        _isResetting = false;
+      });
+      _resetEditState();
+      _editController.reverse();
+      widget.onShellUpdated?.call(fresh);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isResetting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Reset failed: ${e.toString()}'),
+          backgroundColor: Colors.red.shade400,
+        ),
+      );
     }
   }
 
@@ -1702,34 +1828,65 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                       }),
                                     ],
 
-                                    // Edit button (fades out as edit mode opens)
+                                    // Reset / Edit row (fades out as edit mode opens)
                                     IgnorePointer(
                                       ignoring: _editController.value > 0.5,
                                       child: Opacity(
                                         opacity: (1.0 - _editController.value)
                                             .clamp(0.0, 1.0),
-                                        child: Align(
-                                          alignment: Alignment.centerRight,
-                                          child: TextButton(
-                                            onPressed: () =>
-                                                _editController.forward(),
-                                            style: TextButton.styleFrom(
-                                              padding: EdgeInsets.zero,
-                                              minimumSize: Size.zero,
-                                              tapTargetSize:
-                                                  MaterialTapTargetSize
-                                                      .shrinkWrap,
-                                            ),
-                                            child: Text(
-                                              'Edit',
-                                              style: TextStyle(
-                                                fontSize: 13,
-                                                fontWeight: FontWeight.w400,
-                                                color: tokens.AppThemeTokens
-                                                    .secondaryTextColor,
+                                        child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            if (_currentShell
+                                                .editedFields.isNotEmpty)
+                                              TextButton(
+                                                onPressed: _isResetting
+                                                    ? null
+                                                    : _onReset,
+                                                style: TextButton.styleFrom(
+                                                  padding: const EdgeInsets
+                                                      .symmetric(
+                                                      vertical: 8,
+                                                      horizontal: 0),
+                                                  foregroundColor:
+                                                      Colors.red.shade400,
+                                                  minimumSize: Size.zero,
+                                                  tapTargetSize:
+                                                      MaterialTapTargetSize
+                                                          .shrinkWrap,
+                                                ),
+                                                child: const Text(
+                                                  'Reset',
+                                                  style: TextStyle(
+                                                    fontSize: 13,
+                                                    fontWeight: FontWeight.w500,
+                                                  ),
+                                                ),
+                                              )
+                                            else
+                                              const SizedBox.shrink(),
+                                            TextButton(
+                                              onPressed: () =>
+                                                  _editController.forward(),
+                                              style: TextButton.styleFrom(
+                                                padding: EdgeInsets.zero,
+                                                minimumSize: Size.zero,
+                                                tapTargetSize:
+                                                    MaterialTapTargetSize
+                                                        .shrinkWrap,
+                                              ),
+                                              child: Text(
+                                                'Edit',
+                                                style: TextStyle(
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.w400,
+                                                  color: tokens.AppThemeTokens
+                                                      .secondaryTextColor,
+                                                ),
                                               ),
                                             ),
-                                          ),
+                                          ],
                                         ),
                                       ),
                                     ),
@@ -2090,6 +2247,15 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                       ),
                                     ),
                                   ),
+                                  if (_isResetting)
+                                    Positioned.fill(
+                                      child: ColoredBox(
+                                        color: Colors.black.withValues(alpha: 0.15),
+                                        child: const Center(
+                                          child: CircularProgressIndicator(),
+                                        ),
+                                      ),
+                                    ),
                                 ],
                               ),
                             ),

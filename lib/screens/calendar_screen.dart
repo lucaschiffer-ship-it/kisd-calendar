@@ -1356,6 +1356,13 @@ class _AllDayBandState extends State<_AllDayBand> {
   void initState() {
     super.initState();
     _load();
+    CalendarService.instance.writeRevision.addListener(_onWriteRevisionChanged);
+  }
+
+  @override
+  void dispose() {
+    CalendarService.instance.writeRevision.removeListener(_onWriteRevisionChanged);
+    super.dispose();
   }
 
   @override
@@ -1364,6 +1371,8 @@ class _AllDayBandState extends State<_AllDayBand> {
     // Reload only when the date window shifts — not on every swipe frame.
     if (old.focusedDay != widget.focusedDay) _load();
   }
+
+  void _onWriteRevisionChanged() => _load();
 
   Future<void> _load() async {
     final day = widget.focusedDay;
@@ -1585,7 +1594,16 @@ class _EventListViewState extends State<_EventListView> {
   void initState() {
     super.initState();
     _load();
+    CalendarService.instance.writeRevision.addListener(_onWriteRevisionChanged);
   }
+
+  @override
+  void dispose() {
+    CalendarService.instance.writeRevision.removeListener(_onWriteRevisionChanged);
+    super.dispose();
+  }
+
+  void _onWriteRevisionChanged() => _load();
 
   Future<void> _load() async {
     final items = <_ListItem>[];

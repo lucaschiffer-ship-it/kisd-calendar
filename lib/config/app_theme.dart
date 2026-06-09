@@ -1,105 +1,52 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+
 import '../services/theme_service.dart';
+import '../theme/tokens.dart';
+
+// ─── AppThemeTokens — thin facade over AppColorScheme.current ─────────────────
+//
+// Baseline screens (list_screen, calendar_screen, day_column, course_shell_card,
+// mini_month) call these getters directly.  The facade delegates to the
+// AppColorScheme.current reference that is updated in main() whenever
+// ThemeService.currentColor changes — so all reads are always mode-correct.
+//
+// DO NOT migrate these call sites in T.1; that is T.3 work.
 
 class AppThemeTokens {
   AppThemeTokens._();
 
-  static String get _color => ThemeService.instance.currentColor.value;
+  static AppColorScheme get _s => AppColorScheme.current;
 
   // ── Color tokens ─────────────────────────────────────────────────────────────
 
-  static Color get backgroundColor => switch (_color) {
-        'light' => const Color(0xFFF5F5F5),
-        'pastel' => const Color(0xFFFFF5EE),
-        _ => const Color(0xFF000000),
-      };
+  static Color get backgroundColor  => _s.background;
+  static Color get cardBackground   => _s.cardBackground;
+  static Color get cardBorder       => _s.cardBorder;
+  static Color get titleColor       => _s.textPrimary;
+  static Color get timesColor       => _s.accent;
+  static Color get locationColor    => _s.textTertiary;   // de-emphasised grey
+  static Color get secondaryTextColor => _s.textSecondary;
+  static Color get navBarBg         => _s.navBarBg;
+  static Color get navBarIcon       => _s.navBarIcon;
+  static Color get miniBrowserBackground => _s.accent;
+  static Color get miniBrowserTextColor  => _s.onAccent;
+  static Color get eventAccent      => _s.accent;
+  static Color get accentColor      => _s.accent;         // alias
 
-  static Color get cardBackground => switch (_color) {
-        'light' => const Color(0xFFFFFFFF),
-        'pastel' => const Color(0xFFFFE8D6),
-        _ => const Color(0xFF1A1A1A),
-      };
-
-  static Color get cardBorder => switch (_color) {
-        'light' => const Color(0xFFE0E0E0),
-        'pastel' => const Color(0xFFF5C9A8),
-        _ => const Color(0xFF2A2A2A),
-      };
-
-  static Color get titleColor => switch (_color) {
-        'light' => const Color(0xFF111111),
-        'pastel' => const Color(0xFF5C3D2E),
-        _ => const Color(0xFFFFFFFF),
-      };
-
-  static Color get timesColor => switch (_color) {
-        'light' => const Color(0xFFEB5A01),
-        'pastel' => const Color(0xFFE8845A),
-        _ => const Color(0xFFEB5A01).withValues(alpha: 0.85),
-      };
-
-  static Color get locationColor => switch (_color) {
-        'light' => const Color(0xFF888888),
-        'pastel' => const Color(0xFFA07060),
-        _ => Colors.white.withValues(alpha: 0.35),
-      };
-
-  static Color get secondaryTextColor => switch (_color) {
-        'light' => const Color(0xFF666666),
-        'pastel' => const Color(0xFFB08878),
-        _ => Colors.white.withValues(alpha: 0.5),
-      };
-
-  static Color get navBarBg => switch (_color) {
-        'light' => const Color(0xFFFFFFFF),
-        'pastel' => const Color(0xFFFFE8D6),
-        _ => const Color(0xFF000000),
-      };
-
-  static Color get navBarIcon => switch (_color) {
-        'light' => const Color(0xFF333333),
-        'pastel' => const Color(0xFF5C3D2E),
-        _ => const Color(0xFFFFFFFF),
-      };
-
-  static Color get miniBrowserBackground => switch (_color) {
-        'light' => const Color(0xFFEB5A01),
-        'pastel' => const Color(0xFFE8845A),
-        _ => const Color(0xFFEB5A01),
-      };
-
-  static Color get miniBrowserTextColor => switch (_color) {
-        'light' => const Color(0xFFFFFFFF),
-        'pastel' => const Color(0xFFFFF5EE),
-        _ => const Color(0xFFFFFFFF),
-      };
-
-  static Color get eventAccent => switch (_color) {
-        'light' => const Color(0xFFEB5A01),
-        'pastel' => const Color(0xFFE8845A),
-        _ => const Color(0xFFEB5A01),
-      };
-
-  // Alias kept for existing widget references
-  static Color get accentColor => eventAccent;
-
-  // ── Style tokens (minimal only) ───────────────────────────────────────────────
+  // ── Style tokens (constants — vivid style removed) ────────────────────────
 
   static FontWeight get titleFontWeight => FontWeight.w400;
+  static double     get titleFontSize   => 23;
+  static double     get cardBorderRadius => AppRadius.card; // 5.0
+  static bool       get useEventDot      => true;
 
-  static double get titleFontSize => 23;
-
-  static double get cardBorderRadius => 5.0;
-
-  static bool get useEventDot => true;
-
-  // ── Glass helper ──────────────────────────────────────────────────────────────
+  // ── Glass helper (unchanged signature) ───────────────────────────────────────
 
   static Widget glassContainer({
     required Widget child,
-    double blur = 20,
+    double blur = AppGlass.cardBlur,
     double opacity = 0.12,
     BorderRadius? borderRadius,
     Color? tintColor,
@@ -115,7 +62,7 @@ class AppThemeTokens {
               color: tint.withValues(alpha: opacity),
               borderRadius: borderRadius,
               border: Border.all(
-                color: tint.withValues(alpha: 0.20),
+                color: tint.withValues(alpha: AppGlass.borderAlpha),
                 width: 0.5,
               ),
             ),

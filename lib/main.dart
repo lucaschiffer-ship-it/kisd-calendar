@@ -6,6 +6,7 @@ import 'services/service_locator.dart';
 import 'services/settings_service.dart';
 import 'services/theme_service.dart';
 import 'theme/app_theme.dart';
+import 'theme/tokens.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,7 +14,21 @@ void main() async {
   await SettingsService.instance.init();
   await loginService.initialize();
   loginService.navigatorKey = navigatorKey;
+
+  // Keep AppColorScheme.current in sync with ThemeService so all AppThemeTokens
+  // reads are mode-correct at widget build time.  The listener fires before any
+  // AnimatedBuilder rebuild, so reads are always fresh.
+  _syncColorScheme(ThemeService.instance.currentColor.value);
+  ThemeService.instance.currentColor.addListener(
+    () => _syncColorScheme(ThemeService.instance.currentColor.value),
+  );
+
   runApp(const KisdCalendarApp());
+}
+
+void _syncColorScheme(String colorKey) {
+  AppColorScheme.current =
+      colorKey == 'light' ? AppColorScheme.light : AppColorScheme.dark;
 }
 
 class KisdCalendarApp extends StatelessWidget {
@@ -21,14 +36,19 @@ class KisdCalendarApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'KISD Calendar',
-      debugShowCheckedModeBanner: false,
-      navigatorKey: navigatorKey,
-      theme: buildDarkTheme(),
-      darkTheme: buildDarkTheme(),
-      themeMode: ThemeMode.dark,
-      home: const AppRoot(),
+    return ValueListenableBuilder<String>(
+      valueListenable: ThemeService.instance.currentColor,
+      builder: (context, colorKey, child) {
+        return MaterialApp(
+          title: 'KISD Calendar',
+          debugShowCheckedModeBanner: false,
+          navigatorKey: navigatorKey,
+          theme: buildLightTheme(),
+          darkTheme: buildDarkTheme(),
+          themeMode: colorKey == 'light' ? ThemeMode.light : ThemeMode.dark,
+          home: const AppRoot(),
+        );
+      },
     );
   }
 }

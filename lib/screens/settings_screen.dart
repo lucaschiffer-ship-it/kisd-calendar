@@ -5,6 +5,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import '../services/cache_service.dart';
 import '../services/service_locator.dart';
 import '../services/theme_service.dart';
+import '../theme/tokens.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -41,22 +42,18 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final s = AppColorScheme.current;
 
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: colorScheme.surface,
+        backgroundColor: s.surface,
         elevation: 0,
         scrolledUnderElevation: 0,
         surfaceTintColor: Colors.transparent,
         centerTitle: true,
         title: Text(
           'Settings',
-          style: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w600,
-            color: colorScheme.onSurface,
-          ),
+          style: AppTextStyles.navTitle(color: s.textPrimary),
         ),
       ),
       body: ListView(
@@ -67,12 +64,7 @@ class SettingsScreen extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Text(
               'COLOUR',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: colorScheme.onSurface.withAlpha(100),
-                letterSpacing: 1.2,
-              ),
+              style: AppTextStyles.sectionLabel(color: s.textSecondary),
             ),
           ),
           const SizedBox(height: 8),
@@ -80,46 +72,37 @@ class SettingsScreen extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: ValueListenableBuilder<String>(
               valueListenable: ThemeService.instance.currentColor,
-              builder: (context, color, _) => ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Container(
-                  color: colorScheme.surfaceContainerHigh,
-                  child: Column(
-                    children: [
-                      _ThemeOption(
-                        label: 'Dark',
-                        subtitle: 'Black background, orange accents',
-                        selected: color == 'dark',
-                        onTap: () => ThemeService.instance.setColor('dark'),
-                      ),
-                      Divider(
-                        height: 1,
-                        thickness: 0.5,
-                        indent: 16,
-                        color: Colors.white.withAlpha(18),
-                      ),
-                      _ThemeOption(
-                        label: 'Light',
-                        subtitle: 'White background, clean greys',
-                        selected: color == 'light',
-                        onTap: () => ThemeService.instance.setColor('light'),
-                      ),
-                      Divider(
-                        height: 1,
-                        thickness: 0.5,
-                        indent: 16,
-                        color: Colors.white.withAlpha(18),
-                      ),
-                      _ThemeOption(
-                        label: 'Pastel',
-                        subtitle: 'Warm sand tones, soft browns',
-                        selected: color == 'pastel',
-                        onTap: () => ThemeService.instance.setColor('pastel'),
-                      ),
-                    ],
+              builder: (context, color, _) {
+                final s2 = AppColorScheme.current;
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(AppRadius.input),
+                  child: Container(
+                    color: s2.surfaceElevated,
+                    child: Column(
+                      children: [
+                        _ThemeOption(
+                          label: 'Dark',
+                          subtitle: 'Black background, orange accents',
+                          selected: color == 'dark',
+                          onTap: () => ThemeService.instance.setColor('dark'),
+                        ),
+                        Divider(
+                          height: 1,
+                          thickness: 0.5,
+                          indent: 16,
+                          color: s2.divider,
+                        ),
+                        _ThemeOption(
+                          label: 'Light',
+                          subtitle: 'White background, clean greys',
+                          selected: color == 'light',
+                          onTap: () => ThemeService.instance.setColor('light'),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
           ),
 
@@ -129,12 +112,7 @@ class SettingsScreen extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Text(
               'EFFECTS',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: colorScheme.onSurface.withAlpha(100),
-                letterSpacing: 1.2,
-              ),
+              style: AppTextStyles.sectionLabel(color: s.textSecondary),
             ),
           ),
           const SizedBox(height: 8),
@@ -142,42 +120,49 @@ class SettingsScreen extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: ValueListenableBuilder<bool>(
               valueListenable: ThemeService.instance.glassEnabled,
-              builder: (context, glass, _) => ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Container(
-                  color: colorScheme.surfaceContainerHigh,
-                  child: SwitchListTile(
-                    title: const Text('Glass UI',
-                        style: TextStyle(fontWeight: FontWeight.w500)),
-                    subtitle: const Text('Frosted glass backgrounds'),
-                    value: glass,
-                    onChanged: ThemeService.instance.setGlass,
-                    activeThumbColor: colorScheme.primary,
+              builder: (context, glass, _) {
+                final s2 = AppColorScheme.current;
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(AppRadius.input),
+                  child: Container(
+                    color: s2.surfaceElevated,
+                    child: SwitchListTile(
+                      title: Text(
+                        'Glass UI',
+                        style: AppTextStyles.bodyLarge(color: s2.textPrimary)
+                            .copyWith(fontWeight: FontWeight.w500),
+                      ),
+                      subtitle: Text(
+                        'Frosted glass backgrounds',
+                        style: AppTextStyles.bodySmall(color: s2.textSecondary),
+                      ),
+                      value: glass,
+                      onChanged: ThemeService.instance.setGlass,
+                      activeThumbColor: s2.accent,
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
           ),
 
-          // ── Calendar ─────────────────────────────────────────────────────
+          // ── Sign out ─────────────────────────────────────────────────────
           const SizedBox(height: 32),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: ListTile(
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(AppRadius.input),
               ),
-              tileColor: colorScheme.errorContainer.withAlpha(60),
+              tileColor: s.danger.withValues(alpha: 0.12),
               leading: Icon(
                 CupertinoIcons.square_arrow_left,
-                color: colorScheme.error,
+                color: s.danger,
               ),
               title: Text(
                 'Sign out',
-                style: TextStyle(
-                  color: colorScheme.error,
-                  fontWeight: FontWeight.w500,
-                ),
+                style: AppTextStyles.bodyLarge(color: s.danger)
+                    .copyWith(fontWeight: FontWeight.w500),
               ),
               onTap: () => _logout(context),
             ),
@@ -205,7 +190,7 @@ class _ThemeOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final s = AppColorScheme.current;
     return InkWell(
       onTap: onTap,
       child: Padding(
@@ -218,23 +203,19 @@ class _ThemeOption extends StatelessWidget {
                 children: [
                   Text(
                     label,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w500, fontSize: 15),
+                    style: AppTextStyles.bodyLarge(color: s.textPrimary)
+                        .copyWith(fontWeight: FontWeight.w500),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: colorScheme.onSurface.withAlpha(120),
-                    ),
+                    style: AppTextStyles.bodySmall(color: s.textSecondary),
                   ),
                 ],
               ),
             ),
             if (selected)
-              Icon(CupertinoIcons.checkmark,
-                  size: 16, color: colorScheme.primary),
+              Icon(CupertinoIcons.checkmark, size: 16, color: s.accent),
           ],
         ),
       ),

@@ -4,11 +4,11 @@ import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../config/app_theme.dart' as tokens;
 import '../services/service_locator.dart';
 import '../services/theme_service.dart';
+import '../theme/tokens.dart';
 import 'compose_screen.dart';
 import 'email_detail_screen.dart';
 import 'settings_screen.dart';
@@ -20,7 +20,6 @@ class MailScreen extends StatefulWidget {
 
   @override
   State<MailScreen> createState() => _MailScreenState();
-  
 }
 
 class _MailScreenState extends State<MailScreen>
@@ -90,10 +89,10 @@ class _MailScreenState extends State<MailScreen>
       }).toList();
     }
     return switch (_filter) {
-      _MailFilter.unread => msgs.where((m) => !m.isSeen).toList(),
-      _MailFilter.flagged => msgs.where((m) => m.isFlagged).toList(),
+      _MailFilter.unread   => msgs.where((m) => !m.isSeen).toList(),
+      _MailFilter.flagged  => msgs.where((m) => m.isFlagged).toList(),
       _MailFilter.archived => msgs,
-      _MailFilter.all => msgs,
+      _MailFilter.all      => msgs,
     };
   }
 
@@ -110,6 +109,7 @@ class _MailScreenState extends State<MailScreen>
   }
 
   Widget _buildContent() {
+    final s = AppColorScheme.current;
     final isArchiveTab = _filter == _MailFilter.archived;
     final loading = isArchiveTab
         ? mailService.isFetchingArchive
@@ -121,7 +121,7 @@ class _MailScreenState extends State<MailScreen>
 
     if (loading && !hasData) {
       return Center(
-        child: CircularProgressIndicator(color: const Color(0xFFEB5A01)),
+        child: CircularProgressIndicator(color: s.accent),
       );
     }
     if (!isArchiveTab && error != null && !hasData) {
@@ -131,44 +131,35 @@ class _MailScreenState extends State<MailScreen>
     final filtered = _filtered;
     final radius = tokens.AppThemeTokens.cardBorderRadius;
 
-    // ── Header metrics ────────────────────────────────────────────────────
-    // View.of(context).viewPadding is the raw FlutterView device inset —
-    // the Scaffold zeroes both MediaQuery.padding.top AND
-    // MediaQuery.viewPadding.top when extendBodyBehindAppBar:true, so
-    // MediaQuery is useless here. View is never modified by any widget.
     final view = View.of(context);
     final statusH = view.viewPadding.top / view.devicePixelRatio;
-    const filterH = 110.0; // search bar + chips
+    const filterH = 110.0;
     final headerH = statusH + kToolbarHeight + filterH;
 
-    final glass = ThemeService.instance.glassEnabled.value;
-    final glassBg = ThemeService.instance.currentColor.value == 'dark'
-        ? Colors.white.withValues(alpha: 0.06)
-        : Colors.white.withValues(alpha: 0.40);
+    final glass   = ThemeService.instance.glassEnabled.value;
+    final glassBg = s.glassHeaderTint;
     final searchBorder = BorderSide(
       color: glass
-          ? Colors.white.withValues(alpha: 0.25)
+          ? Colors.white.withValues(alpha: AppGlass.borderAlpha)
           : tokens.AppThemeTokens.cardBorder,
       width: 0.5,
     );
 
-    // ── Single glass container: title row + search + chips ────────────────
     final headerBody = Container(
-      padding: EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 12),
       decoration: glass
           ? BoxDecoration(
               color: glassBg,
               border: const Border(
-                bottom: BorderSide(color: Color(0x1AFFFFFF), width: 0.5),
+                bottom: BorderSide(color: AppGlass.dividerColor, width: 0.5),
               ),
             )
           : BoxDecoration(color: tokens.AppThemeTokens.backgroundColor),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Notch / status-bar inset — raw device height, not Scaffold-inflated
           SizedBox(height: statusH),
-          // ── Title row ────────────────────────────────────────────────────
+          // ── Title row ──────────────────────────────────────────────────────
           SizedBox(
             height: kToolbarHeight,
             child: Padding(
@@ -186,43 +177,34 @@ class _MailScreenState extends State<MailScreen>
                             ),
                           )
                         : _reloadDone
-                        ? const Icon(Icons.check, color: Color(0xFF30D158))
-                        : Icon(
-                            CupertinoIcons.arrow_clockwise,
-                            color: tokens.AppThemeTokens.navBarIcon,
-                          ),
+                            ? Icon(Icons.check, color: s.success)
+                            : Icon(
+                                CupertinoIcons.arrow_clockwise,
+                                color: tokens.AppThemeTokens.navBarIcon,
+                              ),
                     onPressed: mailService.isFetching ? null : _onReload,
                   ),
                   Expanded(
                     child: Center(
                       child: Text(
                         'Mail',
-                        style: GoogleFonts.spaceGrotesk(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: tokens.AppThemeTokens.titleColor,
-                          letterSpacing: -0.5,
-                        ),
+                        style: AppTextStyles.navTitle(
+                            color: tokens.AppThemeTokens.titleColor),
                       ),
                     ),
                   ),
                   IconButton(
-                    icon: Icon(
-                      Icons.edit_outlined,
-                      color: tokens.AppThemeTokens.navBarIcon,
-                    ),
+                    icon: Icon(Icons.edit_outlined,
+                        color: tokens.AppThemeTokens.navBarIcon),
                     onPressed: openCompose,
                   ),
                   IconButton(
-                    icon: Icon(
-                      CupertinoIcons.settings,
-                      color: tokens.AppThemeTokens.navBarIcon,
-                    ),
+                    icon: Icon(CupertinoIcons.settings,
+                        color: tokens.AppThemeTokens.navBarIcon),
                     onPressed: () => Navigator.push<void>(
                       context,
                       CupertinoPageRoute(
-                        builder: (_) => const SettingsScreen(),
-                      ),
+                          builder: (_) => const SettingsScreen()),
                     ),
                   ),
                 ],
@@ -241,54 +223,42 @@ class _MailScreenState extends State<MailScreen>
                   child: TextField(
                     controller: _searchCtrl,
                     onChanged: (v) => setState(() => _searchQuery = v),
-                    style: TextStyle(
-                      color: tokens.AppThemeTokens.titleColor,
-                      fontSize: 15,
-                    ),
+                    style: AppTextStyles.bodyLarge(
+                        color: tokens.AppThemeTokens.titleColor),
                     decoration: InputDecoration(
                       hintText: 'Search mail...',
-                      hintStyle: TextStyle(
-                        color: tokens.AppThemeTokens.secondaryTextColor,
-                        fontSize: 15,
-                      ),
+                      hintStyle: AppTextStyles.bodyLarge(
+                          color: tokens.AppThemeTokens.secondaryTextColor),
                       filled: true,
                       fillColor: glass
-                          ? Colors.white.withValues(alpha: 0.12)
+                          ? Colors.white.withValues(alpha: AppGlass.fillAlpha)
                           : tokens.AppThemeTokens.cardBackground,
-                      prefixIcon: Icon(
-                        Icons.search,
-                        color: tokens.AppThemeTokens.secondaryTextColor,
-                        size: 20,
-                      ),
+                      prefixIcon: Icon(Icons.search,
+                          color: tokens.AppThemeTokens.secondaryTextColor,
+                          size: 20),
                       suffixIcon: _searchQuery.isNotEmpty
                           ? GestureDetector(
                               onTap: () => setState(() {
                                 _searchCtrl.clear();
                                 _searchQuery = '';
                               }),
-                              child: Icon(
-                                Icons.close,
-                                color: tokens.AppThemeTokens.secondaryTextColor,
-                                size: 18,
-                              ),
+                              child: Icon(Icons.close,
+                                  color:
+                                      tokens.AppThemeTokens.secondaryTextColor,
+                                  size: 18),
                             )
                           : null,
                       contentPadding: EdgeInsets.zero,
                       isDense: true,
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(radius),
-                        borderSide: searchBorder,
-                      ),
+                          borderRadius: BorderRadius.circular(radius),
+                          borderSide: searchBorder),
                       enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(radius),
-                        borderSide: searchBorder,
-                      ),
+                          borderRadius: BorderRadius.circular(radius),
+                          borderSide: searchBorder),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(radius),
-                        borderSide: const BorderSide(
-                          color: Color(0xFFEB5A01),
-                          width: 1,
-                        ),
+                        borderSide: BorderSide(color: s.accent, width: 1),
                       ),
                     ),
                   ),
@@ -344,30 +314,29 @@ class _MailScreenState extends State<MailScreen>
             ),
           ),
         ],
-      ), // Column
+      ),
     );
 
     final header = glass
         ? ClipRect(
             child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+              filter: ImageFilter.blur(
+                  sigmaX: AppGlass.headerBlur, sigmaY: AppGlass.headerBlur),
               child: headerBody,
             ),
           )
         : headerBody;
 
-    // ── Stack: list fills full screen, glass header floats on top ────────
     return Stack(
       children: [
         RefreshIndicator(
-          color: const Color(0xFFEB5A01),
+          color: s.accent,
           onRefresh: () => _filter == _MailFilter.archived
               ? mailService.fetchArchive()
               : mailService.reloadInbox(),
           child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
-              // Push list content below the combined glass header
               SliverPadding(padding: EdgeInsets.only(top: headerH)),
               if (!hasData)
                 const SliverFillRemaining(child: _EmptyState())
@@ -376,10 +345,8 @@ class _MailScreenState extends State<MailScreen>
                   child: Center(
                     child: Text(
                       'No emails match this filter.',
-                      style: GoogleFonts.inter(
-                        fontSize: 14,
-                        color: tokens.AppThemeTokens.secondaryTextColor,
-                      ),
+                      style: AppTextStyles.body(
+                          color: tokens.AppThemeTokens.secondaryTextColor),
                     ),
                   ),
                 )
@@ -394,8 +361,7 @@ class _MailScreenState extends State<MailScreen>
                       final msg = filtered[i];
                       return _SwipeableEmailCard(
                         key: ValueKey(
-                          'email_${msg.uid ?? msg.sequenceId ?? msg.hashCode}',
-                        ),
+                            'email_${msg.uid ?? msg.sequenceId ?? msg.hashCode}'),
                         message: msg,
                         onTap: () => Navigator.push<void>(
                           context,
@@ -423,7 +389,6 @@ class _MailScreenState extends State<MailScreen>
             ],
           ),
         ),
-        // Glass header overlays the top of the list
         Positioned(top: 0, left: 0, right: 0, child: header),
       ],
     );
@@ -449,21 +414,18 @@ class _FilterChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppColorScheme.current;
     final Color bg, border;
     if (glass) {
       bg = selected
-          ? const Color(0xFFEB5A01).withValues(alpha: 0.65)
-          : Colors.white.withValues(alpha: 0.10);
+          ? s.accent.withValues(alpha: 0.65)
+          : Colors.white.withValues(alpha: 0.10); // TODO glass refinement
       border = selected
-          ? const Color(0xFFEB5A01).withValues(alpha: 0.80)
-          : Colors.white.withValues(alpha: 0.20);
+          ? s.accent.withValues(alpha: 0.80)
+          : Colors.white.withValues(alpha: 0.20); // TODO glass refinement
     } else {
-      bg = selected
-          ? const Color(0xFFEB5A01)
-          : tokens.AppThemeTokens.cardBackground;
-      border = selected
-          ? const Color(0xFFEB5A01)
-          : tokens.AppThemeTokens.cardBorder;
+      bg     = selected ? s.accent : tokens.AppThemeTokens.cardBackground;
+      border = selected ? s.accent : tokens.AppThemeTokens.cardBorder;
     }
 
     return GestureDetector(
@@ -479,13 +441,11 @@ class _FilterChip extends StatelessWidget {
         alignment: Alignment.center,
         child: Text(
           label,
-          style: GoogleFonts.inter(
-            fontSize: 13,
-            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+          style: AppTextStyles.bodySmall(
             color: selected
-                ? Colors.white
+                ? Colors.white // on accent — white correct in both modes
                 : tokens.AppThemeTokens.secondaryTextColor,
-          ),
+          ).copyWith(fontWeight: selected ? FontWeight.w600 : FontWeight.w400),
         ),
       ),
     );
@@ -514,20 +474,24 @@ class _SwipeableEmailCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppColorScheme.current;
     final isUnread = !message.isSeen;
+
+    // Swipe action label style — 11sp w600 on colored surfaces
+    final swipeLabel = AppTextStyles.caption(color: Colors.white)
+        .copyWith(fontWeight: FontWeight.w600, fontSize: 11);
 
     return Dismissible(
       key: ValueKey(
-        'dismiss_${message.uid ?? message.sequenceId ?? message.hashCode}',
-      ),
+          'dismiss_${message.uid ?? message.sequenceId ?? message.hashCode}'),
       direction: DismissDirection.horizontal,
       dismissThresholds: const {
         DismissDirection.endToStart: 0.4,
         DismissDirection.startToEnd: 0.4,
       },
-      // Right-swipe: toggle read/unread (orange)
+      // Right-swipe: toggle read/unread (accent orange)
       background: Container(
-        color: const Color(0xFFEB5A01),
+        color: s.accent,
         alignment: Alignment.centerLeft,
         padding: const EdgeInsets.only(left: 22),
         child: Column(
@@ -535,26 +499,17 @@ class _SwipeableEmailCard extends StatelessWidget {
           children: [
             Icon(
               isUnread ? CupertinoIcons.envelope_open : CupertinoIcons.envelope,
-              color: Colors.white,
+              color: Colors.white, // on accent — intentionally white
               size: 22,
             ),
             const SizedBox(height: 4),
-            Text(
-              isUnread ? 'Read' : 'Unread',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+            Text(isUnread ? 'Read' : 'Unread', style: swipeLabel),
           ],
         ),
       ),
-      // Left-swipe: Delete (inbox) or Restore (archive)
+      // Left-swipe: delete (danger) or restore (success)
       secondaryBackground: Container(
-        color: isArchiveItem
-            ? const Color(0xFF30D158) // green = restore
-            : const Color(0xFFFF3B30), // red   = delete
+        color: isArchiveItem ? s.success : s.danger,
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 22),
         child: Column(
@@ -564,18 +519,11 @@ class _SwipeableEmailCard extends StatelessWidget {
               isArchiveItem
                   ? Icons.move_to_inbox_outlined
                   : CupertinoIcons.delete,
-              color: Colors.white,
+              color: Colors.white, // on success/danger — intentionally white
               size: 22,
             ),
             const SizedBox(height: 4),
-            Text(
-              isArchiveItem ? 'Restore' : 'Delete',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+            Text(isArchiveItem ? 'Restore' : 'Delete', style: swipeLabel),
           ],
         ),
       ),
@@ -589,7 +537,6 @@ class _SwipeableEmailCard extends StatelessWidget {
           }
           return true;
         }
-        // Toggle read state — card snaps back, stays in list
         onToggleRead();
         return false;
       },
@@ -608,6 +555,7 @@ class _EmailCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppColorScheme.current;
     final isUnread = !message.isSeen;
 
     final fromPersonal = message.from?.firstOrNull?.personalName;
@@ -626,15 +574,14 @@ class _EmailCard extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        highlightColor: const Color(0xFFEB5A01).withValues(alpha: 0.06),
-        splashColor: const Color(0xFFEB5A01).withValues(alpha: 0.04),
+        highlightColor: s.accent.withValues(alpha: 0.06),
+        splashColor:    s.accent.withValues(alpha: 0.04),
         child: DecoratedBox(
           decoration: BoxDecoration(
             border: Border(
               bottom: BorderSide(
-                color: tokens.AppThemeTokens.secondaryTextColor.withValues(
-                  alpha: 0.1,
-                ),
+                color: tokens.AppThemeTokens.secondaryTextColor
+                    .withValues(alpha: 0.1),
                 width: 0.5,
               ),
             ),
@@ -644,7 +591,7 @@ class _EmailCard extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Unread dot column (fixed width so avatar stays aligned)
+                // Unread dot
                 SizedBox(
                   width: 12,
                   child: isUnread
@@ -653,9 +600,9 @@ class _EmailCard extends StatelessWidget {
                           child: Container(
                             width: 8,
                             height: 8,
-                            decoration: const BoxDecoration(
+                            decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: Color(0xFFEB5A01),
+                              color: s.accent,
                             ),
                           ),
                         )
@@ -665,11 +612,11 @@ class _EmailCard extends StatelessWidget {
                 // Avatar
                 CircleAvatar(
                   radius: 20,
-                  backgroundColor: _senderColor(senderName),
+                  backgroundColor: AppAvatarPalette.forName(senderName),
                   child: Text(
                     initial,
                     style: const TextStyle(
-                      color: Colors.white,
+                      color: Colors.white, // on avatar color — intentionally white
                       fontWeight: FontWeight.w600,
                       fontSize: 16,
                     ),
@@ -681,7 +628,6 @@ class _EmailCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Sender row + timestamp
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.baseline,
                         textBaseline: TextBaseline.alphabetic,
@@ -689,13 +635,9 @@ class _EmailCard extends StatelessWidget {
                           Expanded(
                             child: Text(
                               senderName,
-                              style: GoogleFonts.spaceGrotesk(
-                                fontSize: 14,
-                                fontWeight: isUnread
-                                    ? FontWeight.w700
-                                    : FontWeight.w500,
+                              style: AppTextStyles.senderName(
                                 color: tokens.AppThemeTokens.titleColor,
-                                letterSpacing: -0.2,
+                                unread: isUnread,
                               ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
@@ -706,26 +648,19 @@ class _EmailCard extends StatelessWidget {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               if (hasAttachments) ...[
-                                Icon(
-                                  Icons.attach_file,
-                                  size: 12,
-                                  color:
-                                      tokens.AppThemeTokens.secondaryTextColor,
-                                ),
+                                Icon(Icons.attach_file,
+                                    size: 12,
+                                    color: tokens.AppThemeTokens
+                                        .secondaryTextColor),
                                 const SizedBox(width: 2),
                               ],
                               Text(
                                 dateStr,
-                                style: GoogleFonts.inter(
-                                  fontSize: 11,
-                                  fontWeight: isUnread
-                                      ? FontWeight.w600
-                                      : FontWeight.w400,
+                                style: AppTextStyles.timestamp(
                                   color: isUnread
-                                      ? const Color(0xFFEB5A01)
-                                      : tokens
-                                            .AppThemeTokens
-                                            .secondaryTextColor,
+                                      ? s.accent
+                                      : tokens.AppThemeTokens.secondaryTextColor,
+                                  unread: isUnread,
                                 ),
                               ),
                             ],
@@ -733,30 +668,24 @@ class _EmailCard extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 3),
-                      // Subject
                       Text(
                         subject,
-                        style: GoogleFonts.inter(
-                          fontSize: 13,
-                          fontWeight: isUnread
-                              ? FontWeight.w600
-                              : FontWeight.w400,
-                          color: tokens.AppThemeTokens.titleColor.withValues(
-                            alpha: 0.85,
-                          ),
+                        style: AppTextStyles.bodySmall(
+                          color: tokens.AppThemeTokens.titleColor
+                              .withValues(alpha: 0.85),
+                        ).copyWith(
+                          fontWeight:
+                              isUnread ? FontWeight.w600 : FontWeight.w400,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 2),
-                      // Preview
                       Text(
                         preview,
-                        style: GoogleFonts.inter(
-                          fontSize: 12,
+                        style: AppTextStyles.caption(
                           color: tokens.AppThemeTokens.secondaryTextColor,
-                          height: 1.4,
-                        ),
+                        ).copyWith(height: 1.4),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -786,20 +715,6 @@ class _EmailCard extends StatelessWidget {
     return '';
   }
 
-  Color _senderColor(String name) {
-    const palette = [
-      Color(0xFF1A73E8),
-      Color(0xFFD93025),
-      Color(0xFF188038),
-      Color(0xFFF29900),
-      Color(0xFF9334E6),
-      Color(0xFF00897B),
-      Color(0xFFE52592),
-      Color(0xFF3949AB),
-    ];
-    return palette[name.hashCode.abs() % palette.length];
-  }
-
   String _formatDate(DateTime? date) {
     if (date == null) return '';
     final now = DateTime.now();
@@ -818,18 +733,8 @@ class _EmailCard extends StatelessWidget {
     }
 
     const mo = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
     ];
     return '${mo[date.month - 1]} ${date.day}';
   }
@@ -846,27 +751,19 @@ class _EmptyState extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            CupertinoIcons.tray,
-            size: 52,
-            color: tokens.AppThemeTokens.secondaryTextColor,
-          ),
+          Icon(CupertinoIcons.tray,
+              size: 52, color: tokens.AppThemeTokens.secondaryTextColor),
           const SizedBox(height: 16),
           Text(
             'No emails',
-            style: GoogleFonts.spaceGrotesk(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              color: tokens.AppThemeTokens.titleColor,
-            ),
+            style: AppTextStyles.navTitle(color: tokens.AppThemeTokens.titleColor)
+                .copyWith(fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 6),
           Text(
             'Your inbox is empty.',
-            style: GoogleFonts.inter(
-              fontSize: 14,
-              color: tokens.AppThemeTokens.secondaryTextColor,
-            ),
+            style: AppTextStyles.body(
+                color: tokens.AppThemeTokens.secondaryTextColor),
           ),
         ],
       ),
@@ -884,33 +781,27 @@ class _ErrorView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppColorScheme.current;
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 32),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              CupertinoIcons.exclamationmark_circle,
-              size: 52,
-              color: tokens.AppThemeTokens.secondaryTextColor,
-            ),
+            Icon(CupertinoIcons.exclamationmark_circle,
+                size: 52, color: tokens.AppThemeTokens.secondaryTextColor),
             const SizedBox(height: 16),
             Text(
               'Could not load mail',
-              style: GoogleFonts.spaceGrotesk(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: tokens.AppThemeTokens.titleColor,
-              ),
+              style: AppTextStyles.navTitle(
+                      color: tokens.AppThemeTokens.titleColor)
+                  .copyWith(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 8),
             Text(
               error,
-              style: GoogleFonts.inter(
-                fontSize: 13,
-                color: tokens.AppThemeTokens.secondaryTextColor,
-              ),
+              style: AppTextStyles.bodySmall(
+                  color: tokens.AppThemeTokens.secondaryTextColor),
               textAlign: TextAlign.center,
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
@@ -919,8 +810,8 @@ class _ErrorView extends StatelessWidget {
             FilledButton.icon(
               onPressed: onRetry,
               style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFEB5A01),
-                foregroundColor: Colors.white,
+                backgroundColor: s.accent,
+                foregroundColor: Colors.white, // on accent — intentionally white
                 shape: const StadiumBorder(),
               ),
               icon: const Icon(Icons.refresh),

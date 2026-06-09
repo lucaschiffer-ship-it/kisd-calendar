@@ -4,12 +4,12 @@ import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../config/app_theme.dart' as tokens;
 import '../services/service_locator.dart';
 import '../services/spaces_browser.dart';
 import '../services/theme_service.dart';
+import '../theme/tokens.dart';
 
 class EmailDetailScreen extends StatefulWidget {
   const EmailDetailScreen({
@@ -49,25 +49,23 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Listenable.merge([
-        ThemeService.instance.currentColor,
-      ]),
-      builder: (context, _) =>
-          _buildScreen(context, ThemeService.instance.currentColor.value),
+      animation: ThemeService.instance.currentColor,
+      builder: (context, _) => _buildScreen(context),
     );
   }
 
-  Widget _buildScreen(BuildContext context, String colorKey) {
-    final msg  = _full ?? widget.message;
+  Widget _buildScreen(BuildContext context) {
+    final s   = AppColorScheme.current;
+    final msg = _full ?? widget.message;
 
     final fromPersonal = msg.from?.firstOrNull?.personalName;
     final fromEmail    = msg.fromEmail ?? '';
     final senderName   = (fromPersonal != null && fromPersonal.isNotEmpty)
         ? fromPersonal
         : fromEmail.isNotEmpty ? fromEmail : 'Unknown';
-    final subject  = msg.decodeSubject() ?? '(No subject)';
-    final date     = msg.decodeDate();
-    final initial  = senderName.isNotEmpty ? senderName[0].toUpperCase() : '?';
+    final subject = msg.decodeSubject() ?? '(No subject)';
+    final date    = msg.decodeDate();
+    final initial = senderName.isNotEmpty ? senderName[0].toUpperCase() : '?';
 
     return Scaffold(
       backgroundColor: tokens.AppThemeTokens.backgroundColor,
@@ -103,24 +101,19 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
               children: [
                 Text(
                   subject,
-                  style: GoogleFonts.spaceGrotesk(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                    color: tokens.AppThemeTokens.titleColor,
-                    height: 1.2,
-                    letterSpacing: -0.4,
-                  ),
+                  style: AppTextStyles.contentHeading(
+                      color: tokens.AppThemeTokens.titleColor),
                 ),
                 const SizedBox(height: 14),
                 Row(
                   children: [
                     CircleAvatar(
                       radius: 18,
-                      backgroundColor: _senderColor(senderName),
+                      backgroundColor: AppAvatarPalette.forName(senderName),
                       child: Text(
                         initial,
                         style: const TextStyle(
-                          color: Colors.white,
+                          color: Colors.white, // on avatar color — intentionally white
                           fontWeight: FontWeight.w600,
                           fontSize: 14,
                         ),
@@ -133,20 +126,16 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
                         children: [
                           Text(
                             senderName,
-                            style: GoogleFonts.inter(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14,
+                            style: AppTextStyles.senderName(
                               color: tokens.AppThemeTokens.titleColor,
-                            ),
+                            ).copyWith(fontWeight: FontWeight.w600),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
                           Text(
                             fromEmail,
-                            style: GoogleFonts.inter(
-                              fontSize: 12,
-                              color: tokens.AppThemeTokens.secondaryTextColor,
-                            ),
+                            style: AppTextStyles.caption(
+                                color: tokens.AppThemeTokens.secondaryTextColor),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -156,10 +145,8 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
                     if (date != null)
                       Text(
                         _formatFullDate(date),
-                        style: GoogleFonts.inter(
-                          fontSize: 12,
-                          color: tokens.AppThemeTokens.secondaryTextColor,
-                        ),
+                        style: AppTextStyles.caption(
+                            color: tokens.AppThemeTokens.secondaryTextColor),
                       ),
                   ],
                 ),
@@ -171,29 +158,28 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
           // ── Body ────────────────────────────────────────────────────────
           Expanded(
             child: _loading
-                ? const Center(
-                    child: CircularProgressIndicator(
-                        color: Color(0xFFEB5A01)),
+                ? Center(
+                    child: CircularProgressIndicator(color: s.accent),
                   )
-                : _buildBody(msg, colorKey),
+                : _buildBody(msg),
           ),
 
           // ── Attachments ─────────────────────────────────────────────────
-          _buildAttachments(msg),
+          _buildAttachments(msg, s),
 
           // ── Action bar ──────────────────────────────────────────────────
-          _buildActions(msg),
+          _buildActions(msg, s),
         ],
       ),
     );
   }
 
-  Widget _buildBody(MimeMessage msg, String colorKey) {
+  Widget _buildBody(MimeMessage msg) {
     final html = msg.decodeTextHtmlPart();
     if (html != null && html.isNotEmpty) {
       return InAppWebView(
         initialData: InAppWebViewInitialData(
-          data: _wrapHtml(html, colorKey),
+          data: _wrapHtml(html),
           mimeType: 'text/html',
           encoding: 'utf-8',
           baseUrl: WebUri('about:blank'),
@@ -219,25 +205,18 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
       padding: const EdgeInsets.all(20),
       child: SelectableText(
         plain,
-        style: GoogleFonts.inter(
-          fontSize: 14,
-          height: 1.6,
-          color: tokens.AppThemeTokens.titleColor,
-        ),
+        style: AppTextStyles.body(color: tokens.AppThemeTokens.titleColor)
+            .copyWith(height: 1.6),
       ),
     );
   }
 
-  String _wrapHtml(String html, String colorKey) {
-    final String bg, fg;
-    switch (colorKey) {
-      case 'light':
-        bg = '#F5F5F5'; fg = '#111111';
-      case 'pastel':
-        bg = '#FFF5EE'; fg = '#5C3D2E';
-      default: // dark
-        bg = '#000000'; fg = '#EBEBF5';
-    }
+  // Builds HTML wrapper CSS from scheme tokens so the body adapts to the theme.
+  String _wrapHtml(String html) {
+    final s = AppColorScheme.current;
+    final bg     = _hex(s.background);
+    final fg     = _hex(s.textPrimary);
+    final accent = _hex(s.accent);
     return '''<!DOCTYPE html><html><head>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
@@ -245,12 +224,17 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
          font-family:-apple-system,sans-serif; font-size:14px;
          line-height:1.6; word-break:break-word; }
   img  { max-width:100% !important; height:auto; }
-  a    { color:#EB5A01; }
+  a    { color:$accent; }
   table{ max-width:100%; }
 </style></head><body>$html</body></html>''';
   }
 
-  Widget _buildAttachments(MimeMessage msg) {
+  static String _hex(Color c) {
+    final v = c.toARGB32();
+    return '#${v.toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
+  }
+
+  Widget _buildAttachments(MimeMessage msg, AppColorScheme s) {
     final attachments =
         msg.findContentInfo(disposition: ContentDisposition.attachment);
     if (attachments.isEmpty) return const SizedBox.shrink();
@@ -265,23 +249,19 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               color: tokens.AppThemeTokens.cardBackground,
-              borderRadius: BorderRadius.circular(
-                  tokens.AppThemeTokens.cardBorderRadius),
+              borderRadius: BorderRadius.circular(AppRadius.card),
               border: Border.all(
                   color: tokens.AppThemeTokens.cardBorder, width: 0.5),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.attach_file,
-                    size: 14, color: Color(0xFFEB5A01)),
+                Icon(Icons.attach_file, size: 14, color: s.accent),
                 const SizedBox(width: 4),
                 Text(
                   name,
-                  style: GoogleFonts.inter(
-                    fontSize: 12,
-                    color: tokens.AppThemeTokens.titleColor,
-                  ),
+                  style: AppTextStyles.caption(
+                      color: tokens.AppThemeTokens.titleColor),
                 ),
               ],
             ),
@@ -291,7 +271,7 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
     );
   }
 
-  Widget _buildActions(MimeMessage msg) {
+  Widget _buildActions(MimeMessage msg, AppColorScheme s) {
     return SafeArea(
       top: false,
       child: Container(
@@ -326,14 +306,13 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
               label: 'Forward',
               onTap: () {
                 Navigator.pop(context);
-                // Opens compose; full forward mode requires ComposeScreen extension.
                 widget.onReply(_full ?? widget.message);
               },
             ),
             _ActionBtn(
               icon: CupertinoIcons.delete,
               label: 'Delete',
-              color: const Color(0xFFFF3B30),
+              color: s.danger,
               onTap: () {
                 mailService.deleteMessage(widget.message);
                 Navigator.pop(context);
@@ -343,15 +322,6 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
         ),
       ),
     );
-  }
-
-  Color _senderColor(String name) {
-    const palette = [
-      Color(0xFF1A73E8), Color(0xFFD93025), Color(0xFF188038),
-      Color(0xFFF29900), Color(0xFF9334E6), Color(0xFF00897B),
-      Color(0xFFE52592), Color(0xFF3949AB),
-    ];
-    return palette[name.hashCode.abs() % palette.length];
   }
 
   String _formatFullDate(DateTime date) {
@@ -395,11 +365,8 @@ class _ActionBtn extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               label,
-              style: GoogleFonts.inter(
-                fontSize: 11,
-                color: c,
-                fontWeight: FontWeight.w500,
-              ),
+              style: AppTextStyles.timestamp(color: c)
+                  .copyWith(fontWeight: FontWeight.w500),
             ),
           ],
         ),

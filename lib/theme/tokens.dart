@@ -129,6 +129,13 @@ class AppGlass {
   static const double headerBlur  = 24.0;
   static const double cardBlur    = 20.0;
   static const double borderAlpha = 0.20;
+  // Header tint alphas — match AppColorScheme.*.glassHeaderTint
+  static const Color tintLight    = Color(0x66FFFFFF); // white 40 %
+  static const Color tintDark     = Color(0x0FFFFFFF); // white 6 %
+  // Glass header bottom border — universal across modes
+  static const Color dividerColor = Color(0x1AFFFFFF);
+  // Fill alpha for glass inputs (search fields, etc.)
+  static const double fillAlpha   = 0.12;
 
   // Shadow used beneath floating glass cards
   static const BoxShadow cardShadow = BoxShadow(
@@ -210,6 +217,25 @@ class AppTextStyles {
   static TextStyle badge({Color? color}) => GoogleFonts.inter(
     fontSize: 9, fontWeight: FontWeight.w700, color: color,
   );
+
+  // ── Mail-specific ───────────────────────────────────────────────────────────
+
+  // Sender name in email list/detail: SpaceGrotesk 14, w700 unread / w500 read
+  static TextStyle senderName({Color? color, bool unread = false}) =>
+      GoogleFonts.spaceGrotesk(
+        fontSize: 14,
+        fontWeight: unread ? FontWeight.w700 : FontWeight.w500,
+        letterSpacing: -0.2,
+        color: color,
+      );
+
+  // Timestamp in email list: Inter 11, w600 unread / w400 read
+  static TextStyle timestamp({Color? color, bool unread = false}) =>
+      GoogleFonts.inter(
+        fontSize: 11,
+        fontWeight: unread ? FontWeight.w600 : FontWeight.w400,
+        color: color,
+      );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -379,4 +405,26 @@ ThemeData _build(AppColorScheme s, Brightness brightness) {
       tileColor: Colors.transparent,
     ),
   );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AppAvatarPalette — deterministic per-sender avatar colors
+// ═══════════════════════════════════════════════════════════════════════════════
+
+class AppAvatarPalette {
+  AppAvatarPalette._();
+
+  static const List<Color> colors = [
+    Color(0xFF1A73E8),
+    Color(0xFFD93025),
+    Color(0xFF188038),
+    Color(0xFFF29900),
+    Color(0xFF9334E6),
+    Color(0xFF00897B),
+    Color(0xFFE52592),
+    Color(0xFF3949AB),
+  ];
+
+  static Color forName(String name) =>
+      colors[name.hashCode.abs() % colors.length];
 }

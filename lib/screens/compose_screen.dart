@@ -2,11 +2,11 @@ import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/material.dart';
 
 import '../services/service_locator.dart';
+import '../theme/tokens.dart';
 
 class ComposeScreen extends StatefulWidget {
   const ComposeScreen({super.key, this.replyTo});
 
-  /// Non-null when replying to an existing message.
   final MimeMessage? replyTo;
 
   @override
@@ -26,23 +26,20 @@ class _ComposeScreenState extends State<ComposeScreen> {
     final reply = widget.replyTo;
     if (reply != null) {
       final senders = reply.decodeSender();
-      final toEmail =
-          senders.isNotEmpty ? senders.first.email : '';
+      final toEmail = senders.isNotEmpty ? senders.first.email : '';
       final originalSubject = reply.decodeSubject() ?? '';
       final re = originalSubject.toLowerCase().startsWith('re:')
           ? originalSubject
           : 'Re: $originalSubject';
       final originalPlain = reply.decodeTextPlainPart() ?? '';
-      final quoted = originalPlain.isEmpty
-          ? ''
-          : '\n\n---\n$originalPlain';
-      _toCtrl = TextEditingController(text: toEmail);
+      final quoted = originalPlain.isEmpty ? '' : '\n\n---\n$originalPlain';
+      _toCtrl      = TextEditingController(text: toEmail);
       _subjectCtrl = TextEditingController(text: re);
-      _bodyCtrl = TextEditingController(text: quoted);
+      _bodyCtrl    = TextEditingController(text: quoted);
     } else {
-      _toCtrl = TextEditingController();
+      _toCtrl      = TextEditingController();
       _subjectCtrl = TextEditingController();
-      _bodyCtrl = TextEditingController();
+      _bodyCtrl    = TextEditingController();
     }
   }
 
@@ -75,30 +72,29 @@ class _ComposeScreenState extends State<ComposeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final s = AppColorScheme.current;
 
     return DraggableScrollableSheet(
       initialChildSize: 0.92,
-      minChildSize: 0.5,
-      maxChildSize: 0.98,
+      minChildSize:     0.5,
+      maxChildSize:     0.98,
       expand: false,
       builder: (_, scrollCtrl) => Container(
         decoration: BoxDecoration(
-          color: bg,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+          color: s.background,
+          borderRadius: BorderRadius.vertical(
+              top: Radius.circular(AppRadius.sheet)),
         ),
         child: Column(
           children: [
             // Drag handle
             Container(
               margin: const EdgeInsets.only(top: 10, bottom: 4),
-              width: 36,
+              width:  36,
               height: 4,
               decoration: BoxDecoration(
-                color: cs.onSurface.withAlpha(50),
-                borderRadius: BorderRadius.circular(2),
+                color:         s.textTertiary,
+                borderRadius:  BorderRadius.circular(AppRadius.handle),
               ),
             ),
             // Toolbar
@@ -110,18 +106,19 @@ class _ComposeScreenState extends State<ComposeScreen> {
                     onPressed: _sending ? null : () => Navigator.pop(context),
                     child: Text(
                       'Discard',
-                      style: TextStyle(color: cs.error),
+                      style: AppTextStyles.bodyLarge(color: s.danger)
+                          .copyWith(fontWeight: FontWeight.w500),
                     ),
                   ),
-                  const Spacer(),
-                  Text(
-                    widget.replyTo != null ? 'Reply' : 'New Message',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 16,
+                  Expanded(
+                    child: Center(
+                      child: Text(
+                        widget.replyTo != null ? 'Reply' : 'New Message',
+                        style: AppTextStyles.bodyLarge(color: s.textPrimary)
+                            .copyWith(fontWeight: FontWeight.w600),
+                      ),
                     ),
                   ),
-                  const Spacer(),
                   _sending
                       ? const SizedBox(
                           width: 24,
@@ -132,16 +129,14 @@ class _ComposeScreenState extends State<ComposeScreen> {
                           onPressed: _send,
                           child: Text(
                             'Send',
-                            style: TextStyle(
-                              color: cs.primary,
-                              fontWeight: FontWeight.w600,
-                            ),
+                            style: AppTextStyles.bodyLarge(color: s.accent)
+                                .copyWith(fontWeight: FontWeight.w600),
                           ),
                         ),
                 ],
               ),
             ),
-            const Divider(height: 1),
+            const _Divider(),
             // Fields
             Expanded(
               child: SingleChildScrollView(
@@ -153,18 +148,15 @@ class _ComposeScreenState extends State<ComposeScreen> {
                   children: [
                     if (_sendError != null)
                       Container(
-                        margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                        margin:  const EdgeInsets.fromLTRB(16, 8, 16, 0),
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                          color: cs.errorContainer,
-                          borderRadius: BorderRadius.circular(8),
+                          color: s.danger.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(AppRadius.chip),
                         ),
                         child: Text(
                           _sendError!,
-                          style: TextStyle(
-                            color: cs.onErrorContainer,
-                            fontSize: 13,
-                          ),
+                          style: AppTextStyles.bodySmall(color: s.danger),
                         ),
                       ),
                     _ComposeField(
@@ -183,14 +175,15 @@ class _ComposeScreenState extends State<ComposeScreen> {
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                       child: TextField(
                         controller: _bodyCtrl,
-                        maxLines: null,
-                        autofocus: widget.replyTo != null,
+                        maxLines:   null,
+                        autofocus:  widget.replyTo != null,
                         decoration: const InputDecoration(
-                          hintText: 'Compose email...',
-                          border: InputBorder.none,
+                          hintText:       'Compose email...',
+                          border:         InputBorder.none,
                           contentPadding: EdgeInsets.zero,
                         ),
-                        style: const TextStyle(fontSize: 15, height: 1.5),
+                        style: AppTextStyles.bodyLarge(
+                            color: AppColorScheme.current.textPrimary),
                         keyboardType: TextInputType.multiline,
                       ),
                     ),
@@ -220,7 +213,7 @@ class _ComposeField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final s = AppColorScheme.current;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: Row(
@@ -229,22 +222,19 @@ class _ComposeField extends StatelessWidget {
             width: 60,
             child: Text(
               label,
-              style: TextStyle(
-                color: cs.onSurface.withAlpha(120),
-                fontSize: 15,
-              ),
+              style: AppTextStyles.bodyLarge(color: s.textSecondary),
             ),
           ),
           Expanded(
             child: TextField(
-              controller: controller,
+              controller:   controller,
               keyboardType: keyboardType,
-              autofocus: autofocus,
+              autofocus:    autofocus,
               decoration: const InputDecoration(
-                border: InputBorder.none,
+                border:         InputBorder.none,
                 contentPadding: EdgeInsets.zero,
               ),
-              style: const TextStyle(fontSize: 15),
+              style: AppTextStyles.bodyLarge(color: AppColorScheme.current.textPrimary),
             ),
           ),
         ],
@@ -257,12 +247,10 @@ class _Divider extends StatelessWidget {
   const _Divider();
 
   @override
-  Widget build(BuildContext context) {
-    return Divider(
-      height: 1,
-      indent: 16,
-      endIndent: 0,
-      color: Theme.of(context).colorScheme.onSurface.withAlpha(30),
-    );
-  }
+  Widget build(BuildContext context) => Divider(
+        height: 1,
+        indent: 16,
+        endIndent: 0,
+        color: AppColorScheme.current.divider,
+      );
 }

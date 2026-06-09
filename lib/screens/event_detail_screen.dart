@@ -41,7 +41,6 @@ class _EventDetailSheet extends StatelessWidget {
     return AnimatedBuilder(
       animation: Listenable.merge([
         ThemeService.instance.currentColor,
-        ThemeService.instance.currentStyle,
         ThemeService.instance.glassEnabled,
       ]),
       builder: (context, _) => _buildSheet(context),

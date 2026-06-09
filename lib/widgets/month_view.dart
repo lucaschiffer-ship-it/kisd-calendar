@@ -133,7 +133,6 @@ class _MonthViewState extends State<MonthView> {
     return AnimatedBuilder(
       animation: Listenable.merge([
         ThemeService.instance.currentColor,
-        ThemeService.instance.currentStyle,
         ThemeService.instance.glassEnabled,
       ]),
       builder: (context, _) => ListView.builder(

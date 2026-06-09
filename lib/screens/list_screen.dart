@@ -690,7 +690,6 @@ class _ListScreenState extends State<ListScreen>
     return AnimatedBuilder(
       animation: Listenable.merge([
         ThemeService.instance.currentColor,
-        ThemeService.instance.currentStyle,
         ThemeService.instance.glassEnabled,
       ]),
       builder: (context, _) {
@@ -855,64 +854,48 @@ class _TodayEventRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<String>(
       valueListenable: ThemeService.instance.currentColor,
-      builder: (context, _, _) => ValueListenableBuilder<String>(
-        valueListenable: ThemeService.instance.currentStyle,
-        builder: (context, style, _) {
-          final useDot = style != 'vivid';
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 5),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                if (useDot)
-                  Container(
-                    width: 6,
-                    height: 6,
-                    decoration: BoxDecoration(
-                      color: tokens.AppThemeTokens.accentColor,
-                      borderRadius: BorderRadius.circular(1.5),
-                    ),
-                  )
-                else
-                  Container(
-                    width: 4,
-                    height: 46,
-                    decoration: BoxDecoration(
-                      color: tokens.AppThemeTokens.accentColor,
-                      borderRadius: BorderRadius.circular(1),
-                    ),
-                  ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        event.title,
-                        style: AppTextStyle.bodyBold.copyWith(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: tokens.AppThemeTokens.titleColor,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${_fmt(event.start)} – ${_fmt(event.end)}',
-                        style: AppTextStyle.body.copyWith(
-                          fontSize: 12,
-                          color: tokens.AppThemeTokens.secondaryTextColor,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+      builder: (context, _, _) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(
+              width: 6,
+              height: 6,
+              decoration: BoxDecoration(
+                color: tokens.AppThemeTokens.accentColor,
+                borderRadius: BorderRadius.circular(1.5),
+              ),
             ),
-          );
-        },
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    event.title,
+                    style: AppTextStyle.bodyBold.copyWith(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: tokens.AppThemeTokens.titleColor,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${_fmt(event.start)} – ${_fmt(event.end)}',
+                    style: AppTextStyle.body.copyWith(
+                      fontSize: 12,
+                      color: tokens.AppThemeTokens.secondaryTextColor,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -51,7 +51,6 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
     return AnimatedBuilder(
       animation: Listenable.merge([
         ThemeService.instance.currentColor,
-        ThemeService.instance.currentStyle,
       ]),
       builder: (context, _) =>
           _buildScreen(context, ThemeService.instance.currentColor.value),

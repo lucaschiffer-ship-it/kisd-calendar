@@ -215,12 +215,10 @@ class _CourseShellCardState extends State<CourseShellCard>
         },
         child: ValueListenableBuilder<String>(
           valueListenable: ThemeService.instance.currentColor,
-          builder: (context, _, _) => ValueListenableBuilder<String>(
-            valueListenable: ThemeService.instance.currentStyle,
-            builder: (context, style, _) => ValueListenableBuilder<bool>(
+          builder: (context, _, _) => ValueListenableBuilder<bool>(
               valueListenable: ThemeService.instance.glassEnabled,
               builder: (context, glass, _) {
-              final radius = style == 'vivid' ? 10.0 : 5.0;
+              const radius = 5.0;
               final body = Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -232,11 +230,9 @@ class _CourseShellCardState extends State<CourseShellCard>
                       child: Text(
                         shell.title,
                         style: AppTextStyle.cardTitle.copyWith(
-                          fontSize: style == 'vivid' ? 27 : 23,
+                          fontSize: 23,
                           color: tokens.AppThemeTokens.titleColor,
-                          fontWeight: style == 'vivid'
-                              ? FontWeight.w700
-                              : FontWeight.w400,
+                          fontWeight: FontWeight.w400,
                         ),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
@@ -344,7 +340,6 @@ class _CourseShellCardState extends State<CourseShellCard>
           ),
         ),
       ),
-    ),
     ),
   );
   }
@@ -1265,8 +1260,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
-    final style = ThemeService.instance.currentStyle.value;
-    final radius = style == 'vivid' ? 10.0 : 5.0;
+    const radius = 5.0;
     final shell = _currentShell;
 
     final readRect = Rect.fromLTWH(
@@ -1421,14 +1415,10 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                                   : TextOverflow.visible,
                                               style: AppTextStyle.cardTitle
                                                   .copyWith(
-                                                fontSize: style == 'vivid'
-                                                    ? 27
-                                                    : 23,
+                                                fontSize: 23,
                                                 color: tokens
                                                     .AppThemeTokens.titleColor,
-                                                fontWeight: style == 'vivid'
-                                                    ? FontWeight.w700
-                                                    : FontWeight.w400,
+                                                fontWeight: FontWeight.w400,
                                               ),
                                             ),
                                           ),
@@ -1927,14 +1917,10 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                                 maxLines: null,
                                                 style: AppTextStyle.cardTitle
                                                     .copyWith(
-                                                  fontSize: style == 'vivid'
-                                                      ? 27
-                                                      : 23,
+                                                  fontSize: 23,
                                                   color: tokens.AppThemeTokens
                                                       .titleColor,
-                                                  fontWeight: style == 'vivid'
-                                                      ? FontWeight.w700
-                                                      : FontWeight.w400,
+                                                  fontWeight: FontWeight.w400,
                                                 ),
                                                 decoration:
                                                     _underlineDecoration(

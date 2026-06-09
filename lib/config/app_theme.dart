@@ -7,7 +7,6 @@ class AppThemeTokens {
   AppThemeTokens._();
 
   static String get _color => ThemeService.instance.currentColor.value;
-  static String get _style => ThemeService.instance.currentStyle.value;
 
   // ── Color tokens ─────────────────────────────────────────────────────────────
 
@@ -86,17 +85,15 @@ class AppThemeTokens {
   // Alias kept for existing widget references
   static Color get accentColor => eventAccent;
 
-  // ── Style tokens ──────────────────────────────────────────────────────────────
+  // ── Style tokens (minimal only) ───────────────────────────────────────────────
 
-  static FontWeight get titleFontWeight =>
-      _style == 'vivid' ? FontWeight.w700 : FontWeight.w400;
+  static FontWeight get titleFontWeight => FontWeight.w400;
 
-  static double get titleFontSize => _style == 'vivid' ? 27 : 23;
+  static double get titleFontSize => 23;
 
-  static double get cardBorderRadius => _style == 'vivid' ? 10.0 : 5.0;
+  static double get cardBorderRadius => 5.0;
 
-  // 'bar' for vivid, 'dot' for minimal
-  static bool get useEventDot => _style != 'vivid';
+  static bool get useEventDot => true;
 
   // ── Glass helper ──────────────────────────────────────────────────────────────
 

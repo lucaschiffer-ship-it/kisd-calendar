@@ -82,7 +82,6 @@ class _YearViewState extends State<YearView> {
     return AnimatedBuilder(
       animation: Listenable.merge([
         ThemeService.instance.currentColor,
-        ThemeService.instance.currentStyle,
         ThemeService.instance.glassEnabled,
       ]),
       builder: (context, _) => ListView.builder(

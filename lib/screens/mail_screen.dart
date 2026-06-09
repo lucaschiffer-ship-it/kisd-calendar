@@ -103,7 +103,6 @@ class _MailScreenState extends State<MailScreen>
     return AnimatedBuilder(
       animation: Listenable.merge([
         ThemeService.instance.currentColor,
-        ThemeService.instance.currentStyle,
         ThemeService.instance.glassEnabled,
       ]),
       builder: (context, _) => _buildContent(),

@@ -491,7 +491,6 @@ class _CalendarScreenState extends State<CalendarScreen>
     return AnimatedBuilder(
       animation: Listenable.merge([
         ThemeService.instance.currentColor,
-        ThemeService.instance.currentStyle,
         ThemeService.instance.glassEnabled,
         _stretchAnim,
         _dayBarAnim,
@@ -735,7 +734,11 @@ class _CalendarScreenState extends State<CalendarScreen>
                                 fontSize: 18,
                                 fontWeight: isToday ? FontWeight.w700 : FontWeight.w500,
                                 color: focusIndex == i
-                                    ? Colors.white
+                                    ? (todayIndex == i
+                                        ? Colors.white          // orange circle → white
+                                        : (colorKey == 'dark'
+                                            ? Colors.black      // white circle (dark) → black
+                                            : Colors.white))    // black circle (light) → white
                                     : (isToday
                                         ? AppColors.accent
                                         : (isWeekend
@@ -1390,7 +1393,6 @@ class _AllDayBandState extends State<_AllDayBand> {
     return AnimatedBuilder(
       animation: Listenable.merge([
         ThemeService.instance.currentColor,
-        ThemeService.instance.currentStyle,
       ]),
       builder: (context, _) => _buildBand(),
     );

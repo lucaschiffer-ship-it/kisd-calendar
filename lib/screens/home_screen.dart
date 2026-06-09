@@ -63,7 +63,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     loginService.addListener(_rebuild);
     mailService.addListener(_rebuild);
     ThemeService.instance.currentColor.addListener(_rebuild);
-    ThemeService.instance.currentStyle.addListener(_rebuild);
     ThemeService.instance.glassEnabled.addListener(_rebuild);
     SpacesBrowser.register((url) {
       _browserKey.currentState?.navigateTo(url);
@@ -81,7 +80,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     loginService.removeListener(_rebuild);
     mailService.removeListener(_rebuild);
     ThemeService.instance.currentColor.removeListener(_rebuild);
-    ThemeService.instance.currentStyle.removeListener(_rebuild);
     ThemeService.instance.glassEnabled.removeListener(_rebuild);
     super.dispose();
   }
@@ -307,9 +305,7 @@ class _MiniBrowserBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<String>(
       valueListenable: ThemeService.instance.currentColor,
-      builder: (context, _, _) => ValueListenableBuilder<String>(
-        valueListenable: ThemeService.instance.currentStyle,
-        builder: (context, _, _) => ValueListenableBuilder<bool>(
+      builder: (context, _, _) => ValueListenableBuilder<bool>(
         valueListenable: ThemeService.instance.glassEnabled,
         builder: (context, glass, _) {
         final fg = tokens.AppThemeTokens.miniBrowserTextColor;
@@ -385,8 +381,7 @@ class _MiniBrowserBar extends StatelessWidget {
         );
         },
       ),
-    ),
-  );
+    );
   }
 }
 

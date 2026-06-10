@@ -167,6 +167,28 @@ class _ListScreenState extends State<ListScreen>
     final stale = lastScrape == null ||
         DateTime.now().difference(lastScrape) > const Duration(hours: 24);
     if (stale) _scrapeBackground();
+    _maybeScrapeEvents();
+  }
+
+  Future<void> _maybeScrapeEvents() async {
+    final last = await CacheService().getKisdEventsLastScrape();
+    final stale = last == null ||
+        DateTime.now().difference(last) > const Duration(hours: 24);
+    if (stale) _scrapeEventsBackground();
+  }
+
+  Future<void> _scrapeEventsBackground() async {
+    try {
+      final events = await scraperService.scrapeKisdEvents();
+      final cache = CacheService();
+      await cache.saveKisdEvents(events);
+      await cache.setKisdEventsLastScrape(DateTime.now());
+      if (ThemeService.instance.showKisdEvents.value) {
+        CalendarService.instance.writeKisdEvents(events).ignore();
+      }
+    } catch (e) {
+      print('[events] background scrape failed: $e');
+    }
   }
 
   Future<void> _scrapeBackground() async {
@@ -196,6 +218,7 @@ class _ListScreenState extends State<ListScreen>
   Future<void> _scrape() async {
     if (!mounted) return;
     setState(() { _loading = true; _error = null; });
+    _scrapeEventsBackground();
 
     if (loginService.isLoading && !loginService.isLoggedIn) {
       final waitCompleter = Completer<void>();

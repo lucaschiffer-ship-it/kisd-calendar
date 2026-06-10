@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../services/cache_service.dart';
+import '../services/calendar_service.dart';
 import '../services/service_locator.dart';
 import '../services/theme_service.dart';
 import '../theme/tokens.dart';
@@ -102,6 +103,60 @@ class SettingsScreen extends StatelessWidget {
                           onTap: () => ThemeService.instance.setColor('light'),
                         ),
                       ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+
+          // ── Calendar ─────────────────────────────────────────────────────
+          const SizedBox(height: 24),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Text(
+              'CALENDAR',
+              style: AppTextStyles.sectionLabel(color: s.textSecondary),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: ValueListenableBuilder<bool>(
+              valueListenable: ThemeService.instance.showKisdEvents,
+              builder: (context, show, _) {
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(AppRadius.input),
+                  child: Container(
+                    color: s.surfaceElevated,
+                    child: SwitchListTile(
+                      title: Text(
+                        'KISD Events',
+                        style: AppTextStyles.bodyLarge(color: s.textPrimary)
+                            .copyWith(fontWeight: FontWeight.w500),
+                      ),
+                      subtitle: Text(
+                        'Show university events in calendar',
+                        style: AppTextStyles.bodySmall(color: s.textSecondary),
+                      ),
+                      value: show,
+                      onChanged: (v) async {
+                        await ThemeService.instance.setShowKisdEvents(v);
+                        if (v) {
+                          final events =
+                              await CacheService().loadKisdEvents();
+                          if (events.isNotEmpty) {
+                            CalendarService.instance
+                                .writeKisdEvents(events)
+                                .ignore();
+                          }
+                        } else {
+                          CalendarService.instance
+                              .clearKisdEventsCalendar()
+                              .ignore();
+                        }
+                      },
+                      activeThumbColor: s.accent,
                     ),
                   ),
                 );

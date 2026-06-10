@@ -5,6 +5,7 @@ import 'package:flutter/material.dart' show ChangeNotifier, TimeOfDay;
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../models/course_shell.dart';
+import '../models/kisd_event.dart';
 import '../models/one_off_event.dart';
 import 'cache_service.dart';
 import 'calendar_service.dart';
@@ -16,6 +17,9 @@ class ScraperService extends ChangeNotifier {
       'https://spaces.kisd.de/course-selection/?semester=2026-1&mycourses=on';
   static const _allCoursesUrl =
       'https://spaces.kisd.de/course-selection/?semester=2026-1';
+  static const _kEventsUrl =
+      'https://spaces.kisd.de/home/wp-admin/edit.php'
+      '?post_type=event&mode=list&posts_per_page=400&paged=1';
 
   bool _isLoading = false;
   String? _error;
@@ -24,6 +28,231 @@ class ScraperService extends ChangeNotifier {
   String? get error => _error;
 
   // ─── Public API ───────────────────────────────────────────────────────────
+
+  Future<List<KisdEvent>> scrapeKisdEvents() async {
+    final completer = Completer<List<KisdEvent>>();
+    HeadlessInAppWebView? view;
+    var processing = false;
+
+    view = HeadlessInAppWebView(
+      initialUrlRequest: URLRequest(url: WebUri(_kEventsUrl)),
+      initialSettings: InAppWebViewSettings(
+        javaScriptEnabled: true,
+        domStorageEnabled: true,
+        sharedCookiesEnabled: true,
+      ),
+      onLoadStop: (ctrl, pageUrl) async {
+        if (completer.isCompleted || processing) return;
+        final urlStr = pageUrl?.toString() ?? '';
+        print('[events] onLoadStop: $urlStr');
+
+        if (urlStr.contains('login.th-koeln.de') ||
+            urlStr.contains('mfa.th-koeln.de') ||
+            urlStr.contains('wp-login.php')) {
+          if (!completer.isCompleted) {
+            completer.completeError(
+                Exception('[events] auth_required: redirected to $urlStr'));
+            view?.dispose();
+            view = null;
+          }
+          return;
+        }
+
+        if (!urlStr.contains('wp-admin/edit.php') ||
+            !urlStr.contains('post_type=event')) {
+          return;
+        }
+
+        processing = true;
+        try {
+          // ── Recon: dump DOM structure before attempting parse ─────────────
+          final recon = await ctrl.callAsyncJavaScript(functionBody: r"""
+            const url   = window.location.href;
+            const title = document.title;
+            const theList = document.querySelector('table#the-list');
+            const rowCount = theList
+              ? theList.querySelectorAll('tbody tr').length
+              : -1;
+            const tableIds = theList ? [] :
+              Array.from(document.querySelectorAll('table'))
+                   .map(t => t.id || '(no-id)');
+            const colnames = Array.from(
+              document.querySelectorAll('[data-colname]')
+            ).slice(0, 20).map(el => el.getAttribute('data-colname'));
+            const firstTr = document.querySelector('table tr');
+            const firstTrHtml = firstTr
+              ? firstTr.outerHTML.substring(0, 2000)
+              : '(no tr found)';
+            const hasLoginForm =
+              !!document.querySelector('input[name="log"]') ||
+              document.body.innerText.includes('Please log in');
+
+            // ── Extended probes ──────────────────────────────────────────
+            const allTrCount = document.querySelectorAll('tr').length;
+
+            const tbodyInfos = Array.from(document.querySelectorAll('tbody'))
+              .map((tb, i) => ({ i, directTrCount: tb.querySelectorAll(':scope > tr').length }));
+
+            const dataRow = document.querySelector('tr:has(td[data-colname="Event"])');
+            const dataRowHtml = dataRow ? dataRow.outerHTML.substring(0, 2000) : null;
+
+            const tdEventCount   = document.querySelectorAll('td[data-colname="Event"]').length;
+            const tdColnameTotal = document.querySelectorAll('td[data-colname]').length;
+            const thColnameTotal = document.querySelectorAll('th[data-colname]').length;
+
+            const displayingNum = document.querySelector('.displaying-num');
+            const displayingNumText = displayingNum ? displayingNum.textContent : '(not found)';
+
+            const subsubsub = document.querySelector('.subsubsub');
+            const viewTabs = subsubsub
+              ? subsubsub.textContent.replace(/\s+/g, ' ').trim()
+              : '(not found)';
+
+            const mainTable = document.querySelector('table.wp-list-table');
+            const wpListTableInnerHtml = mainTable
+              ? mainTable.innerHTML.substring(0, 3000)
+              : null;
+
+            return JSON.stringify({
+              url, title, theListFound: !!theList, rowCount,
+              tableIds, colnames, firstTrHtml, hasLoginForm,
+              allTrCount, tbodyInfos, dataRowHtml,
+              tdEventCount, tdColnameTotal, thColnameTotal,
+              displayingNumText, viewTabs,
+              wpListTableExists: !!mainTable, wpListTableInnerHtml
+            });
+          """);
+          if (recon?.value != null) {
+            final r = json.decode(recon!.value.toString()) as Map<String, dynamic>;
+            print('[evt-recon] url=${r['url']}');
+            print('[evt-recon] title=${r['title']}');
+            print('[evt-recon] #the-list found=${r['theListFound']}  rowCount=${r['rowCount']}');
+            if (r['theListFound'] == false) {
+              print('[evt-recon] tableIds=${r['tableIds']}');
+            }
+            print('[evt-recon] data-colname sample=${r['colnames']}');
+            print('[evt-recon] hasLoginForm=${r['hasLoginForm']}');
+            print('[evt-recon] firstTrHtml=${r['firstTrHtml']}');
+            // Extended probes
+            print('[evt-recon] total <tr> count=${r['allTrCount']}');
+            print('[evt-recon] tbody infos=${r['tbodyInfos']}');
+            if (r['dataRowHtml'] != null) {
+              print('[evt-recon] FOUND data row outerHTML=${r['dataRowHtml']}');
+            } else {
+              print('[evt-recon] NO row with td[data-colname="Event"] exists');
+            }
+            print('[evt-recon] td[data-colname="Event"] count=${r['tdEventCount']}');
+            print('[evt-recon] td[data-colname] total=${r['tdColnameTotal']}');
+            print('[evt-recon] th[data-colname] total=${r['thColnameTotal']}');
+            print('[evt-recon] displaying-num=${r['displayingNumText']}');
+            print('[evt-recon] view tabs=${r['viewTabs']}');
+            print('[evt-recon] wp-list-table exists=${r['wpListTableExists']}');
+            if (r['wpListTableInnerHtml'] != null) {
+              print('[evt-recon] wp-list-table innerHTML=${r['wpListTableInnerHtml']}');
+            }
+          } else {
+            print('[evt-recon] recon JS returned null');
+          }
+          // ── End recon ─────────────────────────────────────────────────────
+
+          var raw = await ctrl.callAsyncJavaScript(
+              functionBody: _kEventsScript);
+          if (raw?.value == null) {
+            print('[events] JS returned null — retrying in 2s');
+            await Future.delayed(const Duration(seconds: 2));
+            raw = await ctrl.callAsyncJavaScript(
+                functionBody: _kEventsScript);
+          }
+
+          final jsonStr = raw?.value?.toString() ?? '[]';
+          final list = (json.decode(jsonStr) as List<dynamic>)
+              .cast<Map<String, dynamic>>();
+
+          final cutoff =
+              DateTime.now().subtract(const Duration(days: 365 * 2));
+          final events = <KisdEvent>[];
+          for (final m in list) {
+            final start =
+                _parseEventDateTime((m['startRaw'] as String?) ?? '');
+            final end =
+                _parseEventDateTime((m['endRaw'] as String?) ?? '') ??
+                    start;
+            if (start == null) continue;
+            if (end != null && end.isBefore(cutoff)) continue;
+            final recurrence =
+                ((m['recurrence'] as String?) ?? 'one time only').trim();
+            events.add(KisdEvent(
+              id: (m['id'] as String?) ?? 'post-unknown',
+              title: (m['title'] as String?) ?? '',
+              start: start,
+              end: end ?? start,
+              venue: _nullIfEmpty(m['venue'] as String?),
+              organiser: _nullIfEmpty(m['organiser'] as String?),
+              categories:
+                  (m['categories'] as List<dynamic>).cast<String>(),
+              recurrence: recurrence,
+              isRecurring: (m['isRecurring'] as bool?) ??
+                  (recurrence.toLowerCase() != 'one time only'),
+              url: _nullIfEmpty(m['url'] as String?),
+            ));
+          }
+
+          final recurring = events.where((e) => e.isRecurring).length;
+          print('[evt-scrape] total=${events.length} rows=${list.length} recurring=$recurring');
+          if (events.isNotEmpty) {
+            final sorted = [...events]..sort((a, b) => a.start.compareTo(b.start));
+            print('[evt-scrape] earliest=${sorted.first.start}  latest=${sorted.last.start}');
+            final first = events.first;
+            print('[evt-scrape] first: id=${first.id} title="${first.title}" '
+                'start=${first.start} venue=${first.venue} '
+                'recurrence=${first.recurrence} isRecurring=${first.isRecurring}');
+          }
+          completer.complete(events);
+        } catch (e, st) {
+          if (!completer.isCompleted) completer.completeError(e, st);
+        } finally {
+          view?.dispose();
+          view = null;
+        }
+      },
+      onReceivedError: (ctrl, req, err) {
+        if (req.isForMainFrame == true && !completer.isCompleted) {
+          print('[events] page error: ${err.description}');
+          completer.completeError(Exception(err.description));
+          view?.dispose();
+          view = null;
+        }
+      },
+    );
+
+    final sessionCookies = await loginService.getSavedCookies();
+    if (sessionCookies.isNotEmpty) {
+      final mgr = CookieManager.instance();
+      for (final c in sessionCookies) {
+        try {
+          await mgr.setCookie(
+            url: WebUri('https://spaces.kisd.de'),
+            name: c['name'] as String,
+            value: c['value'] as String,
+            domain: c['domain'] as String?,
+            path: (c['path'] as String?) ?? '/',
+            isSecure: c['isSecure'] as bool?,
+            isHttpOnly: c['isHttpOnly'] as bool?,
+          );
+        } catch (_) {}
+      }
+    }
+
+    await view!.run();
+    return completer.future.timeout(
+      const Duration(minutes: 5),
+      onTimeout: () =>
+          throw TimeoutException('[events] scraper timed out after 5 minutes'),
+    );
+  }
+
+  static String? _nullIfEmpty(String? s) =>
+      (s == null || s.isEmpty) ? null : s;
 
   Future<List<CourseShell>> loadCached() async {
     final raw = await CacheService().loadCourses();
@@ -643,6 +872,169 @@ class ScraperService extends ChangeNotifier {
       return JSON.stringify({ location: null, spaceSlug: null, description: null, lecturer: null, timeframe: null });
     }
   """;
+
+  // ─── JS: extract events from the WP admin event list page ────────────────
+
+  static const _kEventsScript = r"""
+    function simpleHash(s) {
+      let h = 0;
+      for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+      return 'h' + Math.abs(h).toString();
+    }
+
+    // Selector identical to the recon probe that returned 377 rows.
+    const rows = Array.from(document.querySelectorAll('tr'))
+      .filter(row => row.querySelector('td[data-colname="Event"]'));
+
+    const results = [];
+
+    for (const row of rows) {
+      const titleCell = row.querySelector('td[data-colname="Event"]');
+
+      // Skip drafts (post-state span is present for non-published rows).
+      if (titleCell.querySelector('.post-state')) continue;
+
+      // Title: clone strong (or cell), strip UI chrome, read clean text.
+      const titleNode = titleCell.querySelector('strong') || titleCell;
+      const clone = titleNode.cloneNode(true);
+      clone.querySelectorAll('.post-state, .row-actions').forEach(n => n.remove());
+      const title = clone.textContent.trim().replace(/\s+/g, ' ');
+      if (!title) continue;
+
+      // ID: row.id is "post-NNNN" in WP admin.
+      let id = row.id;
+      if (!id) {
+        const lnk = row.querySelector('a.row-title, td[data-colname="Event"] a');
+        const href = lnk ? lnk.getAttribute('href') : '';
+        const m = href ? href.match(/[?&]post=(\d+)/) : null;
+        id = m ? ('post-' + m[1]) : ('post-' + simpleHash(title));
+      }
+
+      // URL: use .href property for the full absolute URL.
+      const linkEl = row.querySelector('a.row-title, td[data-colname="Event"] a');
+      const url = linkEl ? linkEl.href : null;
+
+      // Dates: innerText converts <br> to \n, giving "Jun, 10 2026\n22:30".
+      const startCell = row.querySelector('td[data-colname="Start Date/Time"]');
+      const startRaw = startCell ? startCell.innerText.trim() : '';
+      if (!startRaw) continue;
+
+      const endCell = row.querySelector('td[data-colname="End Date/Time"]');
+      const endRaw = (endCell && endCell.innerText.trim()) || startRaw;
+
+      // Venue / Organiser: "—" means empty.
+      const venueCell = row.querySelector('td[data-colname="Venue"]');
+      const venueText = venueCell ? venueCell.innerText.trim() : '';
+      const venue = (venueText === '—' || !venueText) ? null : venueText;
+
+      const orgCell = row.querySelector('td[data-colname="Organiser"]');
+      const orgText = orgCell ? orgCell.innerText.trim() : '';
+      const organiser = (orgText === '—' || !orgText) ? null : orgText;
+
+      // Categories: "—" means empty.
+      const catCell = row.querySelector('td[data-colname="Categories"]');
+      const catText = catCell ? catCell.innerText.trim() : '';
+      const categories = (catText === '—' || !catText)
+        ? []
+        : catText.split(',').map(s => s.trim()).filter(Boolean);
+
+      // Recurrence.
+      const recCell = row.querySelector('td[data-colname="Recurrence"]');
+      const recurrence = (recCell ? recCell.innerText.trim() : '') || 'one time only';
+      const isRecurring = recurrence !== 'one time only';
+
+      results.push({ id, title, url, startRaw, endRaw,
+                     venue, organiser, categories, recurrence, isRecurring });
+    }
+
+    return JSON.stringify(results);
+  """;
+
+  // ─── Parse admin date strings (e.g. "Jun, 10 2026 02:30") ─────────────────
+
+  static final _kMonthAbbrs = <String, int>{
+    'jan': 1,  'feb': 2,  'mar': 3,  'apr': 4,  'may': 5,  'jun': 6,
+    'jul': 7,  'aug': 8,  'sep': 9,  'oct': 10, 'nov': 11, 'dec': 12,
+    'mär': 3,  'mai': 5,  'okt': 10, 'dez': 12,
+  };
+
+  static DateTime? _parseAdminDate(String text) {
+    if (text.isEmpty) return null;
+    // ISO / near-ISO
+    final iso = DateTime.tryParse(text) ??
+        DateTime.tryParse(text.replaceFirst(' ', 'T'));
+    if (iso != null) return iso;
+
+    // Strip optional day-of-week prefix "Mon, " or "Montag, "
+    final stripped = text.replaceFirst(
+        RegExp(r'^[A-Za-z]{2,10},?\s+', caseSensitive: false), '');
+
+    // "MMM[,] D YYYY [H:MM[ am|pm]]" or "MMM D[,] YYYY [H:MM[ am|pm]]"
+    final monthFirst = RegExp(
+      r'^([A-Za-z]{3})[A-Za-z]*,?\s+(\d{1,2}),?\s+(\d{4})'
+      r'(?:\s+(\d{1,2}):(\d{2})(?:\s*(am|pm|AM|PM))?)?',
+    );
+    final mf = monthFirst.firstMatch(stripped);
+    if (mf != null) {
+      final month = _kMonthAbbrs[mf.group(1)!.toLowerCase()];
+      final day   = int.tryParse(mf.group(2)!);
+      final year  = int.tryParse(mf.group(3)!);
+      if (month != null && day != null && year != null) {
+        int hour   = mf.group(4) != null ? (int.tryParse(mf.group(4)!) ?? 0) : 0;
+        final min  = mf.group(5) != null ? (int.tryParse(mf.group(5)!) ?? 0) : 0;
+        final ampm = mf.group(6)?.toLowerCase();
+        if (ampm == 'pm' && hour < 12) hour += 12;
+        if (ampm == 'am' && hour == 12) hour = 0;
+        return DateTime(year, month, day, hour, min);
+      }
+    }
+
+    // EU numeric: "D.M.YYYY [H:MM]" or "D/M/YYYY [H:MM]"
+    final eu = RegExp(
+        r'^(\d{1,2})[./](\d{1,2})[./](\d{4})(?:\s+(\d{1,2}):(\d{2}))?');
+    final em = eu.firstMatch(stripped);
+    if (em != null) {
+      final day   = int.tryParse(em.group(1)!);
+      final month = int.tryParse(em.group(2)!);
+      final year  = int.tryParse(em.group(3)!);
+      if (day != null && month != null && year != null) {
+        final hour = em.group(4) != null ? (int.tryParse(em.group(4)!) ?? 0) : 0;
+        final min  = em.group(5) != null ? (int.tryParse(em.group(5)!) ?? 0) : 0;
+        return DateTime(year, month, day, hour, min);
+      }
+    }
+
+    return null;
+  }
+
+  // ─── Parse "Jun, 10 2026\n22:30" (innerText of WP admin date cells) ────────
+
+  static DateTime? _parseEventDateTime(String raw) {
+    if (raw.isEmpty) return null;
+    final parts = raw.split('\n');
+    if (parts.length >= 2) {
+      final datePart = parts[0].trim(); // e.g. "Jun, 10 2026"
+      final timePart = parts[1].trim(); // e.g. "22:30"
+      final commaIdx = datePart.indexOf(',');
+      if (commaIdx >= 0) {
+        final monthStr = datePart.substring(0, commaIdx).trim().toLowerCase();
+        final rest     = datePart.substring(commaIdx + 1).trim().split(RegExp(r'\s+'));
+        if (rest.length >= 2) {
+          final day   = int.tryParse(rest[0]);
+          final year  = int.tryParse(rest[1]);
+          final abbr  = monthStr.length >= 3 ? monthStr.substring(0, 3) : monthStr;
+          final month = _kMonthAbbrs[abbr];
+          if (day != null && year != null && month != null) {
+            final tp     = timePart.split(':');
+            final hour   = tp.isNotEmpty ? (int.tryParse(tp[0]) ?? 0) : 0;
+            final minute = tp.length > 1  ? (int.tryParse(tp[1]) ?? 0) : 0;
+            return DateTime(year, month, day, hour, minute);
+          }
+        }
+      }
+    }
+    return _parseAdminDate(raw); // fallback for any other format
+  }
 
   // ─── Build CourseShell from extracted map ─────────────────────────────────
 

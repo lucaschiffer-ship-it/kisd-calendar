@@ -8,7 +8,9 @@ import 'package:google_fonts/google_fonts.dart';
 import '../config/app_theme.dart' as tokens;
 import '../screens/event_detail_screen.dart';
 import '../screens/settings_screen.dart';
+import '../services/cache_service.dart';
 import '../services/calendar_service.dart';
+import '../services/service_locator.dart';
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/day_column.dart';
@@ -286,10 +288,25 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   void _reload() {
     CalendarService.instance.clearCache();
+    _scrapeEventsBackground();
     setState(() {
       _slotKeys = List.generate(5, (_) => GlobalKey());
     });
     _preloadRange(_focusedMultiDayPage);
+  }
+
+  Future<void> _scrapeEventsBackground() async {
+    try {
+      final events = await scraperService.scrapeKisdEvents();
+      final cache = CacheService();
+      await cache.saveKisdEvents(events);
+      await cache.setKisdEventsLastScrape(DateTime.now());
+      if (ThemeService.instance.showKisdEvents.value) {
+        CalendarService.instance.writeKisdEvents(events).ignore();
+      }
+    } catch (e) {
+      print('[events] calendar reload scrape failed: $e');
+    }
   }
 
   // ── Scroll helpers ─────────────────────────────────────────────────────────

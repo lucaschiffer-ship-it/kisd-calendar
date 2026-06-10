@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/course_shell.dart';
+import '../models/kisd_event.dart';
 
 class CacheService {
   static const _keyCourses    = 'kisd_courses';
@@ -85,6 +86,42 @@ class CacheService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_keyCourses);
     await prefs.remove(_keyUpdated);
+  }
+
+  // ── KISD Events cache ────────────────────────────────────────────────────
+
+  static const _keyEventsV2        = 'kisd_events_v2';
+  static const _keyEventsV2Scraped = 'kisd_events_v2_last_scrape';
+
+  Future<void> saveKisdEvents(List<KisdEvent> events) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+        _keyEventsV2, json.encode(events.map((e) => e.toJson()).toList()));
+  }
+
+  Future<List<KisdEvent>> loadKisdEvents() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_keyEventsV2);
+    if (raw == null) return [];
+    try {
+      final list = (json.decode(raw) as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+      return list.map(KisdEvent.fromJson).toList();
+    } catch (e) {
+      print('[cache] loadKisdEvents parse error: $e');
+      return [];
+    }
+  }
+
+  Future<DateTime?> getKisdEventsLastScrape() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_keyEventsV2Scraped);
+    return raw != null ? DateTime.tryParse(raw) : null;
+  }
+
+  Future<void> setKisdEventsLastScrape(DateTime dt) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyEventsV2Scraped, dt.toIso8601String());
   }
 
 }

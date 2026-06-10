@@ -8,6 +8,7 @@ import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../models/course_shell.dart';
+import '../models/kisd_event.dart';
 
 // ─── Simple event model returned to UI ────────────────────────────────────────
 
@@ -206,6 +207,178 @@ class CalendarService {
     }
 
     await prefs.setBool('kisd_events_wipe_v1_done', true);
+  }
+
+  // ── KISD Events calendar ────────────────────────────────────────────────────
+
+  Future<String?> _ensureKisdEventsCalendar() async {
+    final cals = await _plugin.retrieveCalendars();
+    if (!cals.isSuccess || cals.data == null) return null;
+    final existing = cals.data!.where(
+      (c) => c.name == 'KISD Events' && c.isReadOnly == false,
+    ).firstOrNull;
+    if (existing?.id != null) return existing!.id;
+    final r = await _plugin.createCalendar(
+      'KISD Events',
+      calendarColor: _kisdColor,
+      localAccountName: 'KISD',
+    );
+    return r.isSuccess ? r.data : null;
+  }
+
+  Future<void> _wipeKisdEventsCalendar(String calId) async {
+    final from = DateTime.now().subtract(const Duration(days: 365 * 2));
+    final to   = DateTime.now().add(const Duration(days: 365 * 5));
+    final r = await _plugin.retrieveEvents(
+        calId, RetrieveEventsParams(startDate: from, endDate: to));
+    if (!r.isSuccess || r.data == null) return;
+    var deleted = 0;
+    for (final e in r.data!) {
+      if (e.eventId != null) {
+        try {
+          await _plugin.deleteEvent(calId, e.eventId!);
+          deleted++;
+        } catch (_) {}
+      }
+    }
+    print('[cal] _wipeKisdEventsCalendar: deleted $deleted events from $calId');
+  }
+
+  Future<void> writeKisdEvents(List<KisdEvent> events) async {
+    if (_isSimulator) return;
+    print('[cal] writeKisdEvents: ${events.length} events');
+    try {
+      await _ensureTz();
+      if (!await _hasPermission()) return;
+      final calId = await _ensureKisdEventsCalendar();
+      if (calId == null) return;
+
+      await _wipeKisdEventsCalendar(calId);
+
+      final loc = tz.local;
+      final toWrite = events.where(_withinWindow).toList();
+      var recurringCount = 0;
+      var parseFailCount = 0;
+
+      for (final evt in toWrite) {
+        final evtStart = tz.TZDateTime(loc,
+            evt.start.year, evt.start.month, evt.start.day,
+            evt.start.hour, evt.start.minute);
+        final evtEnd = tz.TZDateTime(loc,
+            evt.end.year, evt.end.month, evt.end.day,
+            evt.end.hour, evt.end.minute);
+
+        final calEvt = Event(calId)
+          ..title = evt.title
+          ..start = evtStart
+          ..end = evtEnd
+          ..location = evt.venue
+          ..description = evt.url;
+
+        if (evt.isRecurring) {
+          final rule = _parseKisdRecurrence(evt.recurrence);
+          if (rule != null) {
+            calEvt.recurrenceRule = rule;
+            recurringCount++;
+          } else {
+            parseFailCount++;
+          }
+        }
+
+        await _plugin.createOrUpdateEvent(calEvt);
+      }
+
+      clearCache();
+      writeRevision.value++;
+      print('[evt-write] recurring set: $recurringCount of ${toWrite.length} written with RecurrenceRule');
+      print('[evt-write] recurring parse failures: $parseFailCount events fell back to single entry');
+    } catch (e) {
+      print('[cal] writeKisdEvents: $e');
+    }
+  }
+
+  // Returns true if the event should be written to the calendar.
+  // Non-recurring: keep only if it ended less than 2 years ago.
+  // Recurring: always keep — the RecurrenceRule.endDate bounds iOS rendering.
+  static bool _withinWindow(KisdEvent e) {
+    if (e.isRecurring) return true;
+    final cutoff = DateTime.now().subtract(const Duration(days: 730));
+    return e.start.isAfter(cutoff);
+  }
+
+  /// Parses a KISD recurrence string into a [RecurrenceRule].
+  /// Returns null for "one time only" or any unrecognised format.
+  static RecurrenceRule? _parseKisdRecurrence(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty || s.toLowerCase() == 'one time only') return null;
+
+    // "every week on <DayName>[ until <Mon, DDth YYYY>]"
+    final weeklyRe = RegExp(
+      r'^every\s+week\s+on\s+(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)'
+      r'(?:\s+until\s+(.+))?$',
+      caseSensitive: false,
+    );
+    final m = weeklyRe.firstMatch(s);
+    if (m != null) {
+      final dayName = m.group(1)!.toLowerCase();
+      const dayMap = <String, DayOfWeek>{
+        'monday':    DayOfWeek.Monday,
+        'tuesday':   DayOfWeek.Tuesday,
+        'wednesday': DayOfWeek.Wednesday,
+        'thursday':  DayOfWeek.Thursday,
+        'friday':    DayOfWeek.Friday,
+        'saturday':  DayOfWeek.Saturday,
+        'sunday':    DayOfWeek.Sunday,
+      };
+      final dayOfWeek = dayMap[dayName]!;
+      final until = m.group(2) != null ? _parseKisdUntilDate(m.group(2)!) : null;
+      return RecurrenceRule(
+        RecurrenceFrequency.Weekly,
+        interval: 1,
+        daysOfWeek: [dayOfWeek],
+        endDate: until,
+      );
+    }
+
+    print('[evt-recurrence] unrecognized format: "$s"');
+    return null;
+  }
+
+  /// Parses "Nov, 13th 2029" → DateTime(2029, 11, 13, 23, 59, 59).
+  static DateTime? _parseKisdUntilDate(String raw) {
+    final s = raw.trim();
+    final m = RegExp(
+      r'^([A-Za-z]+),\s*(\d+)(?:st|nd|rd|th)?\s+(\d{4})$',
+    ).firstMatch(s);
+    if (m == null) {
+      print('[evt-recurrence] couldn\'t parse until-date: "$s"');
+      return null;
+    }
+    final abbr = m.group(1)!.substring(0, 3);
+    final day  = int.parse(m.group(2)!);
+    final year = int.parse(m.group(3)!);
+    const months = <String, int>{
+      'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5,  'Jun': 6,
+      'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct':10, 'Nov': 11, 'Dec': 12,
+    };
+    final month = months[abbr];
+    if (month == null) return null;
+    return DateTime(year, month, day, 23, 59, 59);
+  }
+
+  Future<void> clearKisdEventsCalendar() async {
+    if (_isSimulator) return;
+    try {
+      await _ensureTz();
+      if (!await _hasPermission()) return;
+      final calId = await _ensureKisdEventsCalendar();
+      if (calId == null) return;
+      await _wipeKisdEventsCalendar(calId);
+      clearCache();
+      writeRevision.value++;
+    } catch (e) {
+      print('[cal] clearKisdEventsCalendar: $e');
+    }
   }
 
   // ── Write courses ───────────────────────────────────────────────────────────

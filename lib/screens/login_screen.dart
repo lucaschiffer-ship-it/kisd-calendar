@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/service_locator.dart';
+import '../theme/tokens.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -58,7 +59,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 Text(
                   'KISD',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: TextStyle( // logo/login-specific, no canonical token
                     fontSize: 48,
                     fontWeight: FontWeight.w700,
                     color: cs.onSurface,
@@ -68,7 +69,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 Text(
                   'Calendar',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: TextStyle( // logo/login-specific, no canonical token
                     fontSize: 20,
                     fontWeight: FontWeight.w300,
                     color: cs.onSurface.withAlpha(128),
@@ -99,7 +100,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   Text(
                     _error!,
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: cs.error, fontSize: 13),
+                    style: AppTextStyles.bodySmall(color: cs.error),
                   ),
                 ],
                 const SizedBox(height: 24),
@@ -108,21 +109,21 @@ class _LoginScreenState extends State<LoginScreen> {
                   style: FilledButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(AppRadius.input),
                     ),
                   ),
                   child: _loading
-                      ? const SizedBox(
+                      ? SizedBox(
                           width: 20,
                           height: 20,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Colors.white,
+                            color: AppColorScheme.current.onAccent,
                           ),
                         )
                       : const Text(
                           'Sign in',
-                          style: TextStyle(
+                          style: TextStyle( // logo/login-specific, no canonical token
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
                           ),
@@ -137,7 +138,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   InputDecoration _field(ColorScheme cs, String label) {
-    final radius = BorderRadius.circular(12);
+    final radius = BorderRadius.circular(AppRadius.input);
     return InputDecoration(
       labelText: label,
       border: OutlineInputBorder(borderRadius: radius),

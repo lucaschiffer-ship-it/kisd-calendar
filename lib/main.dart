@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
+import 'services/calendar_service.dart';
 import 'services/service_locator.dart';
-import 'services/settings_service.dart';
 import 'services/theme_service.dart';
 import 'theme/app_theme.dart';
 import 'theme/tokens.dart';
@@ -11,8 +11,8 @@ import 'theme/tokens.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await ThemeService.instance.init();
-  await SettingsService.instance.init();
   await loginService.initialize();
+  CalendarService.instance.performStartupCleanup().ignore();
   loginService.navigatorKey = navigatorKey;
 
   // Keep AppColorScheme.current in sync with ThemeService so all AppThemeTokens

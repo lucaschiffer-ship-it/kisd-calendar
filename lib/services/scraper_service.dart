@@ -3,12 +3,9 @@ import 'dart:collection';
 import 'dart:convert';
 import 'package:flutter/material.dart' show ChangeNotifier, TimeOfDay;
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
-import 'package:html/parser.dart' show parse;
-import 'package:http/http.dart' as http;
 
 import '../models/course_shell.dart';
 import '../models/one_off_event.dart';
-import '../models/kisd_event.dart';
 import 'cache_service.dart';
 import 'calendar_service.dart';
 import 'service_locator.dart';
@@ -27,116 +24,6 @@ class ScraperService extends ChangeNotifier {
   String? get error => _error;
 
   // ─── Public API ───────────────────────────────────────────────────────────
-
-  Future<List<KisdEvent>> scrapeKisdEvents() async {
-    print('[events] scrapeKisdEvents (public events page)');
-
-    final sessionCookies = await loginService.getSavedCookies();
-    final cookieHeader = sessionCookies
-        .map((c) => '${c['name']}=${c['value']}')
-        .join('; ');
-    print('[events] sending ${sessionCookies.length} cookies');
-
-    final headers = {
-      'Cookie': cookieHeader,
-      'Accept': 'text/html,application/xhtml+xml',
-      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)',
-    };
-
-    // WordPress caps per-page via site settings (typically ~21). Paginate through all.
-    final events = <KisdEvent>[];
-    int page = 1;
-    int firstPageSize = 0;
-
-    while (true) {
-      final pageUrl = 'https://spaces.kisd.de/home/?post_type=event&paged=$page';
-      http.Response resp;
-      try {
-        resp = await http.get(Uri.parse(pageUrl), headers: headers)
-            .timeout(const Duration(seconds: 30));
-      } catch (e) {
-        print('[events] HTTP error page $page: $e');
-        break;
-      }
-
-      if (resp.statusCode != 200) {
-        print('[events] status ${resp.statusCode} page $page — stopping');
-        break;
-      }
-
-      final body = resp.body;
-      if (body.contains('id="loginform"') ||
-          (body.contains('<title>Log In') &&
-           !body.contains('wp-login.php?action=logout'))) {
-        print('[events] auth failed on page $page');
-        break;
-      }
-
-      final doc = parse(body);
-      final articles = doc.querySelectorAll(
-          'article.type-event, article[class*="event"], '
-          '.event-item, [class*="event-list"] article');
-
-      if (articles.isEmpty) {
-        print('[events] page $page: 0 articles — done');
-        break;
-      }
-
-      if (page == 1) firstPageSize = articles.length;
-
-      for (var i = 0; i < articles.length; i++) {
-        final art = articles[i];
-
-        final rawId = art.attributes['id'] ??
-            art.attributes['data-post-id'] ??
-            'evt_p${page}_$i';
-        final id = rawId.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
-
-        final titleEl = art.querySelector(
-            'h2 a, h3 a, h2, h3, .entry-title a, .entry-title');
-        if (titleEl == null) continue;
-        final title = titleEl.text.trim();
-        if (title.isEmpty || title == 'View') continue;
-
-        final eventUrl = titleEl.attributes['href'] ??
-            art.querySelector('a[href]')?.attributes['href'];
-
-        final allTimes = art.querySelectorAll('time[datetime]');
-        final startDatetime = allTimes.isNotEmpty
-            ? allTimes[0].attributes['datetime'] : null;
-        final endDatetime = allTimes.length > 1
-            ? allTimes[1].attributes['datetime'] : null;
-
-        final venueEl = art.querySelector('[class*="venue"], .location');
-        final venue = venueEl?.text.replaceAll(RegExp(r'\s+'), ' ').trim();
-
-        final start = startDatetime != null ? _parseEventDate(startDatetime) : null;
-        if (start == null) continue;
-        final end = endDatetime != null
-            ? (_parseEventDate(endDatetime) ?? start.add(const Duration(hours: 1)))
-            : start.add(const Duration(hours: 1));
-
-        events.add(KisdEvent(
-          id: id,
-          title: title,
-          venue: (venue?.isEmpty ?? true) ? null : venue,
-          start: start,
-          end: end,
-          recurrenceRule: null,
-          url: eventUrl,
-        ));
-      }
-
-      print('[events] page $page: ${articles.length} articles, running total: ${events.length}');
-
-      // Last page has fewer articles than the first page.
-      if (articles.length < firstPageSize) break;
-      page++;
-    }
-
-    print('[events] parsed ${events.length} valid events across $page page(s)');
-    return events;
-  }
 
   Future<List<CourseShell>> loadCached() async {
     final raw = await CacheService().loadCourses();
@@ -1021,68 +908,6 @@ class ScraperService extends ChangeNotifier {
 
   static CourseShell parseCachedJson(Map<String, dynamic> json) => _fromJson(json);
 
-  // ─── Parse a date string from the wp-admin events table ──────────────────
-  // Handles formats like "May 27, 2026 @ 1:00 pm", "2026-05-27 13:00",
-  // "May 27 2026 01:00", etc.
-
-  static const _kMonthMap = {
-    'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
-    'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12,
-  };
-
-  static DateTime? _parseEventDate(String raw) {
-    final s = raw.replaceAll(RegExp(r'[\n\r\t]+'), ' ').trim();
-    if (s.isEmpty) return null;
-
-    // ISO-style: 2026-05-27 13:00 or 2026-05-27T13:00
-    final isoRe = RegExp(r'(\d{4})-(\d{2})-(\d{2})[T\s](\d{1,2}):(\d{2})');
-    final isoM = isoRe.firstMatch(s);
-    if (isoM != null) {
-      try {
-        return DateTime(
-          int.parse(isoM.group(1)!), int.parse(isoM.group(2)!),
-          int.parse(isoM.group(3)!), int.parse(isoM.group(4)!),
-          int.parse(isoM.group(5)!),
-        );
-      } catch (_) {}
-    }
-
-    // Human-readable: "May 27, 2026 @ 1:00 pm" or "May 27 2026 01:00"
-    final humanRe = RegExp(
-        r'([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})\s*(?:@\s*)?(\d{1,2}):(\d{2})\s*(am|pm)?',
-        caseSensitive: false);
-    final humanM = humanRe.firstMatch(s);
-    if (humanM != null) {
-      final monthStr = humanM.group(1)!.toLowerCase();
-      final month = _kMonthMap[monthStr.length >= 3 ? monthStr.substring(0, 3) : monthStr];
-      if (month != null) {
-        try {
-          var hour = int.parse(humanM.group(4)!);
-          final minute = int.parse(humanM.group(5)!);
-          final ampm = humanM.group(6)?.toLowerCase();
-          if (ampm == 'pm' && hour != 12) hour += 12;
-          if (ampm == 'am' && hour == 12) hour = 0;
-          return DateTime(int.parse(humanM.group(3)!), month,
-              int.parse(humanM.group(2)!), hour, minute);
-        } catch (_) {}
-      }
-    }
-
-    // Last resort: just a date "May 27, 2026" without time
-    final dateOnlyRe = RegExp(r'([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})', caseSensitive: false);
-    final dateM = dateOnlyRe.firstMatch(s);
-    if (dateM != null) {
-      final monthStr = dateM.group(1)!.toLowerCase();
-      final month = _kMonthMap[monthStr.length >= 3 ? monthStr.substring(0, 3) : monthStr];
-      if (month != null) {
-        try {
-          return DateTime(int.parse(dateM.group(3)!), month, int.parse(dateM.group(2)!));
-        } catch (_) {}
-      }
-    }
-
-    return null;
-  }
 }
 
 // CourseLink has no copyWith — add a local extension so _buildShell stays clean

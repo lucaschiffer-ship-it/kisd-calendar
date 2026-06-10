@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../config/app_theme.dart';
 import '../services/calendar_service.dart';
 import '../services/theme_service.dart';
+import '../theme/tokens.dart';
 
 void showEventDetail(
     BuildContext context, DeviceCalendarEvent event, DateTime date) {
@@ -13,7 +14,7 @@ void showEventDetail(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
-    barrierColor: Colors.black.withValues(alpha: 0.4),
+    barrierColor: Colors.black.withValues(alpha: 0.4), // mode-independent barrier
     builder: (_) => _EventDetailSheet(event: event, date: date),
   );
 }
@@ -38,22 +39,21 @@ class _EventDetailSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: Listenable.merge([
-        ThemeService.instance.currentColor,
-        ThemeService.instance.glassEnabled,
-      ]),
-      builder: (context, _) => _buildSheet(context),
+    return ValueListenableBuilder<AppColorScheme>(
+      valueListenable: AppColorScheme.currentListenable,
+      builder: (context, s, _) => AnimatedBuilder(
+        animation: ThemeService.instance.glassEnabled,
+        builder: (context, _) => _buildSheet(context, s),
+      ),
     );
   }
 
-  Widget _buildSheet(BuildContext context) {
-    final glass = ThemeService.instance.glassEnabled.value;
-    final colorKey = ThemeService.instance.currentColor.value;
-    const radius = BorderRadius.vertical(top: Radius.circular(20));
+  Widget _buildSheet(BuildContext context, AppColorScheme s) {
+    final glass    = ThemeService.instance.glassEnabled.value;
+    const radius   = BorderRadius.vertical(top: Radius.circular(AppRadius.sheet));
 
-    final weekday = _kWeekdays[date.weekday - 1];
-    final month = _kMonths[date.month - 1];
+    final weekday  = _kWeekdays[date.weekday - 1];
+    final month    = _kMonths[date.month - 1];
     final dateLabel = '$weekday, $month ${date.day}';
     final timeLabel = '${_fmtTime(event.start)} – ${_fmtTime(event.end)}';
 
@@ -65,13 +65,14 @@ class _EventDetailSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Handle pill
             Center(
               child: Container(
                 width: 36,
                 height: 4,
                 decoration: BoxDecoration(
                   color: AppThemeTokens.secondaryTextColor.withValues(alpha: 0.4),
-                  borderRadius: BorderRadius.circular(2),
+                  borderRadius: BorderRadius.circular(AppRadius.handle),
                 ),
               ),
             ),
@@ -82,12 +83,8 @@ class _EventDetailSheet extends StatelessWidget {
                 Expanded(
                   child: Text(
                     event.title,
-                    style: GoogleFonts.spaceGrotesk(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w700,
-                      color: AppThemeTokens.titleColor,
-                      letterSpacing: -0.3,
-                    ),
+                    style: AppTextStyles.contentHeading(
+                        color: AppThemeTokens.titleColor),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -97,7 +94,8 @@ class _EventDetailSheet extends StatelessWidget {
                     width: 28,
                     height: 28,
                     decoration: BoxDecoration(
-                      color: AppThemeTokens.secondaryTextColor.withValues(alpha: 0.15),
+                      color: AppThemeTokens.secondaryTextColor
+                          .withValues(alpha: 0.15),
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
@@ -112,18 +110,17 @@ class _EventDetailSheet extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               '$dateLabel · $timeLabel',
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                color: AppThemeTokens.secondaryTextColor,
-              ),
+              style: AppTextStyles.body(
+                  color: AppThemeTokens.secondaryTextColor),
             ),
             if (event.calendarName.isNotEmpty) ...[
               const SizedBox(height: 10),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                 decoration: BoxDecoration(
                   color: event.calendarColor.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(4),
+                  borderRadius: BorderRadius.circular(AppRadius.tag),
                   border: Border.all(
                     color: event.calendarColor.withValues(alpha: 0.3),
                     width: 0.5,
@@ -145,19 +142,14 @@ class _EventDetailSheet extends StatelessWidget {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(
-                    Icons.location_on_outlined,
-                    size: 15,
-                    color: AppThemeTokens.locationColor,
-                  ),
+                  Icon(Icons.location_on_outlined,
+                      size: 15, color: AppThemeTokens.locationColor),
                   const SizedBox(width: 5),
                   Expanded(
                     child: Text(
                       event.location!,
-                      style: GoogleFonts.inter(
-                        fontSize: 14,
-                        color: AppThemeTokens.locationColor,
-                      ),
+                      style: AppTextStyles.body(
+                          color: AppThemeTokens.locationColor),
                     ),
                   ),
                 ],
@@ -169,15 +161,16 @@ class _EventDetailSheet extends StatelessWidget {
     );
 
     if (glass) {
-      final bg = colorKey == 'dark'
-          ? Colors.black.withValues(alpha: 0.64)
-          : Colors.white.withValues(alpha: 0.70);
       return ClipRRect(
         borderRadius: radius,
         child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          filter: ImageFilter.blur(
+              sigmaX: AppGlass.cardBlur, sigmaY: AppGlass.cardBlur),
           child: Container(
-            decoration: BoxDecoration(color: bg, borderRadius: radius),
+            decoration: BoxDecoration(
+              color: s.glassHeaderTint,
+              borderRadius: radius,
+            ),
             child: content,
           ),
         ),

@@ -34,7 +34,6 @@ class SettingsScreen extends StatelessWidget {
 
     await CookieManager.instance().deleteAllCookies();
     await CacheService().clearCourses();
-    await CacheService().clearKisdEvents();
     await loginService.logout();
 
     navigatorKey.currentState?.popUntil((route) => route.isFirst);
@@ -42,8 +41,13 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final s = AppColorScheme.current;
+    return ValueListenableBuilder<AppColorScheme>(
+      valueListenable: AppColorScheme.currentListenable,
+      builder: (context, s, _) => _buildScaffold(context, s),
+    );
+  }
 
+  Widget _buildScaffold(BuildContext context, AppColorScheme s) {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: s.surface,
@@ -73,11 +77,10 @@ class SettingsScreen extends StatelessWidget {
             child: ValueListenableBuilder<String>(
               valueListenable: ThemeService.instance.currentColor,
               builder: (context, color, _) {
-                final s2 = AppColorScheme.current;
                 return ClipRRect(
                   borderRadius: BorderRadius.circular(AppRadius.input),
                   child: Container(
-                    color: s2.surfaceElevated,
+                    color: s.surfaceElevated,
                     child: Column(
                       children: [
                         _ThemeOption(
@@ -90,7 +93,7 @@ class SettingsScreen extends StatelessWidget {
                           height: 1,
                           thickness: 0.5,
                           indent: 16,
-                          color: s2.divider,
+                          color: s.divider,
                         ),
                         _ThemeOption(
                           label: 'Light',
@@ -121,24 +124,23 @@ class SettingsScreen extends StatelessWidget {
             child: ValueListenableBuilder<bool>(
               valueListenable: ThemeService.instance.glassEnabled,
               builder: (context, glass, _) {
-                final s2 = AppColorScheme.current;
                 return ClipRRect(
                   borderRadius: BorderRadius.circular(AppRadius.input),
                   child: Container(
-                    color: s2.surfaceElevated,
+                    color: s.surfaceElevated,
                     child: SwitchListTile(
                       title: Text(
                         'Glass UI',
-                        style: AppTextStyles.bodyLarge(color: s2.textPrimary)
+                        style: AppTextStyles.bodyLarge(color: s.textPrimary)
                             .copyWith(fontWeight: FontWeight.w500),
                       ),
                       subtitle: Text(
                         'Frosted glass backgrounds',
-                        style: AppTextStyles.bodySmall(color: s2.textSecondary),
+                        style: AppTextStyles.bodySmall(color: s.textSecondary),
                       ),
                       value: glass,
                       onChanged: ThemeService.instance.setGlass,
-                      activeThumbColor: s2.accent,
+                      activeThumbColor: s.accent,
                     ),
                   ),
                 );
@@ -146,7 +148,6 @@ class SettingsScreen extends StatelessWidget {
             ),
           ),
 
-          // ── Sign out ─────────────────────────────────────────────────────
           const SizedBox(height: 32),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),

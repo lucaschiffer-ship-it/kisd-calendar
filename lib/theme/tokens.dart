@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -50,8 +51,15 @@ class AppColorScheme {
   // Background tint for BackdropFilter glass headers (mode-specific alpha)
   final Color glassHeaderTint;
 
-  // Global current — updated in main() when ThemeService.currentColor changes.
-  static AppColorScheme current = dark;
+  // Global current — backed by a ValueNotifier so screens can subscribe atomically.
+  // Updated via the setter from _syncColorScheme in main.dart.
+  static final ValueNotifier<AppColorScheme> _currentNotifier =
+      ValueNotifier<AppColorScheme>(dark);
+
+  static AppColorScheme get current => _currentNotifier.value;
+  static set current(AppColorScheme value) => _currentNotifier.value = value;
+  static ValueListenable<AppColorScheme> get currentListenable =>
+      _currentNotifier;
 
   // Bottom-border on glass headers — same in every mode.
   static const Color glassDivider = Color(0x1AFFFFFF);

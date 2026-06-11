@@ -345,6 +345,124 @@ class _CourseShellCardState extends State<CourseShellCard>
   }
 }
 
+// ─── New-course card ──────────────────────────────────────────────────────────
+// Shell-styled card with a big plus. Tapping it expands the same liquid-glass
+// overlay used for editing, opened directly in edit mode on a blank manual
+// shell. `onCreated` fires with the saved shell (also on subsequent saves).
+
+class NewCourseCard extends StatefulWidget {
+  const NewCourseCard({super.key, this.onCreated});
+
+  final void Function(CourseShell)? onCreated;
+
+  @override
+  State<NewCourseCard> createState() => _NewCourseCardState();
+}
+
+class _NewCourseCardState extends State<NewCourseCard> {
+  final _cardKey = GlobalKey();
+  bool _isExpanded = false;
+
+  Future<void> _open() async {
+    final renderBox =
+        _cardKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null) return;
+    final originRect =
+        renderBox.localToGlobal(Offset.zero) & renderBox.size;
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final blank = CourseShell(
+      id: 'custom_${now.millisecondsSinceEpoch}',
+      title: '',
+      description: '',
+      meetingTimes: const [],
+      startDate: today,
+      endDate: today.add(const Duration(days: 365)),
+      links: const [],
+      isManual: true,
+    );
+
+    HapticFeedback.mediumImpact();
+    setState(() => _isExpanded = true);
+
+    await Navigator.of(context).push(PageRouteBuilder<void>(
+      opaque: false,
+      barrierDismissible: false,
+      barrierColor: Colors.transparent,
+      barrierLabel: 'new course',
+      transitionDuration: const Duration(milliseconds: 320),
+      reverseTransitionDuration: Duration.zero,
+      transitionsBuilder:
+          (context, animation, secondaryAnimation, child) => child,
+      pageBuilder: (ctx, animation, secondaryAnimation) =>
+          _ExpandedCardOverlay(
+        shell: blank,
+        originRect: originRect,
+        animation: animation,
+        isCreate: true,
+        onShellUpdated: widget.onCreated,
+      ),
+    ));
+
+    if (mounted) setState(() => _isExpanded = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Visibility(
+      visible: !_isExpanded,
+      maintainSize: true,
+      maintainAnimation: true,
+      maintainState: true,
+      child: GestureDetector(
+        key: _cardKey,
+        onTap: _open,
+        behavior: HitTestBehavior.opaque,
+        child: ValueListenableBuilder<String>(
+          valueListenable: ThemeService.instance.currentColor,
+          builder: (context, _, _) => ValueListenableBuilder<bool>(
+            valueListenable: ThemeService.instance.glassEnabled,
+            builder: (context, glass, _) {
+              const radius = 5.0;
+              final body = SizedBox(
+                height: 64,
+                child: Center(
+                  child: Icon(
+                    CupertinoIcons.plus,
+                    size: 30,
+                    color: tokens.AppThemeTokens.secondaryTextColor,
+                  ),
+                ),
+              );
+              if (glass) {
+                return tokens.AppThemeTokens.glassContainer(
+                  opacity: 0.08,
+                  blur: 15,
+                  borderRadius: BorderRadius.circular(radius),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 28, vertical: 14),
+                    child: body,
+                  ),
+                );
+              }
+              return AppCard(
+                color: tokens.AppThemeTokens.cardBackground,
+                borderColor: tokens.AppThemeTokens.cardBorder,
+                borderRadius: radius,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                child: body,
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // ─── Glass context menu route ─────────────────────────────────────────────────
 
 class _GlassMenuPage extends StatelessWidget {
@@ -745,6 +863,7 @@ class _ExpandedCardOverlay extends StatefulWidget {
     required this.animation,
     this.onFavouriteChanged,
     this.onShellUpdated,
+    this.isCreate = false,
   });
 
   final CourseShell shell;
@@ -752,6 +871,10 @@ class _ExpandedCardOverlay extends StatefulWidget {
   final Animation<double> animation;
   final void Function(bool isFavourite)? onFavouriteChanged;
   final void Function(CourseShell)? onShellUpdated;
+
+  /// Create mode: opens directly in edit state for a not-yet-saved shell;
+  /// Save inserts it into the cache, Cancel closes the overlay.
+  final bool isCreate;
 
   @override
   State<_ExpandedCardOverlay> createState() => _ExpandedCardOverlayState();
@@ -861,6 +984,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
       duration: const Duration(milliseconds: 280),
     );
     _editController.addListener(() => setState(() {}));
+    if (widget.isCreate) _editController.value = 1.0;
 
     _initEditState();
   }
@@ -1006,7 +1130,13 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
       editedFields: newEditedFields,
     );
 
-    await CacheService().updateShell(updated);
+    // Create mode inserts the shell on first save; updateShell would skip
+    // ids that aren't in the cache yet.
+    if (widget.isCreate) {
+      await CacheService().addShell(updated);
+    } else {
+      await CacheService().updateShell(updated);
+    }
 
     try {
       final allShells = await scraperService.loadCached();
@@ -1022,6 +1152,34 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
   }
 
   Future<void> _onCancel() async {
+    // Create mode: nothing exists to fall back to — close the whole overlay
+    // (morph back into the plus card) instead of reverting to view mode.
+    if (widget.isCreate) {
+      if (_detectChanges()) {
+        final discard = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Discard changes?'),
+            content: const Text('Your edits will be lost.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Keep editing'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text('Discard',
+                    style: TextStyle(color: AppColors.accent)),
+              ),
+            ],
+          ),
+        );
+        if (discard != true || !mounted) return;
+      }
+      _closeStartProgress = _dragProgress;
+      _closeController.forward(from: 0);
+      return;
+    }
     if (!_detectChanges()) {
       _editController.reverse();
       return;

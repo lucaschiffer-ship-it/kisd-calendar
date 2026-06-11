@@ -358,13 +358,19 @@ class ScraperService extends ChangeNotifier {
         );
       }).toList();
 
-      await saveToCache(shells);
+      // Manual (custom) courses are never on Spaces — carry them over from
+      // the cache so the overwrite below doesn't delete them.
+      final manualShells =
+          existing.map(_fromJson).where((s) => s.isManual).toList();
+      final result = [...shells, ...manualShells];
+
+      await saveToCache(result);
       await CacheService().markScraped();
-      CalendarService.instance.writeCourses(shells).ignore();
+      CalendarService.instance.writeCourses(result).ignore();
 
       _isLoading = false;
       notifyListeners();
-      return shells;
+      return result;
     } catch (e, st) {
       print('[scraper] scrapeMyCourses error: $e\n$st');
       _isLoading = false;

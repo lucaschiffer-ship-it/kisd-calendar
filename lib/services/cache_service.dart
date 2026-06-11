@@ -65,6 +65,21 @@ class CacheService {
     await prefs.setString(_keyUpdated, DateTime.now().toIso8601String());
   }
 
+  // Like updateShell, but appends the shell when its id is not in the cache.
+  // Used when creating custom courses.
+  Future<void> addShell(CourseShell shell) async {
+    final courses = await loadCourses();
+    final idx = courses.indexWhere((c) => c['id'] == shell.id);
+    if (idx >= 0) {
+      courses[idx] = shell.toJson();
+    } else {
+      courses.add(shell.toJson());
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyCourses, json.encode(courses));
+    await prefs.setString(_keyUpdated, DateTime.now().toIso8601String());
+  }
+
   Future<void> updateCourseFavourite(String id, bool isFavourite) async {
     final courses = await loadCourses();
     final idx = courses.indexWhere((c) => c['id'] == id);

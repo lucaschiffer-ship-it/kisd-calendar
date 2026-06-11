@@ -3,6 +3,7 @@ import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../config/app_theme.dart' as tokens;
 import '../models/course_shell.dart';
@@ -23,13 +24,13 @@ const _kMonths   = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
 // ── Layout constants ──────────────────────────────────────────────────────────
 const double _kTitleRowH  = 56.0;  // "List" + gear
 const double _kDateRowH   = 52.0;  // date/time row + vertical padding
-const double _kFilterBarH = 73.0;  // chips (44) + gap (8) + count (13) + padding (8)
-const double _kEventRowH  = 56.0;  // per calendar event
-const double _kSearchH    = 44.0;  // search bar
-const double _kSearchGapH = 20.0;  // top + bottom padding around search bar
+const double _kFilterBarH = 42.0;  // tabs (26) + padding (8 top + 8 bottom)
+const double _kEventRowH  = 51.0;  // per calendar event
+const double _kSearchH    = 36.0;  // search bar
+const double _kSearchGapH = 10.0;  // top + bottom padding around search bar
 
 double _collapseRange(int n) =>
-    (n > 0 ? n * _kEventRowH + 12.0 : 0) + _kSearchGapH + _kSearchH;
+    (n > 0 ? n * _kEventRowH + 6.0 : 0) + _kSearchGapH + _kSearchH;
 
 // ── Transparent spacer sliver — reserves header space with no visible content ─
 // No TextField / BackdropFilter → no render-loop risk.
@@ -47,7 +48,15 @@ class _SpacerDelegate extends SliverPersistentHeaderDelegate {
       const SizedBox.expand();
 }
 
-enum _FilterMode { myCourses, favourites, all }
+enum _FilterMode { myCourses, favourites, all, custom }
+
+// Swipe order matches the visual tab order: ♥ · All · My Courses · Custom
+const _kFilterOrder = [
+  _FilterMode.favourites,
+  _FilterMode.all,
+  _FilterMode.myCourses,
+  _FilterMode.custom,
+];
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
@@ -67,6 +76,7 @@ class _ListScreenState extends State<ListScreen>
   List<CourseShell> _myCourses = [];
   List<CourseShell> _favourites = [];
   List<CourseShell> _allCourses = [];
+  List<CourseShell> _customCourses = [];
 
   List<DeviceCalendarEvent> _todayEvents = [];
   bool _loading = false;
@@ -80,12 +90,17 @@ class _ListScreenState extends State<ListScreen>
   late final Timer _clock;
   Timer? _calendarWriteTimer;
 
-  final _scrollCtrl = ScrollController();
+  final _pageCtrl = PageController();
+  int _pageIndex = 0;
+  // One scroll controller per filter page so each keeps its own position.
+  final _scrollCtrls =
+      List.generate(_kFilterOrder.length, (_) => ScrollController());
 
   void _rebuildFilteredLists() {
     _myCourses  = _shells.where((s) => s.isMyCourse).toList();
     _favourites = _shells.where((s) => s.isFavourite).toList();
     _allCourses = List.of(_shells);
+    _customCourses = _shells.where((s) => s.isManual).toList();
     _todayEvents = _computeTodayCourseEvents();
   }
 
@@ -281,7 +296,10 @@ class _ListScreenState extends State<ListScreen>
     _clock.cancel();
     _calendarWriteTimer?.cancel();
     _searchCtrl.dispose();
-    _scrollCtrl.dispose();
+    _pageCtrl.dispose();
+    for (final c in _scrollCtrls) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -304,6 +322,20 @@ class _ListScreenState extends State<ListScreen>
         _rebuildFilteredLists();
       });
       await scraperService.saveToCache(_shells);
+    });
+  }
+
+  // The overlay has already written the shell to the cache — just mirror it
+  // into local state (add on first save, replace on later saves).
+  void _onCustomShellSaved(CourseShell shell) {
+    setState(() {
+      final i = _shells.indexWhere((s) => s.id == shell.id);
+      if (i >= 0) {
+        _shells[i] = shell;
+      } else {
+        _shells.add(shell);
+      }
+      _rebuildFilteredLists();
     });
   }
 
@@ -332,6 +364,40 @@ class _ListScreenState extends State<ListScreen>
     });
   }
 
+  void _onPageChanged(int index) {
+    if (index == _pageIndex) return;
+    // Keep the collapsing header continuous: bring the incoming page's scroll
+    // offset into the same header state before it becomes the driver.
+    final range = _collapseRange(_todayEvents.length);
+    final oldCtrl = _scrollCtrls[_pageIndex];
+    final newCtrl = _scrollCtrls[index];
+    final headerOffset =
+        oldCtrl.hasClients ? oldCtrl.offset.clamp(0.0, range) : 0.0;
+    if (newCtrl.hasClients &&
+        newCtrl.offset.clamp(0.0, range) != headerOffset) {
+      newCtrl.jumpTo(headerOffset);
+    }
+    HapticFeedback.selectionClick();
+    setState(() {
+      _pageIndex = index;
+      _filterMode = _kFilterOrder[index];
+    });
+  }
+
+  List<CourseShell> _listFor(_FilterMode mode) {
+    var list = switch (mode) {
+      _FilterMode.myCourses  => _myCourses,
+      _FilterMode.favourites => _favourites,
+      _FilterMode.all        => _allCourses,
+      _FilterMode.custom     => _customCourses,
+    };
+    if (_searchQuery.isNotEmpty) {
+      final q = _searchQuery.toLowerCase();
+      list = list.where((s) => s.title.toLowerCase().contains(q)).toList();
+    }
+    return list;
+  }
+
   void _onShellUpdated(CourseShell updated) {
     setState(() {
       final i = _shells.indexWhere((s) => s.id == updated.id);
@@ -351,7 +417,6 @@ class _ListScreenState extends State<ListScreen>
     required Color glassBg,
     required Color titleColor,
     required Color secondaryColor,
-    required int displayCount,
   }) {
     final topH = statusH + _kTitleRowH + _kDateRowH;
 
@@ -492,26 +557,19 @@ class _ListScreenState extends State<ListScreen>
               mainAxisSize: MainAxisSize.min,
               children: [
                 const SizedBox(height: 8),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _buildFilterChip('', _FilterMode.favourites,
-                          icon: CupertinoIcons.heart_fill, iconOnly: true),
-                      const SizedBox(width: 8),
-                      _buildFilterChip('My Courses', _FilterMode.myCourses),
-                      const SizedBox(width: 8),
-                      _buildFilterChip('All', _FilterMode.all),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  _loading
-                      ? 'LOADING…'
-                      : '$displayCount COURSE${displayCount == 1 ? '' : 'S'}',
-                  style: AppTextStyle.label
-                      .copyWith(color: secondaryColor),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _buildFilterTab(_FilterMode.favourites,
+                        icon: CupertinoIcons.heart_fill),
+                    const SizedBox(width: 28),
+                    _buildFilterTab(_FilterMode.all, label: 'All'),
+                    const SizedBox(width: 28),
+                    _buildFilterTab(_FilterMode.myCourses,
+                        label: 'My Courses'),
+                    const SizedBox(width: 28),
+                    _buildFilterTab(_FilterMode.custom, label: 'Custom'),
+                  ],
                 ),
               ],
             ),
@@ -544,33 +602,33 @@ class _ListScreenState extends State<ListScreen>
       child: TextField(
         controller: _searchCtrl,
         onChanged: (v) => setState(() => _searchQuery = v),
-        style: TextStyle(color: titleColor, fontSize: 15),
+        style: TextStyle(color: titleColor, fontSize: 14),
         decoration: InputDecoration(
-          hintText: 'Search courses...',
-          hintStyle: TextStyle(color: secondaryColor, fontSize: 15),
+          hintText: 'Search',
+          hintStyle: TextStyle(
+              color: secondaryColor.withValues(alpha: 0.7), fontSize: 14),
           filled: true,
-          fillColor: tokens.AppThemeTokens.cardBackground,
-          prefixIcon: Icon(Icons.search, color: secondaryColor, size: 20),
+          fillColor: secondaryColor.withValues(alpha: 0.08),
+          prefixIcon: Icon(Icons.search,
+              color: secondaryColor.withValues(alpha: 0.8), size: 18),
           suffixIcon: _searchQuery.isNotEmpty
               ? GestureDetector(
                   onTap: () => setState(() {
                     _searchCtrl.clear();
                     _searchQuery = '';
                   }),
-                  child: Icon(Icons.close, color: secondaryColor, size: 18),
+                  child: Icon(Icons.close, color: secondaryColor, size: 16),
                 )
               : null,
           contentPadding: EdgeInsets.zero,
           isDense: true,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(radius),
-            borderSide:
-                BorderSide(color: tokens.AppThemeTokens.cardBorder, width: 0.5),
+            borderSide: BorderSide.none,
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(radius),
-            borderSide:
-                BorderSide(color: tokens.AppThemeTokens.cardBorder, width: 0.5),
+            borderSide: BorderSide.none,
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(radius),
@@ -582,53 +640,52 @@ class _ListScreenState extends State<ListScreen>
     );
   }
 
-  Widget _buildFilterChip(
-    String label,
-    _FilterMode mode, {
-    IconData? icon,
-    bool iconOnly = false,
-  }) {
+  // Subtle tab-style nav item: small icon/label, orange underline when active.
+  Widget _buildFilterTab(_FilterMode mode, {String? label, IconData? icon}) {
     final isSelected = _filterMode == mode;
-    final iconColor =
-        isSelected ? Colors.white : tokens.AppThemeTokens.secondaryTextColor;
+    final color = isSelected
+        ? tokens.AppThemeTokens.titleColor
+        : tokens.AppThemeTokens.secondaryTextColor;
     return GestureDetector(
-      onTap: () => setState(() => _filterMode = mode),
-      child: Container(
-        height: 44,
-        width: iconOnly ? 44 : null,
-        padding: iconOnly
-            ? EdgeInsets.zero
-            : const EdgeInsets.symmetric(horizontal: 16),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? tokens.AppThemeTokens.accentColor
-              : tokens.AppThemeTokens.cardBackground,
-          borderRadius:
-              BorderRadius.circular(tokens.AppThemeTokens.cardBorderRadius),
-          border: Border.all(
-            color: isSelected
-                ? tokens.AppThemeTokens.accentColor
-                : tokens.AppThemeTokens.cardBorder,
-            width: 0.5,
+      onTap: () => _pageCtrl.animateToPage(
+        _kFilterOrder.indexOf(mode),
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+      ),
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: IntrinsicWidth(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                height: 18,
+                child: Center(
+                  child: icon != null
+                      ? Icon(icon, size: 15, color: color)
+                      : Text(
+                          label ?? '',
+                          style: AppTextStyle.label
+                              .copyWith(fontSize: 13, color: color),
+                        ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                height: 2,
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? tokens.AppThemeTokens.accentColor
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(1),
+                ),
+              ),
+            ],
           ),
         ),
-        child: iconOnly
-            ? Center(child: Icon(icon, size: 18, color: iconColor))
-            : Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  if (icon != null) ...[
-                    Icon(icon, size: 13, color: iconColor),
-                    const SizedBox(width: 5),
-                  ],
-                  Text(
-                    label,
-                    style: AppTextStyle.label
-                        .copyWith(fontSize: 15, color: iconColor),
-                  ),
-                ],
-              ),
       ),
     );
   }
@@ -636,19 +693,6 @@ class _ListScreenState extends State<ListScreen>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-
-    var displayList = switch (_filterMode) {
-      _FilterMode.myCourses  => _myCourses,
-      _FilterMode.favourites => _favourites,
-      _FilterMode.all        => _allCourses,
-    };
-
-    if (_searchQuery.isNotEmpty) {
-      final q = _searchQuery.toLowerCase();
-      displayList = displayList
-          .where((s) => s.title.toLowerCase().contains(q))
-          .toList();
-    }
 
     return AnimatedBuilder(
       animation: Listenable.merge([
@@ -674,98 +718,13 @@ class _ListScreenState extends State<ListScreen>
 
         return Stack(
           children: [
-            // ── Layer 1: scrollable course cards ──────────────────────────────
-            RefreshIndicator(
-              color: AppColors.accent,
-              onRefresh: _scrape,
-              child: CustomScrollView(
-                controller: _scrollCtrl,
-                physics: const AlwaysScrollableScrollPhysics(),
-                slivers: [
-                  // Transparent spacer — keeps cards below the glass overlay
-                  SliverPersistentHeader(
-                    pinned: true,
-                    delegate: _SpacerDelegate(maxH: maxH, minH: minH),
-                  ),
-
-                  // Course cards / empty / error states
-                  if (_loading && _shells.isEmpty)
-                    SliverFillRemaining(
-                      child: Center(
-                        child: CircularProgressIndicator(
-                            color: AppColors.accent),
-                      ),
-                    )
-                  else if (_error != null && _shells.isEmpty)
-                    SliverFillRemaining(
-                      child: Center(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 32),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text('Could not load courses',
-                                  style: AppTextStyle.headline),
-                              const SizedBox(height: 10),
-                              Text(_error!,
-                                  style: AppTextStyle.body,
-                                  textAlign: TextAlign.center,
-                                  maxLines: 4,
-                                  overflow: TextOverflow.ellipsis),
-                              const SizedBox(height: 28),
-                              FilledButton(
-                                  onPressed: _scrape,
-                                  child: const Text('Retry')),
-                            ],
-                          ),
-                        ),
-                      ),
-                    )
-                  else if (_shells.isEmpty)
-                    SliverFillRemaining(
-                      child: Center(
-                        child: Text(
-                          'No enrolled courses found.\nPull down to refresh.',
-                          style: AppTextStyle.body,
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    )
-                  else if (displayList.isEmpty)
-                    SliverFillRemaining(
-                      child: Center(
-                        child: Text(
-                          'No courses match this filter.',
-                          style: AppTextStyle.body,
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    )
-                  else
-                    SliverPadding(
-                      padding: const EdgeInsets.fromLTRB(
-                        AppSpacing.screenPadding, 12,
-                        AppSpacing.screenPadding, 40,
-                      ),
-                      sliver: SliverList.builder(
-                        itemCount: displayList.length,
-                        itemBuilder: (_, i) {
-                          final shell = displayList[i];
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: CourseShellCard(
-                              shell: shell,
-                              onEdit: () => _openEdit(shell),
-                              onDelete: () => _delete(shell),
-                              onFavouriteChanged: (isFav) =>
-                                  _onFavouriteChanged(shell, isFav),
-                              onShellUpdated: _onShellUpdated,
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                ],
+            // ── Layer 1: swipeable filter pages with course cards ──────────────
+            PageView.builder(
+              controller: _pageCtrl,
+              onPageChanged: _onPageChanged,
+              itemCount: _kFilterOrder.length,
+              itemBuilder: (_, i) => _KeepAlivePage(
+                child: _buildCoursePage(i, maxH, minH),
               ),
             ),
 
@@ -773,10 +732,11 @@ class _ListScreenState extends State<ListScreen>
             Positioned(
               top: 0, left: 0, right: 0,
               child: AnimatedBuilder(
-                animation: _scrollCtrl,
+                animation: Listenable.merge(_scrollCtrls),
                 builder: (context, _) {
-                  final offset = _scrollCtrl.hasClients
-                      ? _scrollCtrl.offset.clamp(0.0, range)
+                  final ctrl = _scrollCtrls[_pageIndex];
+                  final offset = ctrl.hasClients
+                      ? ctrl.offset.clamp(0.0, range)
                       : 0.0;
                   final progress = range > 0 ? offset / range : 0.0;
                   final currentH = maxH - range * progress;
@@ -790,7 +750,6 @@ class _ListScreenState extends State<ListScreen>
                     glassBg: glassBg,
                     titleColor: titleColor,
                     secondaryColor: secondaryColor,
-                    displayCount: displayList.length,
                   );
                 },
               ),
@@ -799,6 +758,138 @@ class _ListScreenState extends State<ListScreen>
         );
       },
     );
+  }
+
+  // One filter page: pull-to-refresh + scrollable cards under the overlay.
+  // The custom page always shows its courses plus the "new course" card, so
+  // the scrape-related loading/empty/error states don't apply there.
+  Widget _buildCoursePage(int index, double maxH, double minH) {
+    final mode = _kFilterOrder[index];
+    final isCustomPage = mode == _FilterMode.custom;
+    final displayList = _listFor(mode);
+
+    return RefreshIndicator(
+      color: AppColors.accent,
+      onRefresh: _scrape,
+      child: CustomScrollView(
+        controller: _scrollCtrls[index],
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          // Transparent spacer — keeps cards below the glass overlay
+          SliverPersistentHeader(
+            pinned: true,
+            delegate: _SpacerDelegate(maxH: maxH, minH: minH),
+          ),
+
+          // Course cards / empty / error states
+          if (!isCustomPage && _loading && _shells.isEmpty)
+            SliverFillRemaining(
+              child: Center(
+                child: CircularProgressIndicator(color: AppColors.accent),
+              ),
+            )
+          else if (!isCustomPage && _error != null && _shells.isEmpty)
+            SliverFillRemaining(
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text('Could not load courses',
+                          style: AppTextStyle.headline),
+                      const SizedBox(height: 10),
+                      Text(_error!,
+                          style: AppTextStyle.body,
+                          textAlign: TextAlign.center,
+                          maxLines: 4,
+                          overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 28),
+                      FilledButton(
+                          onPressed: _scrape,
+                          child: const Text('Retry')),
+                    ],
+                  ),
+                ),
+              ),
+            )
+          else if (!isCustomPage && _shells.isEmpty)
+            SliverFillRemaining(
+              child: Center(
+                child: Text(
+                  'No enrolled courses found.\nPull down to refresh.',
+                  style: AppTextStyle.body,
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            )
+          else if (!isCustomPage && displayList.isEmpty)
+            SliverFillRemaining(
+              child: Center(
+                child: Text(
+                  'No courses match this filter.',
+                  style: AppTextStyle.body,
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.screenPadding, 12,
+                AppSpacing.screenPadding, 40,
+              ),
+              sliver: SliverList.builder(
+                itemCount: displayList.length + (isCustomPage ? 1 : 0),
+                itemBuilder: (_, i) {
+                  // "New course" card sits below the custom courses.
+                  if (isCustomPage && i == displayList.length) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: NewCourseCard(onCreated: _onCustomShellSaved),
+                    );
+                  }
+                  final shell = displayList[i];
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: CourseShellCard(
+                      shell: shell,
+                      onEdit: () => _openEdit(shell),
+                      onDelete: () => _delete(shell),
+                      onFavouriteChanged: (isFav) =>
+                          _onFavouriteChanged(shell, isFav),
+                      onShellUpdated: _onShellUpdated,
+                    ),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+}
+
+// Keeps each filter page (and its scroll position) alive while off-screen.
+class _KeepAlivePage extends StatefulWidget {
+  const _KeepAlivePage({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_KeepAlivePage> createState() => _KeepAlivePageState();
+}
+
+class _KeepAlivePageState extends State<_KeepAlivePage>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
   }
 }
 

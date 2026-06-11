@@ -14,6 +14,7 @@ import '../services/service_locator.dart';
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/day_column.dart';
+import '../widgets/month_grid.dart';
 import '../widgets/month_view.dart';
 import '../widgets/year_view.dart';
 
@@ -22,6 +23,42 @@ import '../widgets/year_view.dart';
 enum _NavLevel { year, month, day }
 
 enum _DayViewMode { singleDay, multiDay, list }
+
+// ─── Month flight ─────────────────────────────────────────────────────────────
+//
+// Frozen geometry of one week↔month morph. The flying numbers row travels
+// between headerY (its slot in the header strip) and gridY (its settled
+// position in the month grid); the grid's scroll offset is driven so the
+// underlying row tracks the overlay pixel-for-pixel.
+
+class _MonthFlight {
+  const _MonthFlight({
+    required this.monday,
+    required this.ownerMonth,
+    required this.focusedDay,
+    required this.headerY,
+    required this.gridY,
+    required this.rowOffset,
+    required this.topInset,
+    required this.maxScroll,
+    required this.stretchT,
+  });
+
+  final DateTime monday;
+  final DateTime ownerMonth;
+  final DateTime focusedDay;
+  final double headerY;
+  final double gridY;
+  final double rowOffset;
+  final double topInset;
+  final double maxScroll;
+  final double stretchT;
+
+  double topFor(double v) => lerpDouble(headerY, gridY, v)!;
+
+  double scrollFor(double v) =>
+      (topInset + rowOffset - topFor(v)).clamp(0.0, maxScroll);
+}
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
@@ -92,6 +129,21 @@ class _CalendarScreenState extends State<CalendarScreen>
   // Captures the focused page at drag start; used to detect week-boundary crossings.
   int? _dragStartPage;
 
+  // ── Month mode (Apple-style month grid + week↔month morph) ────────────────
+  // Independent of _navLevel: the multiday view stays mounted beneath the
+  // month layer, so its state and behavior are untouched.
+  bool _monthActive = false;
+  late AnimationController _monthAnim; // 0 = week, 1 = month
+  late CurvedAnimation _monthCurved;
+  _MonthFlight? _flight;
+  MonthGridLayout? _monthLayout;
+  ScrollController? _monthScrollCtrl;
+  double _monthTopInset = 0.0;
+  double _monthBottomInset = 0.0;
+  double _monthMaxScroll = 0.0;
+  final _stripNumbersKey = GlobalKey();
+  final _stripLettersKey = GlobalKey();
+
   Offset _slideBegin = const Offset(0.15, 0);
 
   DateTime _dayForMultiDayPage(int page) =>
@@ -131,6 +183,14 @@ class _CalendarScreenState extends State<CalendarScreen>
     _dayBarCurved = CurvedAnimation(parent: _dayBarAnim, curve: Curves.easeOut);
     _swipeSnapAnim = AnimationController(vsync: this);
     _weekStripSnapAnim = AnimationController(vsync: this);
+    _monthAnim = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 380),
+    );
+    _monthCurved =
+        CurvedAnimation(parent: _monthAnim, curve: Curves.easeInOutCubic);
+    _monthAnim.addListener(_onMonthAnimTick);
+    _monthAnim.addStatusListener(_onMonthAnimStatus);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollToDefaultTime();
       // Pre-warm ±2 days so adjacent slots are always rendered before a swipe.
@@ -140,6 +200,9 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   @override
   void dispose() {
+    _monthScrollCtrl?.dispose();
+    _monthCurved.dispose();
+    _monthAnim.dispose();
     _timelineScrollController.dispose();
     _weekStripSnapAnim.dispose();
     _swipeSnapAnim.dispose();
@@ -201,6 +264,23 @@ class _CalendarScreenState extends State<CalendarScreen>
   }
 
   void _goToToday() {
+    if (_monthAnim.isAnimating) return;
+    if (_monthActive) {
+      // Stay in month mode; scroll the grid to today's month.
+      final layout = _monthLayout;
+      final ctrl = _monthScrollCtrl;
+      if (layout != null && ctrl != null && ctrl.hasClients) {
+        final target = layout
+            .offsetOfMonthHeader(DateTime(_today.year, _today.month))
+            .clamp(0.0, _monthMaxScroll);
+        ctrl.animateTo(
+          target,
+          duration: const Duration(milliseconds: 350),
+          curve: Curves.easeInOutCubic,
+        );
+      }
+      return;
+    }
     _slideBegin = const Offset(0.15, 0);
 
     if (_navLevel == _NavLevel.day && _dayViewMode != _DayViewMode.list) {
@@ -256,6 +336,9 @@ class _CalendarScreenState extends State<CalendarScreen>
   }
 
   void _selectViewMode(String mode) {
+    // Defensive: unreachable from UI while month mode is active (View button
+    // is hidden), but never let nav-level switches race the month layer.
+    if (_monthActive || _flight != null) return;
     setState(() => _viewMenuOpen = false);
     switch (mode) {
       case 'Year':
@@ -500,6 +583,207 @@ class _CalendarScreenState extends State<CalendarScreen>
     }
   }
 
+  // ── Month mode: enter/exit + flight geometry ──────────────────────────────
+
+  void _onMonthAnimTick() {
+    final f = _flight;
+    final ctrl = _monthScrollCtrl;
+    if (f != null && ctrl != null && ctrl.hasClients) {
+      ctrl.jumpTo(f.scrollFor(_monthCurved.value));
+    }
+  }
+
+  void _onMonthAnimStatus(AnimationStatus s) {
+    if (s == AnimationStatus.completed) {
+      // Month settled: drop the overlay, the grid reveals its own (identical)
+      // number line.
+      setState(() => _flight = null);
+    } else if (s == AnimationStatus.dismissed) {
+      if (!_monthActive && _flight == null) return;
+      setState(() {
+        _flight = null;
+        _monthActive = false;
+      });
+      final old = _monthScrollCtrl;
+      _monthScrollCtrl = null;
+      // Controller is still attached to the grid being removed this frame.
+      WidgetsBinding.instance.addPostFrameCallback((_) => old?.dispose());
+    }
+  }
+
+  void _onMonthButtonTap() {
+    if (_monthAnim.isAnimating) return;
+    if (_monthActive) {
+      _exitMonthViaButton();
+    } else {
+      _enterMonth();
+    }
+  }
+
+  void _enterMonth() {
+    if (_monthActive || _monthAnim.isAnimating) return;
+    if (_navLevel != _NavLevel.day) return;
+    if (_swipeSnapAnim.isAnimating) return;
+    if (_dayViewMode == _DayViewMode.list) {
+      // Hop to multiday first so the week strip exists to measure.
+      _onDayViewModeChanged(_DayViewMode.multiDay);
+      _dayBarAnim.value = 1.0;
+    }
+    _weekStripSnapAnim.stop();
+    if (_weekStripFx != 0.0) setState(() => _weekStripFx = 0.0);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _beginMonthEntry());
+  }
+
+  void _beginMonthEntry() {
+    if (!mounted || _monthActive || _monthAnim.isAnimating) return;
+    final numbersCtx = _stripNumbersKey.currentContext;
+    final screenObj = context.findRenderObject();
+    if (numbersCtx == null || screenObj is! RenderBox) return;
+    final numbersBox = numbersCtx.findRenderObject() as RenderBox;
+    final numbersRect = MatrixUtils.transformRect(
+      numbersBox.getTransformTo(screenObj),
+      Offset.zero & numbersBox.size,
+    );
+
+    final focusedDay = _dayForMultiDayPage(_focusedMultiDayPage);
+    final monday = _weekMonday(focusedDay);
+    _monthLayout ??= MonthGridLayout(today: _today);
+    final layout = _monthLayout!;
+    final rowOffset = layout.offsetOfWeekOrNull(monday);
+    if (rowOffset == null) return; // outside the grid's 5-year range
+    final ownerMonth = MonthGridLayout.ownerMonthOf(monday);
+
+    final view = View.of(context);
+    final statusH = view.viewPadding.top / view.devicePixelRatio;
+    final bottomSafe = view.viewPadding.bottom / view.devicePixelRatio;
+    _monthTopInset = statusH + _kTitleRowH + (_kDayBarH - 42.0);
+    _monthBottomInset = bottomSafe + 120.0;
+    _monthMaxScroll = (_monthTopInset +
+            layout.totalHeight +
+            _monthBottomInset -
+            screenObj.size.height)
+        .clamp(0.0, double.infinity);
+
+    final settleScroll =
+        layout.offsetOfMonthHeader(ownerMonth).clamp(0.0, _monthMaxScroll);
+    final flight = _MonthFlight(
+      monday: monday,
+      ownerMonth: ownerMonth,
+      focusedDay: focusedDay,
+      headerY: numbersRect.top,
+      gridY: _monthTopInset + rowOffset - settleScroll,
+      rowOffset: rowOffset,
+      topInset: _monthTopInset,
+      maxScroll: _monthMaxScroll,
+      stretchT: _stretchCurved.value,
+    );
+
+    _monthScrollCtrl?.dispose();
+    _monthScrollCtrl =
+        ScrollController(initialScrollOffset: flight.scrollFor(0.0));
+
+    setState(() {
+      _monthActive = true;
+      _flight = flight;
+    });
+    HapticFeedback.mediumImpact();
+    _monthAnim.forward(from: 0.0);
+  }
+
+  void _exitMonth(DateTime day) {
+    if (!_monthActive || _monthAnim.isAnimating || _flight != null) return;
+    final layout = _monthLayout;
+    final ctrl = _monthScrollCtrl;
+    final screenObj = context.findRenderObject();
+    if (layout == null || ctrl == null || !ctrl.hasClients) return;
+    if (screenObj is! RenderBox) return;
+
+    final monday = _weekMonday(day);
+    final rowOffset = layout.offsetOfWeekOrNull(monday);
+    final lettersCtx = _stripLettersKey.currentContext;
+    if (rowOffset == null || lettersCtx == null) {
+      // No flight geometry available — exit without the morph.
+      _retargetMultiDay(day);
+      setState(() {
+        _flight = null;
+        _monthActive = false;
+      });
+      _monthAnim.value = 0.0;
+      final old = _monthScrollCtrl;
+      _monthScrollCtrl = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) => old?.dispose());
+      return;
+    }
+
+    final lettersBox = lettersCtx.findRenderObject() as RenderBox;
+    final lettersRect = MatrixUtils.transformRect(
+      lettersBox.getTransformTo(screenObj),
+      Offset.zero & lettersBox.size,
+    );
+
+    final flight = _MonthFlight(
+      monday: monday,
+      ownerMonth: MonthGridLayout.ownerMonthOf(monday),
+      focusedDay: day,
+      headerY: lettersRect.bottom + 4.0,
+      gridY: _monthTopInset + rowOffset - ctrl.offset,
+      rowOffset: rowOffset,
+      topInset: _monthTopInset,
+      maxScroll: _monthMaxScroll,
+      stretchT: _stretchCurved.value,
+    );
+
+    _retargetMultiDay(day);
+    setState(() => _flight = flight);
+    HapticFeedback.mediumImpact();
+    _monthAnim.reverse(from: 1.0);
+  }
+
+  /// Points the (hidden) multiday view at [day] without any animation, so the
+  /// reverse morph reveals it already in place.
+  void _retargetMultiDay(DateTime day) {
+    setState(() {
+      _selectedDate = day;
+      _focusedMultiDayPage = _kTodayPage + day.difference(_today).inDays;
+      _slotKeys = List.generate(5, (_) => GlobalKey());
+      _swipeFraction = 0.0;
+    });
+    _preloadRange(_focusedMultiDayPage);
+  }
+
+  Future<void> _exitMonthViaButton() async {
+    final layout = _monthLayout;
+    final ctrl = _monthScrollCtrl;
+    final screenObj = context.findRenderObject();
+    final day = _selectedDate;
+    if (layout != null &&
+        ctrl != null &&
+        ctrl.hasClients &&
+        screenObj is RenderBox) {
+      final monday = _weekMonday(day);
+      final rowOffset = layout.offsetOfWeekOrNull(monday);
+      if (rowOffset != null) {
+        // If the target row scrolled off-screen, bring it back to its natural
+        // month-anchored position before flying it into the header.
+        final screenY = _monthTopInset + rowOffset - ctrl.offset;
+        final offScreen = screenY < _monthTopInset - kWeekRowH ||
+            screenY > screenObj.size.height;
+        if (offScreen) {
+          final target = layout
+              .offsetOfMonthHeader(MonthGridLayout.ownerMonthOf(monday))
+              .clamp(0.0, _monthMaxScroll);
+          await ctrl.animateTo(
+            target,
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+          );
+          if (!mounted) return;
+        }
+      }
+    }
+    _exitMonth(day);
+  }
+
   // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
@@ -511,6 +795,7 @@ class _CalendarScreenState extends State<CalendarScreen>
         ThemeService.instance.glassEnabled,
         _stretchAnim,
         _dayBarAnim,
+        _monthAnim,
       ]),
       builder: (context, _) {
         final glass    = ThemeService.instance.glassEnabled.value;
@@ -529,6 +814,9 @@ class _CalendarScreenState extends State<CalendarScreen>
           fit: StackFit.expand,
           children: [
             _buildBody(context, headerH),
+            // Month layer: sits above the (untouched) multiday body, below the
+            // glass header so scrolling weeks blur underneath it.
+            if (_monthActive) _buildMonthLayer(colorKey),
             Positioned(
               top: 0, left: 0, right: 0,
               child: AnimatedSize(
@@ -545,6 +833,25 @@ class _CalendarScreenState extends State<CalendarScreen>
                 ),
               ),
             ),
+            // Flying week row: the morphing numbers row of the week↔month
+            // transition. Above the header so the glass fill never tints it.
+            if (_flight != null)
+              Positioned(
+                top: _flight!.topFor(_monthCurved.value),
+                left: 0,
+                right: 0,
+                height: kNumberLineH,
+                child: IgnorePointer(
+                  child: FlyingWeekRow(
+                    monday: _flight!.monday,
+                    focusedDay: _flight!.focusedDay,
+                    today: _today,
+                    ownerMonth: _flight!.ownerMonth,
+                    v: _monthCurved.value,
+                    stretchT: _flight!.stretchT,
+                  ),
+                ),
+              ),
             // Dismiss overlay: absorbs taps outside the View menu when it is open.
             if (_viewMenuOpen)
               Positioned.fill(
@@ -572,6 +879,19 @@ class _CalendarScreenState extends State<CalendarScreen>
                 ),
               ),
             ),
+            // Month/Week toggle: left side, mirrors the Today button.
+            if (_navLevel == _NavLevel.day)
+              Positioned(
+                bottom: 66,
+                left: 16,
+                child: _MonthButton(
+                  label: _monthActive
+                      ? 'Week'
+                      : _kMonthNames[
+                          _dayForMultiDayPage(_focusedMultiDayPage).month - 1],
+                  onTap: _onMonthButtonTap,
+                ),
+              ),
             // Today button: right side, always visible above the Spaces mini bar.
             Positioned(
               bottom: 66,
@@ -581,6 +901,48 @@ class _CalendarScreenState extends State<CalendarScreen>
           ],
         );
       },
+    );
+  }
+
+  // ── Month layer ────────────────────────────────────────────────────────────
+
+  Widget _buildMonthLayer(String colorKey) {
+    final v = _monthCurved.value;
+    // Same base tint as the day view so the glass header blends identically.
+    final Color baseColor = switch (colorKey) {
+      'dark'   => const Color(0xFF141414),
+      'pastel' => tokens.AppThemeTokens.backgroundColor,
+      _        => const Color(0xFFF7F4F1),
+    };
+
+    return Positioned.fill(
+      child: IgnorePointer(
+        ignoring: _monthAnim.isAnimating,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Background fades in early so the multiday view disappears
+            // (forward) / reappears late (reverse) behind the unfolding grid.
+            Opacity(
+              opacity: (v / 0.35).clamp(0.0, 1.0),
+              child: ColoredBox(color: baseColor),
+            ),
+            Opacity(
+              opacity: v,
+              child: MonthGrid(
+                layout: _monthLayout!,
+                controller: _monthScrollCtrl!,
+                topInset: _monthTopInset,
+                bottomInset: _monthBottomInset,
+                today: _today,
+                hiddenNumbersWeek: _flight?.monday,
+                onDayTapped: _exitMonth,
+                onEventTap: (e, d) => showEventDetail(context, e, d),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -673,8 +1035,14 @@ class _CalendarScreenState extends State<CalendarScreen>
     const double cellH = 38.0;
     final monday = _weekMonday(_dayForMultiDayPage(_focusedMultiDayPage));
 
+    // Month morph: the gap+numbers (42px) collapse while the letters row stays
+    // pinned (centered-column invariant), becoming the month view's sticky
+    // weekday header. mv == 0 whenever month mode is off → layout unchanged.
+    final monthMode = _monthActive || _flight != null;
+    final mv = _monthCurved.value;
+
     return SizedBox(
-      height: _kDayBarH,
+      height: _kDayBarH - 42.0 * mv,
       child: LayoutBuilder(builder: (context, constraints) {
         final stripW   = constraints.maxWidth;
         final cellW    = stripW / 7.0;
@@ -779,9 +1147,12 @@ class _CalendarScreenState extends State<CalendarScreen>
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Row(
+                  key: showPill ? _stripLettersKey : null,
                   children: List.generate(7, (i) => Expanded(
                     child: GestureDetector(
-                      onTap: () => _drillToDay(mon.add(Duration(days: i))),
+                      onTap: monthMode
+                          ? null
+                          : () => _drillToDay(mon.add(Duration(days: i))),
                       behavior: HitTestBehavior.opaque,
                       child: Center(
                         child: Text(
@@ -797,35 +1168,43 @@ class _CalendarScreenState extends State<CalendarScreen>
                     ),
                   )),
                 ),
-                const SizedBox(height: 4),
-                // Pill animates to new focused cell on tap; absent in adjacent weeks.
-                showPill
-                    ? TweenAnimationBuilder<double>(
-                        tween: Tween<double>(begin: focusLeft, end: focusLeft),
-                        duration: const Duration(milliseconds: 220),
-                        curve: Curves.easeInOut,
-                        builder: (context, animLeft, _) {
-                          final pillLeft = lerpDouble(
-                            animLeft - cellW + (cellW - cellH) / 2,
-                            animLeft,
-                            t,
-                          )!;
-                          return numberRow(pillLeft, true);
-                        },
-                      )
-                    : numberRow(0.0, false),
+                if (monthMode)
+                  // Numbers fly in the overlay; their slot collapses behind them.
+                  SizedBox(height: 42.0 * (1.0 - mv))
+                else ...[
+                  const SizedBox(height: 4),
+                  // Pill animates to new focused cell on tap; absent in adjacent weeks.
+                  showPill
+                      ? KeyedSubtree(
+                          key: _stripNumbersKey,
+                          child: TweenAnimationBuilder<double>(
+                            tween: Tween<double>(begin: focusLeft, end: focusLeft),
+                            duration: const Duration(milliseconds: 220),
+                            curve: Curves.easeInOut,
+                            builder: (context, animLeft, _) {
+                              final pillLeft = lerpDouble(
+                                animLeft - cellW + (cellW - cellH) / 2,
+                                animLeft,
+                                t,
+                              )!;
+                              return numberRow(pillLeft, true);
+                            },
+                          ),
+                        )
+                      : numberRow(0.0, false),
+                ],
               ],
             ),
           );
         }
 
         return GestureDetector(
-          onHorizontalDragUpdate: (d) {
+          onHorizontalDragUpdate: monthMode ? null : (d) {
             setState(() {
               _weekStripFx = (_weekStripFx + d.delta.dx / stripW).clamp(-1.0, 1.0);
             });
           },
-          onHorizontalDragEnd: (d) {
+          onHorizontalDragEnd: monthMode ? null : (d) {
             final vel = d.primaryVelocity ?? 0;
             if (_weekStripFx < -0.3 || vel < -500) {
               HapticFeedback.selectionClick();
@@ -1814,6 +2193,90 @@ class _TodayButtonState extends State<_TodayButton> {
 
     final label = Text(
       'Today',
+      style: GoogleFonts.inter(
+        fontSize: 14,
+        fontWeight: FontWeight.w600,
+        color: isDark ? Colors.white : Colors.black,
+      ),
+    );
+
+    final pill = Container(
+      decoration: const BoxDecoration(
+        borderRadius: _radius,
+        boxShadow: [_shadow],
+      ),
+      child: ClipRRect(
+        borderRadius: _radius,
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Container(
+            height: 35,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+              color: fillColor,
+              borderRadius: _radius,
+            ),
+            child: Center(child: label),
+          ),
+        ),
+      ),
+    );
+
+    return GestureDetector(
+      onTap: widget.onTap,
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      child: AnimatedScale(
+        scale: _pressed ? 0.96 : 1.0,
+        duration: const Duration(milliseconds: 100),
+        child: IntrinsicWidth(child: pill),
+      ),
+    );
+  }
+}
+
+// ─── Month/Week toggle button ─────────────────────────────────────────────────
+// Same pill styling as _TodayButton; label switches with the active view.
+
+class _MonthButton extends StatefulWidget {
+  const _MonthButton({required this.label, required this.onTap});
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  State<_MonthButton> createState() => _MonthButtonState();
+}
+
+class _MonthButtonState extends State<_MonthButton> {
+  bool _pressed = false;
+
+  static const _radius = BorderRadius.all(Radius.circular(18));
+  static const _shadow = BoxShadow(
+    color: Color(0x28000000),
+    blurRadius: 16,
+    offset: Offset(0, 4),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: ThemeService.instance.glassEnabled,
+      builder: (context, glass, _) => ValueListenableBuilder<String>(
+        valueListenable: ThemeService.instance.currentColor,
+        builder: (context, colorKey, _) => _buildPill(glass, colorKey),
+      ),
+    );
+  }
+
+  Widget _buildPill(bool glass, String colorKey) {
+    final isDark = colorKey == 'dark';
+    final fillColor = isDark
+        ? Colors.white.withValues(alpha: 0.15)
+        : Colors.white.withValues(alpha: 0.35);
+
+    final label = Text(
+      widget.label,
       style: GoogleFonts.inter(
         fontSize: 14,
         fontWeight: FontWeight.w600,

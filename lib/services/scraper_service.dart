@@ -269,7 +269,8 @@ class ScraperService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final scraped = await _scrapeOnePage(_myCoursesUrl, isMyCourse: true);
+      final scraped =
+          (await _scrapeOnePage(_myCoursesUrl, isMyCourse: true)).shells;
 
       // Preserve isFavourite choices the user set manually — but only if the
       // course was already enrolled (isMyCourse: true in cache). If it was
@@ -388,12 +389,22 @@ class ScraperService extends ChangeNotifier {
       final cachedShells = existing.map(_fromJson).toList();
       final skipTitles = {for (final s in cachedShells) s.title.toLowerCase()};
 
-      final newShells = await _scrapeOnePage(
-        _allCoursesUrl,
-        isMyCourse: false,
-        skipTitles: skipTitles,
-        scrollFirst: true,
-      );
+      // The listing is paginated (classic WP ?paged=N links); walk every page.
+      const maxPages = 15;
+      final newShells = <CourseShell>[];
+      for (var page = 1; page <= maxPages; page++) {
+        final url =
+            page == 1 ? _allCoursesUrl : '$_allCoursesUrl&paged=$page';
+        final result = await _scrapeOnePage(
+          url,
+          isMyCourse: false,
+          skipTitles: skipTitles,
+        );
+        newShells.addAll(result.shells);
+        print('[scraper] all-courses page $page: ${result.shells.length} new '
+            '(hasNext=${result.hasNext})');
+        if (!result.hasNext) break;
+      }
       print('[scraper] all-courses new: ${newShells.length}');
 
       final merged = _mergeShells(cachedShells, newShells);
@@ -423,13 +434,12 @@ class ScraperService extends ChangeNotifier {
 
   // ─── Core WebView scraper ─────────────────────────────────────────────────
 
-  Future<List<CourseShell>> _scrapeOnePage(
+  Future<({List<CourseShell> shells, bool hasNext})> _scrapeOnePage(
     String url, {
     required bool isMyCourse,
     Set<String> skipTitles = const {},
-    bool scrollFirst = false,
   }) async {
-    final completer = Completer<List<CourseShell>>();
+    final completer = Completer<({List<CourseShell> shells, bool hasNext})>();
     HeadlessInAppWebView? view;
     var processing = false;
 
@@ -464,10 +474,9 @@ class ScraperService extends ChangeNotifier {
         processing = true;
         print('[scraper] page loaded: $urlStr');
         try {
-          if (scrollFirst) await _scrollToLoadMore(ctrl);
-          final shells = await _extractFromPage(ctrl,
+          final result = await _extractFromPage(ctrl,
               isMyCourse: isMyCourse, skipTitles: skipTitles);
-          completer.complete(shells);
+          completer.complete(result);
         } catch (e, st) {
           if (!completer.isCompleted) completer.completeError(e, st);
         } finally {
@@ -515,25 +524,6 @@ class ScraperService extends ChangeNotifier {
     );
   }
 
-  // Scroll repeatedly to trigger lazy-loaded / "load more" content.
-  Future<void> _scrollToLoadMore(InAppWebViewController ctrl) async {
-    await ctrl.callAsyncJavaScript(functionBody: r"""
-      let prev = 0;
-      let unchanged = 0;
-      while (unchanged < 3) {
-        window.scrollTo(0, document.body.scrollHeight);
-        document.querySelectorAll(
-          'button[class*="more"], [class*="load-more"], .loadmore, .btn-load-more'
-        ).forEach(btn => { try { btn.click(); } catch(_) {} });
-        await new Promise(r => setTimeout(r, 1200));
-        const count = document.querySelectorAll(
-          'article.card.course, article.course, .course-item, [class*="course"]'
-        ).length;
-        if (count === prev) { unchanged++; } else { unchanged = 0; prev = count; }
-      }
-    """);
-  }
-
   // Merge: myCourse shells take priority; allShells adds only new courses.
   List<CourseShell> _mergeShells(
       List<CourseShell> myShells, List<CourseShell> allShells) {
@@ -548,7 +538,7 @@ class ScraperService extends ChangeNotifier {
     return result;
   }
 
-  Future<List<CourseShell>> _extractFromPage(
+  Future<({List<CourseShell> shells, bool hasNext})> _extractFromPage(
     InAppWebViewController ctrl, {
     bool isMyCourse = false,
     Set<String> skipTitles = const {},
@@ -563,12 +553,13 @@ class ScraperService extends ChangeNotifier {
     }
     if (raw?.value == null) {
       print('[scraper] JS returned null after retry');
-      return [];
+      return (shells: <CourseShell>[], hasNext: false);
     }
 
-    final List<dynamic> cards =
-        json.decode(raw!.value.toString()) as List<dynamic>;
-    print('[scraper] found ${cards.length} course cards');
+    final page = json.decode(raw!.value.toString()) as Map<String, dynamic>;
+    final cards = page['cards'] as List<dynamic>;
+    final hasNext = (page['hasNextPage'] as bool?) ?? false;
+    print('[scraper] found ${cards.length} course cards (hasNext=$hasNext)');
 
     final shells = <CourseShell>[];
     for (final card in cards) {
@@ -614,7 +605,7 @@ class ScraperService extends ChangeNotifier {
       }
     }
 
-    return shells;
+    return (shells: shells, hasNext: hasNext);
   }
 
   Future<({String? location, String? spaceUrl, String? description, String? lecturer, String? timeframe})>
@@ -752,7 +743,11 @@ class ScraperService extends ChangeNotifier {
       return { title, description, meetingTexts, location, dateTexts, spacesUrl, detailUrl, links };
     });
 
-    return JSON.stringify(results);
+    // Classic WP pagination: an "a.next.page-numbers" link exists on every
+    // page except the last one.
+    const hasNextPage = !!document.querySelector('a.next.page-numbers');
+
+    return JSON.stringify({ cards: results, hasNextPage });
   """;
 
   // ─── JS: fetch location + Space URL slug from the course detail page ────────
@@ -1220,6 +1215,13 @@ class ScraperService extends ChangeNotifier {
     if (url.isNotEmpty) {
       final uri = Uri.tryParse(url);
       if (uri != null) {
+        // Detail URLs are query-style (/course-selection/?course=slug); the
+        // last path segment would collide as "course-selection" for all of
+        // them, so prefer the course slug.
+        final courseSlug = uri.queryParameters['course'];
+        if (courseSlug != null && courseSlug.isNotEmpty) {
+          return 'scraped_$courseSlug';
+        }
         final segs = uri.pathSegments.where((s) => s.isNotEmpty).toList();
         if (segs.isNotEmpty) return 'scraped_${segs.last}';
       }

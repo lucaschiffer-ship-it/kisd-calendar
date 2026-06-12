@@ -369,13 +369,31 @@ class _CalendarScreenState extends State<CalendarScreen>
     );
   }
 
-  void _reload() {
+  bool _reloading  = false;
+  bool _reloadDone = false;
+
+  Future<void> _reload() async {
     CalendarService.instance.clearCache();
-    _scrapeEventsBackground();
     setState(() {
       _slotKeys = List.generate(5, (_) => GlobalKey());
     });
     _preloadRange(_focusedMultiDayPage);
+    await _scrapeEventsBackground();
+  }
+
+  void _onReload() {
+    if (_reloading) return;
+    setState(() => _reloading = true);
+    _reload().then((_) {
+      if (!mounted) return;
+      setState(() {
+        _reloading  = false;
+        _reloadDone = true;
+      });
+      Future.delayed(const Duration(seconds: 1), () {
+        if (mounted) setState(() => _reloadDone = false);
+      });
+    });
   }
 
   Future<void> _scrapeEventsBackground() async {
@@ -976,9 +994,32 @@ class _CalendarScreenState extends State<CalendarScreen>
                 children: [
                   Align(
                     alignment: Alignment.centerLeft,
-                    child: _ReloadButton(
-                      onTap: _reload,
-                      color: secondaryColor,
+                    child: GestureDetector(
+                      onTap: _reloading ? null : _onReload,
+                      behavior: HitTestBehavior.opaque,
+                      child: Padding(
+                        padding: const EdgeInsets.all(11),
+                        child: _reloading
+                            ? SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: Center(
+                                  child: SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: secondaryColor,
+                                    ),
+                                  ),
+                                ),
+                              )
+                            : _reloadDone
+                                ? const Icon(Icons.check,
+                                    color: AppColors.success, size: 22)
+                                : Icon(CupertinoIcons.arrow_clockwise,
+                                    color: secondaryColor, size: 22),
+                      ),
                     ),
                   ),
                   Text(
@@ -1636,85 +1677,6 @@ class _IconChip extends StatelessWidget {
         child: Center(
           child: Icon(icon,
               size: 20, color: tokens.AppThemeTokens.secondaryTextColor),
-        ),
-      ),
-    );
-  }
-}
-
-// ─── Reload button with spin → checkmark animation ────────────────────────────
-
-class _ReloadButton extends StatefulWidget {
-  const _ReloadButton({required this.onTap, required this.color});
-  final VoidCallback onTap;
-  final Color color;
-
-  @override
-  State<_ReloadButton> createState() => _ReloadButtonState();
-}
-
-class _ReloadButtonState extends State<_ReloadButton>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl;
-  bool _done = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 600),
-    );
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _handleTap() async {
-    if (_ctrl.isAnimating || _done) return;
-    _ctrl.repeat();
-    widget.onTap();
-    await Future.delayed(const Duration(milliseconds: 700));
-    if (!mounted) return;
-    _ctrl.stop();
-    _ctrl.reset();
-    setState(() => _done = true);
-    await Future.delayed(const Duration(milliseconds: 1200));
-    if (mounted) setState(() => _done = false);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: _handleTap,
-      behavior: HitTestBehavior.opaque,
-      child: Padding(
-        padding: const EdgeInsets.all(11),
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 200),
-          transitionBuilder: (child, anim) => ScaleTransition(
-            scale: anim,
-            child: FadeTransition(opacity: anim, child: child),
-          ),
-          child: _done
-              ? const Icon(
-                  CupertinoIcons.checkmark_circle_fill,
-                  key: ValueKey('check'),
-                  color: Color(0xFF34C759),
-                  size: 22,
-                )
-              : RotationTransition(
-                  key: const ValueKey('spin'),
-                  turns: _ctrl,
-                  child: Icon(
-                    CupertinoIcons.arrow_clockwise,
-                    color: widget.color,
-                    size: 22,
-                  ),
-                ),
         ),
       ),
     );

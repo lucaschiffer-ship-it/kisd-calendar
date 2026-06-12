@@ -35,7 +35,7 @@ flutter pub get          # install dependencies
 flutter run              # run on connected iOS device / simulator
 flutter build ios        # production iOS build
 flutter analyze          # lint / static analysis
-flutter test             # run tests (no tests exist yet)
+flutter test             # run tests
 ```
 
 There is no separate lint config beyond the default `analysis_options.yaml` (`flutter_lints`).
@@ -100,6 +100,8 @@ Two layers:
 `id` — derived from the last URL path segment of the course/detail page, or a title slug as fallback
 
 The `ListScreen` pre-computes three filtered lists (`_myCourses`, `_favourites`, `_allCourses`) in `_rebuildFilteredLists()` and switches between them based on `_filterMode`. `CourseShellCard` is stateful; `_liked` mirrors `widget.shell.isFavourite` and is synced via `didUpdateWidget`.
+
+The list search bar uses typo-tolerant fuzzy matching (`fuzzy` package, a Fuse.js port) over course title and lecturer — see `_fuzzySearch()` in `list_screen.dart`. Tuning knob: if matches feel too loose or too strict, adjust `threshold` there (currently `0.35`; lower = stricter, `0` = near-exact, the package default of `0.6` is far too loose). Behaviour is pinned by `test/fuzzy_search_test.dart`.
 
 ### Mail (`MailService`)
 

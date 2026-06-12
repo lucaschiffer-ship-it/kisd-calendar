@@ -31,44 +31,43 @@ class _MensaScreenState extends State<MensaScreen>
     'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
   ];
 
+  // Page index ↔ date mapping: _initialPage is "today", so days before
+  // today are reachable down to page 0 (~13 years back).
+  static const _initialPage = 5000;
+
+  late final DateTime _baseDate;
+  late final PageController _pageController;
   DateTime _selectedDate = DateTime.now();
-  List<MensaMeal> _meals = [];
-  bool _loading = true;
-  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _fetchMeals();
+    _baseDate = DateTime.now();
+    _pageController = PageController(initialPage: _initialPage);
   }
 
-  Future<void> _fetchMeals() async {
-    setState(() { _loading = true; _error = null; });
-    try {
-      final meals = await mensaService.fetchMeals(_selectedDate);
-      if (mounted) setState(() { _meals = meals; _loading = false; });
-    } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _loading = false; });
-    }
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
   }
+
+  DateTime _dateForPage(int page) =>
+      _baseDate.add(Duration(days: page - _initialPage));
 
   void _changeDay(int delta) {
-    setState(() => _selectedDate = _selectedDate.add(Duration(days: delta)));
-    _fetchMeals();
+    final current = _pageController.page?.round() ?? _initialPage;
+    _pageController.animateToPage(
+      current + delta,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
   }
 
   String _formatDate(DateTime d) {
     final weekday = _weekdays[d.weekday - 1];
     final month   = _months[d.month - 1];
     return '$weekday, ${d.day}. $month';
-  }
-
-  Map<String, List<MensaMeal>> _groupByCategory(List<MensaMeal> meals) {
-    final map = <String, List<MensaMeal>>{};
-    for (final m in meals) {
-      map.putIfAbsent(m.category, () => []).add(m);
-    }
-    return map;
   }
 
   @override
@@ -180,56 +179,116 @@ class _MensaScreenState extends State<MensaScreen>
           )
         : headerBody;
 
-    Widget body;
-    if (_loading) {
-      body = Center(
-        child: CircularProgressIndicator(color: s.accent),
-      );
-    } else if (_error != null) {
-      body = _ErrorState(error: _error!, onRetry: _fetchMeals);
-    } else if (_meals.isEmpty) {
-      body = const _ClosedState();
-    } else {
-      final grouped = _groupByCategory(_meals);
-      body = RefreshIndicator(
-        color: s.accent,
-        onRefresh: () {
-          mensaService.clearCacheForDate(_selectedDate);
-          return _fetchMeals();
-        },
-        child: CustomScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            SliverPadding(padding: EdgeInsets.only(top: headerH)),
-            for (final entry in grouped.entries) ...[
-              SliverToBoxAdapter(child: _CategoryHeader(label: entry.key)),
-              SliverList.builder(
-                itemCount: entry.value.length,
-                itemBuilder: (_, i) => _MealRow(meal: entry.value[i]),
-              ),
-            ],
-            const SliverPadding(padding: EdgeInsets.only(bottom: 48)),
-          ],
-        ),
-      );
+    final pageView = PageView.builder(
+      controller: _pageController,
+      onPageChanged: (page) =>
+          setState(() => _selectedDate = _dateForPage(page)),
+      itemBuilder: (context, page) {
+        final date = _dateForPage(page);
+        return _MensaDayPage(
+          key: ValueKey('${date.year}-${date.month}-${date.day}'),
+          date: date,
+          headerHeight: headerH,
+        );
+      },
+    );
+
+    return Stack(
+      children: [
+        pageView,
+        Positioned(top: 0, left: 0, right: 0, child: header),
+      ],
+    );
+  }
+}
+
+// ── Day page ──────────────────────────────────────────────────────────────────
+
+class _MensaDayPage extends StatefulWidget {
+  const _MensaDayPage({
+    super.key,
+    required this.date,
+    required this.headerHeight,
+  });
+
+  final DateTime date;
+  final double headerHeight;
+
+  @override
+  State<_MensaDayPage> createState() => _MensaDayPageState();
+}
+
+class _MensaDayPageState extends State<_MensaDayPage> {
+  List<MensaMeal> _meals = [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchMeals();
+  }
+
+  Future<void> _fetchMeals() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final meals = await mensaService.fetchMeals(widget.date);
+      if (mounted) setState(() { _meals = meals; _loading = false; });
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString(); _loading = false; });
     }
+  }
+
+  Map<String, List<MensaMeal>> _groupByCategory(List<MensaMeal> meals) {
+    final map = <String, List<MensaMeal>>{};
+    for (final m in meals) {
+      map.putIfAbsent(m.category, () => []).add(m);
+    }
+    return map;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = AppColorScheme.current;
 
     if (_loading || _error != null || _meals.isEmpty) {
-      return Stack(
+      final Widget state;
+      if (_loading) {
+        state = Center(child: CircularProgressIndicator(color: s.accent));
+      } else if (_error != null) {
+        state = _ErrorState(error: _error!, onRetry: _fetchMeals);
+      } else {
+        state = const _ClosedState();
+      }
+      return Column(
         children: [
-          Column(
-            children: [SizedBox(height: headerH), Expanded(child: body)],
-          ),
-          Positioned(top: 0, left: 0, right: 0, child: header),
+          SizedBox(height: widget.headerHeight),
+          Expanded(child: state),
         ],
       );
     }
 
-    return Stack(
-      children: [
-        body,
-        Positioned(top: 0, left: 0, right: 0, child: header),
-      ],
+    final grouped = _groupByCategory(_meals);
+    return RefreshIndicator(
+      color: s.accent,
+      onRefresh: () {
+        mensaService.clearCacheForDate(widget.date);
+        return _fetchMeals();
+      },
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverPadding(padding: EdgeInsets.only(top: widget.headerHeight)),
+          for (final entry in grouped.entries) ...[
+            SliverToBoxAdapter(child: _CategoryHeader(label: entry.key)),
+            SliverList.builder(
+              itemCount: entry.value.length,
+              itemBuilder: (_, i) => _MealRow(meal: entry.value[i]),
+            ),
+          ],
+          const SliverPadding(padding: EdgeInsets.only(bottom: 48)),
+        ],
+      ),
     );
   }
 }

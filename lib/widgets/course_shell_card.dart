@@ -304,10 +304,14 @@ class _CourseShellCardState extends State<CourseShellCard>
                                   color: tokens.AppThemeTokens.locationColor,
                                 ),
                                 const SizedBox(width: 4),
-                                Text(
-                                  shell.location!.toUpperCase(),
-                                  style: AppTextStyle.label.copyWith(
-                                    color: tokens.AppThemeTokens.locationColor,
+                                Flexible(
+                                  child: Text(
+                                    shell.location!.toUpperCase(),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: AppTextStyle.label.copyWith(
+                                      color: tokens.AppThemeTokens.locationColor,
+                                    ),
                                   ),
                                 ),
                               ],

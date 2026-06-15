@@ -914,8 +914,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
   // ignore: unused_element — referenced by Stage B
   bool get _isEditing => _editController.value > 0.0;
 
-  // ── Scroll controller (manual scroll via drag) ────────────────────────────
-  final ScrollController _scrollController = ScrollController();
+  double _lastOverscrollVelocity = 0.0;
 
   // ── Edit form controllers (Stage B.3) ────────────────────────────────────
   late TextEditingController _titleCtrl;
@@ -1000,7 +999,6 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
     _snapBackCtrl.dispose();
     _closeController.dispose();
     _editController.dispose();
-    _scrollController.dispose();
     _titleCtrl.dispose();
     _locationCtrl.dispose();
     _lecturerCtrl.dispose();
@@ -1350,62 +1348,42 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
     });
   }
 
-  void _onDragStart(DragStartDetails _) {
-    if (_editController.value > 0.5) return;
-    setState(() {
-      _isDragging = true;
-      _dragDistance = 0.0;
-      _dragProgress = 0.0;
-    });
-  }
+  bool _onScrollNotification(ScrollNotification notification) {
+    if (_editController.value > 0.5) return false;
 
-  void _onDragUpdate(DragUpdateDetails d) {
-    if (_editController.value > 0.5) return;
-    final screenHeight = MediaQuery.of(context).size.height;
-    final delta = d.delta.dy;
-
-    // If already in dismiss mode, keep accumulating dismiss progress.
-    if (_dragDistance > 0) {
+    if (notification is OverscrollNotification && notification.overscroll < 0) {
+      // Pulling past the top — accumulate dismiss progress.
+      final screenHeight = MediaQuery.of(context).size.height;
+      final delta = -notification.overscroll;
+      _lastOverscrollVelocity = notification.velocity;
       setState(() {
+        _isDragging = true;
         _dragDistance = (_dragDistance + delta).clamp(0.0, double.infinity);
         _dragProgress = (_dragDistance / (screenHeight * 0.35)).clamp(0.0, 1.0);
       });
-      return;
+      return true;
     }
 
-    // Try to route the drag to the scroll view first.
-    if (_scrollController.hasClients &&
-        _scrollController.position.maxScrollExtent > 0) {
-      final offset = _scrollController.offset;
-      if (delta < 0 || offset > 0) {
-        // Scrolling up (delta<0) or scrolling back down while not at top.
-        final newOffset =
-            (offset - delta).clamp(0.0, _scrollController.position.maxScrollExtent);
-        _scrollController.jumpTo(newOffset);
-        return;
-      }
-    }
-
-    // At scroll top, dragging down → dismiss.
-    if (delta > 0) {
-      setState(() {
-        _dragDistance = (_dragDistance + delta).clamp(0.0, double.infinity);
-        _dragProgress = (_dragDistance / (screenHeight * 0.35)).clamp(0.0, 1.0);
-      });
-    }
-  }
-
-  void _onDragEnd(DragEndDetails d) {
-    if (_editController.value > 0.5) return;
-    if (_dragProgress > 0.35 || d.velocity.pixelsPerSecond.dy > 800) {
-      _closeStartProgress = _dragProgress;
-      _closeController.forward(from: 0);
-    } else {
+    if (notification is ScrollUpdateNotification && _isDragging &&
+        notification.metrics.pixels > notification.metrics.minScrollExtent) {
+      // Scrolled back into content — cancel dismiss.
       _snapBack();
+      return false;
     }
-  }
 
-  void _onDragCancel() => _snapBack();
+    if (notification is ScrollEndNotification && _isDragging) {
+      if (_dragProgress > 0.35 || _lastOverscrollVelocity.abs() > 800) {
+        _closeStartProgress = _dragProgress;
+        _closeController.forward(from: 0);
+      } else {
+        _snapBack();
+      }
+      _lastOverscrollVelocity = 0.0;
+      return true;
+    }
+
+    return false;
+  }
 
   void _snapBack() {
     _snapBackCtrl.value = _dragProgress;
@@ -1476,10 +1454,6 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                 rect: lerpedRect,
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                      onVerticalDragStart: _onDragStart,
-                      onVerticalDragUpdate: _onDragUpdate,
-                      onVerticalDragEnd: _onDragEnd,
-                      onVerticalDragCancel: _onDragCancel,
                       child: Container(
                         decoration: BoxDecoration(
                           color: glass
@@ -1593,10 +1567,11 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                         opacity: (1.0 -
                                                 _editController.value)
                                             .clamp(0.0, 1.0),
-                                        child: SingleChildScrollView(
-                                          controller: _scrollController,
-                                          physics:
-                                              const NeverScrollableScrollPhysics(),
+                                        child: NotificationListener<ScrollNotification>(
+                                          onNotification: _onScrollNotification,
+                                          child: SingleChildScrollView(
+                                          physics: const BouncingScrollPhysics(
+                                              parent: AlwaysScrollableScrollPhysics()),
                                           clipBehavior: glass ? Clip.hardEdge : Clip.none,
                                           child: Column(
                                             crossAxisAlignment:
@@ -1965,6 +1940,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                             const SizedBox(height: 24),
                                             ],
                                           ),
+                                        ),
                                         ),
                                       ),
                                     ),

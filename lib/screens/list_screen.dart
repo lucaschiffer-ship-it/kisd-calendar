@@ -33,12 +33,21 @@ const double _kEventRowH  = 51.0;  // per calendar event
 const double _kSearchH    = 36.0;  // search bar
 const double _kSearchGapH = 10.0;  // top + bottom padding around search bar
 const double _kEventsGapH = 6.0;   // gap between events block and search bar
+// Max appointment rows visible in the header; the rest scrolls.
+// 2.5 cuts the 3rd row in half to hint there is more.
+const double _kMaxEventRows = 2.5;
+// Height of the fade applied where appointments are cut off by scrolling.
+const double _kEventFadeH = 24.0;
 // Scroll distance over which the search bar hides / reveals.
 const double _kSearchRevealRange = _kSearchGapH + _kSearchH;
 
+// Visible height of the events content (capped at 2.5 rows).
+double _eventsContentH(int n) =>
+    (n * _kEventRowH).clamp(0.0, _kMaxEventRows * _kEventRowH);
+
 // Offset-driven part of the header collapse: only the events block. The
 // search bar collapses independently, driven by scroll direction.
-double _eventsRange(int n) => n > 0 ? n * _kEventRowH + _kEventsGapH : 0;
+double _eventsRange(int n) => n > 0 ? _eventsContentH(n) + _kEventsGapH : 0;
 
 double _collapseRange(int n) => _eventsRange(n) + _kSearchRevealRange;
 
@@ -106,6 +115,9 @@ class _ListScreenState extends State<ListScreen>
   // One scroll controller per filter page so each keeps its own position.
   final _scrollCtrls =
       List.generate(_kFilterOrder.length, (_) => ScrollController());
+  // Scroll position of the appointments list in the header, drives the
+  // edge fades that replace the hard cut-off.
+  final _eventsScrollCtrl = ScrollController();
 
   // Search-bar reveal: 1 = shown, 0 = hidden behind the header. Driven by
   // scroll *direction* (hide on scroll down, reveal on scroll up anywhere),
@@ -357,6 +369,7 @@ class _ListScreenState extends State<ListScreen>
     for (final c in _scrollCtrls) {
       c.dispose();
     }
+    _eventsScrollCtrl.dispose();
     super.dispose();
   }
 
@@ -642,13 +655,62 @@ class _ListScreenState extends State<ListScreen>
                       children: [
                         Positioned(
                           bottom: _kEventsGapH, left: 0, right: 0,
-                          height: _todayEvents.length * _kEventRowH,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              for (final e in _todayEvents)
-                                _TodayEventRow(event: e),
-                            ],
+                          height: _eventsContentH(_todayEvents.length),
+                          child: AnimatedBuilder(
+                            animation: _eventsScrollCtrl,
+                            builder: (context, child) {
+                              // Per-edge fade strength: 1 when rows are cut
+                              // off there, ramping over _kEventFadeH px of
+                              // scroll so the fade eases in/out at the ends.
+                              final pos = _eventsScrollCtrl.hasClients &&
+                                      _eventsScrollCtrl
+                                          .position.hasContentDimensions
+                                  ? _eventsScrollCtrl.position
+                                  : null;
+                              final overflows =
+                                  _todayEvents.length * _kEventRowH >
+                                      _eventsContentH(_todayEvents.length);
+                              final topT = pos == null
+                                  ? 0.0
+                                  : (pos.pixels / _kEventFadeH)
+                                      .clamp(0.0, 1.0);
+                              final bottomT = pos == null
+                                  ? (overflows ? 1.0 : 0.0)
+                                  : ((pos.maxScrollExtent - pos.pixels) /
+                                          _kEventFadeH)
+                                      .clamp(0.0, 1.0);
+                              if (topT == 0.0 && bottomT == 0.0) {
+                                return child!;
+                              }
+                              return ShaderMask(
+                                shaderCallback: (rect) {
+                                  final f = _kEventFadeH / rect.height;
+                                  return LinearGradient(
+                                    begin: Alignment.topCenter,
+                                    end: Alignment.bottomCenter,
+                                    colors: [
+                                      Colors.white
+                                          .withValues(alpha: 1.0 - topT),
+                                      Colors.white,
+                                      Colors.white,
+                                      Colors.white
+                                          .withValues(alpha: 1.0 - bottomT),
+                                    ],
+                                    stops: [0.0, f, 1.0 - f, 1.0],
+                                  ).createShader(rect);
+                                },
+                                blendMode: BlendMode.dstIn,
+                                child: child,
+                              );
+                            },
+                            child: ListView(
+                              controller: _eventsScrollCtrl,
+                              padding: EdgeInsets.zero,
+                              children: [
+                                for (final e in _todayEvents)
+                                  _TodayEventRow(event: e),
+                              ],
+                            ),
                           ),
                         ),
                       ],

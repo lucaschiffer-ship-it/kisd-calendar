@@ -13,7 +13,7 @@ import 'compose_screen.dart';
 import 'email_detail_screen.dart';
 import 'settings_screen.dart';
 
-enum _MailFilter { all, unread, flagged, archived }
+enum _MailFilter { all, unread, flagged, trash }
 
 class MailScreen extends StatefulWidget {
   const MailScreen({super.key});
@@ -28,7 +28,7 @@ class _MailScreenState extends State<MailScreen>
   bool get wantKeepAlive => true;
 
   _MailFilter _filter = _MailFilter.all;
-  bool _archiveFetchTriggered = false;
+  bool _trashFetchTriggered = false;
   bool _reloadDone = false;
   final _searchCtrl = TextEditingController();
   String _searchQuery = '';
@@ -76,8 +76,8 @@ class _MailScreenState extends State<MailScreen>
   }
 
   List<MimeMessage> get _filtered {
-    var msgs = _filter == _MailFilter.archived
-        ? mailService.archivedMessages.toList()
+    var msgs = _filter == _MailFilter.trash
+        ? mailService.trashedMessages.toList()
         : mailService.messages.toList();
     if (_searchQuery.isNotEmpty) {
       final q = _searchQuery.toLowerCase();
@@ -90,9 +90,9 @@ class _MailScreenState extends State<MailScreen>
     }
     return switch (_filter) {
       _MailFilter.unread   => msgs.where((m) => !m.isSeen).toList(),
-      _MailFilter.flagged  => msgs.where((m) => m.isFlagged).toList(),
-      _MailFilter.archived => msgs,
-      _MailFilter.all      => msgs,
+      _MailFilter.flagged => msgs.where((m) => m.isFlagged).toList(),
+      _MailFilter.trash   => msgs,
+      _MailFilter.all     => msgs,
     };
   }
 
@@ -110,12 +110,12 @@ class _MailScreenState extends State<MailScreen>
 
   Widget _buildContent() {
     final s = AppColorScheme.current;
-    final isArchiveTab = _filter == _MailFilter.archived;
-    final loading = isArchiveTab
-        ? mailService.isFetchingArchive
+    final isTrashTab = _filter == _MailFilter.trash;
+    final loading = isTrashTab
+        ? mailService.isFetchingTrash
         : (mailService.isConnecting || mailService.isFetching);
-    final hasData = isArchiveTab
-        ? mailService.archivedMessages.isNotEmpty
+    final hasData = isTrashTab
+        ? mailService.trashedMessages.isNotEmpty
         : mailService.messages.isNotEmpty;
     final error = mailService.connectionError;
 
@@ -124,7 +124,7 @@ class _MailScreenState extends State<MailScreen>
         child: CircularProgressIndicator(color: s.accent),
       );
     }
-    if (!isArchiveTab && error != null && !hasData) {
+    if (!isTrashTab && error != null && !hasData) {
       return _ErrorView(error: error, onRetry: () => mailService.connect());
     }
 
@@ -295,13 +295,14 @@ class _MailScreenState extends State<MailScreen>
                       ),
                       const SizedBox(width: 8),
                       _FilterChip(
-                        label: 'Archived',
-                        selected: _filter == _MailFilter.archived,
+                        label: '',
+                        icon: Icons.delete_outline,
+                        selected: _filter == _MailFilter.trash,
                         onTap: () {
-                          setState(() => _filter = _MailFilter.archived);
-                          if (!_archiveFetchTriggered) {
-                            _archiveFetchTriggered = true;
-                            mailService.fetchArchive();
+                          setState(() => _filter = _MailFilter.trash);
+                          if (!_trashFetchTriggered) {
+                            _trashFetchTriggered = true;
+                            mailService.fetchTrash();
                           }
                         },
                         radius: radius,
@@ -331,8 +332,8 @@ class _MailScreenState extends State<MailScreen>
       children: [
         RefreshIndicator(
           color: s.accent,
-          onRefresh: () => _filter == _MailFilter.archived
-              ? mailService.fetchArchive()
+          onRefresh: () => _filter == _MailFilter.trash
+              ? mailService.fetchTrash()
               : mailService.reloadInbox(),
           child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
@@ -373,8 +374,8 @@ class _MailScreenState extends State<MailScreen>
                           ),
                         ),
                         onDelete: () => mailService.deleteMessage(msg),
-                        isArchiveItem: isArchiveTab,
-                        onRestore: () => mailService.restoreMessage(msg),
+                        isArchiveItem: isTrashTab,
+                        onRestore: () => mailService.restoreFromTrash(msg),
                         onToggleRead: () {
                           if (msg.isSeen) {
                             mailService.markAsUnread(msg);
@@ -404,6 +405,7 @@ class _FilterChip extends StatelessWidget {
     required this.onTap,
     required this.radius,
     this.glass = false,
+    this.icon,
   });
 
   final String label;
@@ -411,6 +413,7 @@ class _FilterChip extends StatelessWidget {
   final VoidCallback onTap;
   final double radius;
   final bool glass;
+  final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
@@ -439,14 +442,23 @@ class _FilterChip extends StatelessWidget {
           border: Border.all(color: border, width: 0.5),
         ),
         alignment: Alignment.center,
-        child: Text(
-          label,
-          style: AppTextStyles.bodySmall(
-            color: selected
-                ? Colors.white // on accent — white correct in both modes
-                : tokens.AppThemeTokens.secondaryTextColor,
-          ).copyWith(fontWeight: selected ? FontWeight.w600 : FontWeight.w400),
-        ),
+        child: icon != null
+            ? Icon(
+                icon,
+                size: 18,
+                color: selected
+                    ? Colors.white
+                    : tokens.AppThemeTokens.secondaryTextColor,
+              )
+            : Text(
+                label,
+                style: AppTextStyles.bodySmall(
+                  color: selected
+                      ? Colors.white // on accent — white correct in both modes
+                      : tokens.AppThemeTokens.secondaryTextColor,
+                ).copyWith(
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400),
+              ),
       ),
     );
   }

@@ -16,22 +16,22 @@ class MailService extends ChangeNotifier {
   bool _isConnected = false;
   bool _isConnecting = false;
   bool _isFetching = false;
-  bool _isFetchingArchive = false;
+  bool _isFetchingTrash = false;
   String? _connectionError;
   List<MimeMessage> _messages = [];
-  List<MimeMessage> _archivedMessages = [];
+  List<MimeMessage> _trashedMessages = [];
   String? _cachedUsername;
-  Mailbox? _archiveMailbox;
+  Mailbox? _trashMailbox;
 
   final _unreadController = StreamController<int>.broadcast();
 
   bool get isConnected => _isConnected;
   bool get isConnecting => _isConnecting;
   bool get isFetching => _isFetching;
-  bool get isFetchingArchive => _isFetchingArchive;
+  bool get isFetchingTrash => _isFetchingTrash;
   String? get connectionError => _connectionError;
   List<MimeMessage> get messages => List.unmodifiable(_messages);
-  List<MimeMessage> get archivedMessages => List.unmodifiable(_archivedMessages);
+  List<MimeMessage> get trashedMessages => List.unmodifiable(_trashedMessages);
   int get unreadCount => _messages.where((m) => !m.isSeen).length;
   Stream<int> get unreadCountStream => _unreadController.stream;
 
@@ -165,6 +165,7 @@ class MailService extends ChangeNotifier {
     }
   }
 
+  // Moves message to Trash instead of permanent expunge.
   Future<void> deleteMessage(MimeMessage message) async {
     final uid = message.uid;
     if (uid == null) return;
@@ -172,14 +173,31 @@ class MailService extends ChangeNotifier {
     if (!ok) return;
     try {
       await _imap!.selectInbox();
-      final seq = MessageSequence.fromId(uid, isUid: true);
-      await _imap!.uidMarkDeleted(seq);
-      await _imap!.uidExpunge(seq);
+      final trash = await _resolveTrashMailbox();
+      if (trash == null) {
+        print('[mail] deleteMessage: no trash folder — expunging instead');
+        final seq = MessageSequence.fromId(uid, isUid: true);
+        await _imap!.uidMarkDeleted(seq);
+        await _imap!.uidExpunge(seq);
+      } else {
+        final seq = MessageSequence.fromId(uid, isUid: true);
+        try {
+          await _imap!.uidMove(seq, targetMailbox: trash);
+          print('[mail] moved $uid to trash via MOVE');
+        } catch (_) {
+          await _imap!.uidCopy(seq, targetMailbox: trash);
+          await _imap!.uidMarkDeleted(seq);
+          await _imap!.uidExpunge(seq);
+          print('[mail] moved $uid to trash via COPY+DELETE');
+        }
+      }
       _messages.removeWhere((m) => m.uid == uid);
       _unreadController.add(unreadCount);
       notifyListeners();
+      // Refresh trash in background so the deleted message appears immediately.
+      unawaited(fetchTrash());
     } catch (e) {
-      print('[mail] error: $e');
+      print('[mail] deleteMessage error: $e');
     }
   }
 
@@ -193,8 +211,8 @@ class MailService extends ChangeNotifier {
       await _imap!.uidMarkSeen(MessageSequence.fromId(uid, isUid: true));
       final idx = _messages.indexWhere((m) => m.uid == uid);
       if (idx >= 0) _messages[idx].isSeen = true;
-      final aIdx = _archivedMessages.indexWhere((m) => m.uid == uid);
-      if (aIdx >= 0) _archivedMessages[aIdx].isSeen = true;
+      final tIdx = _trashedMessages.indexWhere((m) => m.uid == uid);
+      if (tIdx >= 0) _trashedMessages[tIdx].isSeen = true;
       _unreadController.add(unreadCount);
       notifyListeners();
     } catch (e) {
@@ -212,8 +230,8 @@ class MailService extends ChangeNotifier {
       await _imap!.uidMarkUnseen(MessageSequence.fromId(uid, isUid: true));
       final idx = _messages.indexWhere((m) => m.uid == uid);
       if (idx >= 0) _messages[idx].isSeen = false;
-      final aIdx = _archivedMessages.indexWhere((m) => m.uid == uid);
-      if (aIdx >= 0) _archivedMessages[aIdx].isSeen = false;
+      final tIdx = _trashedMessages.indexWhere((m) => m.uid == uid);
+      if (tIdx >= 0) _trashedMessages[tIdx].isSeen = false;
       _unreadController.add(unreadCount);
       notifyListeners();
     } catch (e) {
@@ -221,130 +239,116 @@ class MailService extends ChangeNotifier {
     }
   }
 
-  // Returns the archive Mailbox, finding or creating it. Caches the result.
-  Future<Mailbox?> _resolveArchiveMailbox() async {
-    if (_archiveMailbox != null) return _archiveMailbox;
+  // Finds the Trash mailbox by \Trash flag first, then common names. Caches result.
+  Future<Mailbox?> _resolveTrashMailbox() async {
+    if (_trashMailbox != null) return _trashMailbox;
     try {
       final mailboxes = await _imap!.listMailboxes();
-      const candidates = ['Archive', 'Archiv', 'Archives'];
+
+      // Prefer server-advertised \Trash special-use attribute.
+      try {
+        _trashMailbox = mailboxes.firstWhere(
+          (mb) => mb.flags.contains(MailboxFlag.trash),
+        );
+        print('[mail] found trash folder by flag: ${_trashMailbox!.path}');
+        return _trashMailbox;
+      } on StateError {
+        // No \Trash flag — fall through to name matching.
+      }
+
+      const candidates = [
+        'Trash', 'Papierkorb', 'Gelöscht', 'Deleted',
+        'Deleted Items', 'Deleted Messages', 'INBOX.Trash',
+      ];
       for (final name in candidates) {
         try {
-          _archiveMailbox = mailboxes.firstWhere(
+          _trashMailbox = mailboxes.firstWhere(
             (mb) =>
                 mb.name.toLowerCase() == name.toLowerCase() ||
                 mb.path.toLowerCase() == name.toLowerCase(),
           );
-          print('[mail] found archive folder: ${_archiveMailbox!.path}');
-          return _archiveMailbox;
+          print('[mail] found trash folder by name: ${_trashMailbox!.path}');
+          return _trashMailbox;
         } on StateError {
           continue;
         }
       }
+
       // No matching folder — create one.
-      print('[mail] no archive folder found (available: '
-          '${mailboxes.map((m) => m.name).join(', ')}), creating "Archive"');
-      _archiveMailbox = await _imap!.createMailbox('Archive');
-      print('[mail] created archive folder: ${_archiveMailbox?.path}');
+      print('[mail] no trash folder found (available: '
+          '${mailboxes.map((m) => m.name).join(', ')}), creating "Trash"');
+      _trashMailbox = await _imap!.createMailbox('Trash');
+      print('[mail] created trash folder: ${_trashMailbox!.path}');
     } catch (e) {
-      print('[mail] could not resolve archive folder: $e');
+      print('[mail] could not resolve trash folder: $e');
     }
-    return _archiveMailbox;
+    return _trashMailbox;
   }
 
-  Future<void> archiveMessage(MimeMessage message) async {
+  // Moves a message from Trash back to Inbox.
+  Future<void> restoreFromTrash(MimeMessage message) async {
     final uid = message.uid;
     if (uid == null) return;
     final ok = await _ensureConnected();
     if (!ok) return;
     try {
-      await _imap!.selectInbox();
-      final archive = await _resolveArchiveMailbox();
-      if (archive == null) {
-        print('[mail] archive skipped: no target folder');
+      final trash = _trashMailbox ?? await _resolveTrashMailbox();
+      if (trash == null) {
+        print('[mail] restoreFromTrash: no trash folder found');
         return;
       }
-      final seq = MessageSequence.fromId(uid, isUid: true);
-      // Try atomic MOVE (RFC 6851); fall back to COPY + DELETE.
-      try {
-        await _imap!.uidMove(seq, targetMailbox: archive);
-        print('[mail] archived $uid via MOVE');
-      } catch (_) {
-        await _imap!.uidCopy(seq, targetMailbox: archive);
-        await _imap!.uidMarkDeleted(seq);
-        await _imap!.uidExpunge(seq);
-        print('[mail] archived $uid via COPY+DELETE');
-      }
-      _messages.removeWhere((m) => m.uid == uid);
-      _unreadController.add(unreadCount);
-      notifyListeners();
-    } catch (e) {
-      print('[mail] archiveMessage error: $e');
-    }
-  }
-
-  Future<void> restoreMessage(MimeMessage message) async {
-    final uid = message.uid;
-    if (uid == null) return;
-    final ok = await _ensureConnected();
-    if (!ok) return;
-    try {
-      final archive = _archiveMailbox ?? await _resolveArchiveMailbox();
-      if (archive == null) {
-        print('[mail] restore: no archive folder found');
-        return;
-      }
-      // Get an inbox Mailbox reference, then switch to archive to operate on it.
+      // Select inbox to get its Mailbox reference, then switch to trash to operate.
       final inboxMailbox = await _imap!.selectInbox();
-      await _imap!.selectMailbox(archive);
+      await _imap!.selectMailbox(trash);
       final seq = MessageSequence.fromId(uid, isUid: true);
       try {
         await _imap!.uidMove(seq, targetMailbox: inboxMailbox);
-        print('[mail] restored $uid via MOVE');
+        print('[mail] restored $uid from trash via MOVE');
       } catch (_) {
         await _imap!.uidCopy(seq, targetMailbox: inboxMailbox);
         await _imap!.uidMarkDeleted(seq);
         await _imap!.uidExpunge(seq);
-        print('[mail] restored $uid via COPY+DELETE');
+        print('[mail] restored $uid from trash via COPY+DELETE');
       }
-      _archivedMessages.removeWhere((m) => m.uid == uid);
+      _trashedMessages.removeWhere((m) => m.uid == uid);
       notifyListeners();
     } catch (e) {
-      print('[mail] restoreMessage error: $e');
+      print('[mail] restoreFromTrash error: $e');
     }
   }
 
-  Future<List<MimeMessage>> fetchArchive({int limit = 50}) async {
+  Future<List<MimeMessage>> fetchTrash({int limit = 50}) async {
     final ok = await _ensureConnected();
-    if (!ok) return _archivedMessages;
+    if (!ok) return _trashedMessages;
 
-    _isFetchingArchive = true;
+    _isFetchingTrash = true;
     notifyListeners();
 
     try {
-      final archive = await _resolveArchiveMailbox();
-      if (archive == null) {
-        print('[mail] fetchArchive: no archive folder available');
+      final trash = await _resolveTrashMailbox();
+      if (trash == null) {
+        print('[mail] fetchTrash: no trash folder available');
       } else {
-        await _imap!.selectMailbox(archive);
+        await _imap!.selectMailbox(trash);
         final result = await _imap!.fetchRecentMessages(
           messageCount: limit,
           criteria: '(FLAGS ENVELOPE UID BODY.PEEK[TEXT]<0.500>)',
           responseTimeout: const Duration(seconds: 90),
         );
-        _archivedMessages = result.messages.reversed.toList();
-        print('[mail] fetched ${_archivedMessages.length} archived messages');
+        _trashedMessages = result.messages.reversed.toList();
+        print('[mail] fetched ${_trashedMessages.length} trashed messages');
       }
     } catch (e) {
-      print('[mail] archive error: $e');
+      print('[mail] fetchTrash error: $e');
       _isConnected = false;
       _imap?.disconnect();
       _imap = null;
-      _archiveMailbox = null; // invalidate cache on connection failure
+      _trashMailbox = null; // invalidate cache on connection failure
     } finally {
-      _isFetchingArchive = false;
+      _isFetchingTrash = false;
       notifyListeners();
     }
-    return _archivedMessages;
+    return _trashedMessages;
   }
 
   @override

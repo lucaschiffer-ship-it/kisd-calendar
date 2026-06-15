@@ -1547,121 +1547,37 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                     right: lerpedPadding.right,
                                     top: lerpedPadding.top,
                                   ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
+                                  child: Stack(
                                     children: [
-                            // ── 1. Top row (hoisted — always visible) ────────
-                            Stack(
-                              children: [
-                                // Read-mode row: title + heart
-                                IgnorePointer(
-                                  ignoring: _editController.value > 0.5,
-                                  child: Opacity(
-                                    opacity: (1.0 - _editController.value)
-                                        .clamp(0.0, 1.0),
-                                    child: Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Expanded(
-                                          child: AnimatedSize(
-                                            duration: const Duration(
-                                                milliseconds: 100),
-                                            alignment: Alignment.topLeft,
-                                            child: Text(
-                                              shell.title,
-                                              maxLines: titleMaxLines,
-                                              overflow: titleMaxLines < 10
-                                                  ? TextOverflow.ellipsis
-                                                  : TextOverflow.visible,
-                                              style: AppTextStyle.cardTitle
-                                                  .copyWith(
-                                                fontSize: 23,
-                                                color: tokens
-                                                    .AppThemeTokens.titleColor,
-                                                fontWeight: FontWeight.w400,
-                                              ),
-                                            ),
-                                          ),
+                            Positioned.fill(
+                              child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+                            // Invisible spacer — matches frosted header height
+                            Opacity(
+                              opacity: 0,
+                              child: IgnorePointer(
+                                child: Row(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        shell.title,
+                                        maxLines: titleMaxLines,
+                                        overflow: TextOverflow.visible,
+                                        style: AppTextStyle.cardTitle
+                                            .copyWith(
+                                          fontSize: 23,
+                                          fontWeight: FontWeight.w400,
                                         ),
-                                        GestureDetector(
-                                          onTap: _toggleLike,
-                                          behavior: HitTestBehavior.opaque,
-                                          child: Padding(
-                                            padding: const EdgeInsets.only(
-                                                left: 14, top: 3),
-                                            child: ScaleTransition(
-                                              scale: _heartScale,
-                                              child: Icon(
-                                                _liked
-                                                    ? CupertinoIcons.heart_fill
-                                                    : CupertinoIcons.heart,
-                                                size: 22,
-                                                color: _liked
-                                                    ? AppColors.heartActive
-                                                    : tokens.AppThemeTokens
-                                                        .secondaryTextColor,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
+                                      ),
                                     ),
-                                  ),
+                                    const SizedBox(width: 36),
+                                  ],
                                 ),
-                                // Edit-mode row: Cancel + Save
-                                IgnorePointer(
-                                  ignoring: _editController.value < 0.5,
-                                  child: Opacity(
-                                    opacity:
-                                        _editController.value.clamp(0.0, 1.0),
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        TextButton(
-                                          onPressed: _onCancel,
-                                          style: TextButton.styleFrom(
-                                            padding: const EdgeInsets.symmetric(
-                                                vertical: 12),
-                                            minimumSize: Size.zero,
-                                            tapTargetSize: MaterialTapTargetSize
-                                                .shrinkWrap,
-                                          ),
-                                          child: Text(
-                                            'Cancel',
-                                            style: TextStyle(
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w500,
-                                              color: tokens
-                                                  .AppThemeTokens.titleColor,
-                                            ),
-                                          ),
-                                        ),
-                                        TextButton(
-                                          onPressed: _onSave,
-                                          style: TextButton.styleFrom(
-                                            padding: const EdgeInsets.symmetric(
-                                                vertical: 12),
-                                            minimumSize: Size.zero,
-                                            tapTargetSize: MaterialTapTargetSize
-                                                .shrinkWrap,
-                                          ),
-                                          child: const Text(
-                                            'Save',
-                                            style: TextStyle(
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w500,
-                                              color: AppColors.accent,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ],
+                              ),
                             ),
                             const SizedBox(height: 8),
                             // ── Body: read/edit crossfade ─────────────────────
@@ -1681,7 +1597,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                           controller: _scrollController,
                                           physics:
                                               const NeverScrollableScrollPhysics(),
-                                          clipBehavior: Clip.none,
+                                          clipBehavior: glass ? Clip.hardEdge : Clip.none,
                                           child: Column(
                                             crossAxisAlignment:
                                                 CrossAxisAlignment.start,
@@ -2405,6 +2321,162 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                       ),
                                     ),
                                 ],
+                              ),
+                            ),
+                                ],
+                              ),
+                            ),
+                            // Sticky header — non-glass: BackdropFilter blurs content
+                            // that scrolls under; glass: sigma=0 (no-op) so the card's
+                            // own blur is the only blur (avoids double-blur artifact)
+                            Positioned(
+                              top: 0, left: 0, right: 0,
+                              child: ClipRect(
+                                child: BackdropFilter(
+                                  filter: glass
+                                      ? ImageFilter.blur(sigmaX: 0, sigmaY: 0)
+                                      : ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                                  child: Padding(
+                                      padding: const EdgeInsets.only(bottom: 4),
+                                      child: Stack(
+                                      children: [
+                                        // Read: title + heart
+                                        IgnorePointer(
+                                          ignoring:
+                                              _editController.value > 0.5,
+                                          child: Opacity(
+                                            opacity: (1.0 -
+                                                    _editController.value)
+                                                .clamp(0.0, 1.0),
+                                            child: Row(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Expanded(
+                                                  child: AnimatedSize(
+                                                    duration: const Duration(
+                                                        milliseconds: 100),
+                                                    alignment:
+                                                        Alignment.topLeft,
+                                                    child: Text(
+                                                      shell.title,
+                                                      maxLines: titleMaxLines,
+                                                      overflow:
+                                                          titleMaxLines < 10
+                                                              ? TextOverflow
+                                                                  .ellipsis
+                                                              : TextOverflow
+                                                                  .visible,
+                                                      style: AppTextStyle
+                                                          .cardTitle
+                                                          .copyWith(
+                                                        fontSize: 23,
+                                                        color: tokens
+                                                            .AppThemeTokens
+                                                            .titleColor,
+                                                        fontWeight:
+                                                            FontWeight.w400,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                                GestureDetector(
+                                                  onTap: _toggleLike,
+                                                  behavior:
+                                                      HitTestBehavior.opaque,
+                                                  child: Padding(
+                                                    padding:
+                                                        const EdgeInsets.only(
+                                                            left: 14, top: 3),
+                                                    child: ScaleTransition(
+                                                      scale: _heartScale,
+                                                      child: Icon(
+                                                        _liked
+                                                            ? CupertinoIcons
+                                                                .heart_fill
+                                                            : CupertinoIcons
+                                                                .heart,
+                                                        size: 22,
+                                                        color: _liked
+                                                            ? AppColors
+                                                                .heartActive
+                                                            : tokens
+                                                                .AppThemeTokens
+                                                                .secondaryTextColor,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                        // Edit: Cancel + Save
+                                        IgnorePointer(
+                                          ignoring:
+                                              _editController.value < 0.5,
+                                          child: Opacity(
+                                            opacity: _editController.value
+                                                .clamp(0.0, 1.0),
+                                            child: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment
+                                                      .spaceBetween,
+                                              children: [
+                                                TextButton(
+                                                  onPressed: _onCancel,
+                                                  style:
+                                                      TextButton.styleFrom(
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
+                                                        vertical: 12),
+                                                    minimumSize: Size.zero,
+                                                    tapTargetSize:
+                                                        MaterialTapTargetSize
+                                                            .shrinkWrap,
+                                                  ),
+                                                  child: Text(
+                                                    'Cancel',
+                                                    style: TextStyle(
+                                                      fontSize: 15,
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                      color: tokens
+                                                          .AppThemeTokens
+                                                          .titleColor,
+                                                    ),
+                                                  ),
+                                                ),
+                                                TextButton(
+                                                  onPressed: _onSave,
+                                                  style:
+                                                      TextButton.styleFrom(
+                                                    padding: const EdgeInsets
+                                                        .symmetric(
+                                                        vertical: 12),
+                                                    minimumSize: Size.zero,
+                                                    tapTargetSize:
+                                                        MaterialTapTargetSize
+                                                            .shrinkWrap,
+                                                  ),
+                                                  child: const Text(
+                                                    'Save',
+                                                    style: TextStyle(
+                                                      fontSize: 15,
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                      color: AppColors.accent,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
                                     ],

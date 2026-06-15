@@ -104,8 +104,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void _closeSheet() {
     _snapBackCtrl.stop();
     setState(() => _dragOffset = 0);
-    _sheetAnim.animateTo(0.0,
-        duration: const Duration(milliseconds: 300), curve: Curves.easeOutCubic);
+    _sheetAnim
+        .animateTo(0.0,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOutCubic)
+        .then((_) => SpacesBrowser.fireOnClose());
   }
 
   void _onTabTapped(int index) {

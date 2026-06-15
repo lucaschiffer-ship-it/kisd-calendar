@@ -7,6 +7,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../config/app_theme.dart' as tokens;
 import '../services/service_locator.dart';
+import '../services/spaces_browser.dart';
 import '../services/theme_service.dart';
 import '../theme/tokens.dart';
 
@@ -192,9 +193,19 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
           if (url != null &&
               (url.scheme == 'http' || url.scheme == 'https')) {
             if (context.mounted) {
-              Navigator.of(context).push(CupertinoPageRoute<void>(
-                builder: (_) => _MailLinkScreen(url: url.toString()),
-              ));
+              final nav = Navigator.of(context);
+              final msg = _full ?? widget.message;
+              final onReply = widget.onReply;
+              nav.pop();
+              SpacesBrowser.open(
+                url.toString(),
+                onClose: () => nav.push(CupertinoPageRoute<void>(
+                  builder: (_) => EmailDetailScreen(
+                    message: msg,
+                    onReply: onReply,
+                  ),
+                )),
+              );
             }
             return NavigationActionPolicy.CANCEL;
           }
@@ -334,67 +345,6 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
     final h = date.hour.toString().padLeft(2, '0');
     final m = date.minute.toString().padLeft(2, '0');
     return '${date.day} ${months[date.month - 1]} ${date.year}, $h:$m';
-  }
-}
-
-// ── In-app link browser ───────────────────────────────────────────────────────
-//
-// Pushed on top of EmailDetailScreen when the user taps a link so that
-// closing it returns to the email rather than to the mail list.
-
-class _MailLinkScreen extends StatefulWidget {
-  const _MailLinkScreen({required this.url});
-  final String url;
-
-  @override
-  State<_MailLinkScreen> createState() => _MailLinkScreenState();
-}
-
-class _MailLinkScreenState extends State<_MailLinkScreen> {
-  InAppWebViewController? _ctrl;
-  bool _canGoBack = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: tokens.AppThemeTokens.backgroundColor,
-      appBar: AppBar(
-        backgroundColor: tokens.AppThemeTokens.backgroundColor,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        surfaceTintColor: Colors.transparent,
-        leading: IconButton(
-          icon: Icon(CupertinoIcons.chevron_back,
-              color: tokens.AppThemeTokens.navBarIcon),
-          onPressed: () async {
-            if (_canGoBack) {
-              _ctrl?.goBack();
-            } else {
-              Navigator.pop(context);
-            }
-          },
-        ),
-        actions: [
-          IconButton(
-            icon: Icon(CupertinoIcons.xmark,
-                color: tokens.AppThemeTokens.navBarIcon),
-            onPressed: () => Navigator.pop(context),
-          ),
-        ],
-      ),
-      body: InAppWebView(
-        initialUrlRequest: URLRequest(url: WebUri(widget.url)),
-        initialSettings: InAppWebViewSettings(
-          javaScriptEnabled: true,
-          transparentBackground: true,
-        ),
-        onWebViewCreated: (ctrl) => _ctrl = ctrl,
-        onLoadStop: (ctrl, url) async {
-          final canGoBack = await ctrl.canGoBack();
-          if (mounted) setState(() => _canGoBack = canGoBack);
-        },
-      ),
-    );
   }
 }
 

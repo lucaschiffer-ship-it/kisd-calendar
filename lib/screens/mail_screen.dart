@@ -714,15 +714,17 @@ class _EmailCard extends StatelessWidget {
 
   String _extractPreview(MimeMessage msg) {
     final plain = msg.decodeTextPlainPart();
-    if (plain != null && plain.isNotEmpty) {
-      return plain.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (plain != null) {
+      final t = plain.replaceAll(RegExp(r'\s+'), ' ').trim();
+      if (t.length > 3) return t;
     }
     final html = msg.decodeTextHtmlPart();
-    if (html != null && html.isNotEmpty) {
-      return html
+    if (html != null) {
+      final t = html
           .replaceAll(RegExp(r'<[^>]+>'), ' ')
           .replaceAll(RegExp(r'\s+'), ' ')
           .trim();
+      if (t.length > 3) return t;
     }
     return '';
   }

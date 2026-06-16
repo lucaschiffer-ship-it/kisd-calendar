@@ -860,6 +860,34 @@ class _InfoSheet extends StatelessWidget {
 
 // ─── Expanded card overlay ────────────────────────────────────────────────────
 
+/// Finger travel (raw, undamped px) required to fully arm pull-to-dismiss.
+const double kPullDismissDistance = 110;
+
+/// Bouncing physics with the top edge clamped: the bottom keeps its rubber-band
+/// feel and momentum, but the top edge does not overscroll. This lets a downward
+/// drag at the top surface its full undamped delta via [OverscrollNotification]
+/// (instead of being absorbed by rubber-band friction), so pull-to-dismiss can
+/// track the finger 1:1.
+class _ClampTopBouncingPhysics extends BouncingScrollPhysics {
+  const _ClampTopBouncingPhysics({super.parent});
+
+  @override
+  _ClampTopBouncingPhysics applyTo(ScrollPhysics? ancestor) =>
+      _ClampTopBouncingPhysics(parent: buildParent(ancestor));
+
+  @override
+  double applyBoundaryConditions(ScrollMetrics position, double value) {
+    // Block any attempt to scroll past the top; the bottom keeps Bouncing behavior.
+    if (value < position.pixels && position.pixels <= position.minScrollExtent) {
+      return value - position.pixels; // fully prevent (raw overscroll)
+    }
+    if (value < position.minScrollExtent) {
+      return value - position.minScrollExtent; // clamp at top edge
+    }
+    return super.applyBoundaryConditions(position, value);
+  }
+}
+
 class _ExpandedCardOverlay extends StatefulWidget {
   const _ExpandedCardOverlay({
     required this.shell,
@@ -914,7 +942,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
   // ignore: unused_element — referenced by Stage B
   bool get _isEditing => _editController.value > 0.0;
 
-  double _lastOverscrollVelocity = 0.0;
+  bool _dismissTriggered = false;
 
   // ── Edit form controllers (Stage B.3) ────────────────────────────────────
   late TextEditingController _titleCtrl;
@@ -1351,38 +1379,76 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
   bool _onScrollNotification(ScrollNotification notification) {
     if (_editController.value > 0.5) return false;
 
-    if (notification is OverscrollNotification && notification.overscroll < 0) {
-      // Pulling past the top — accumulate dismiss progress.
-      final screenHeight = MediaQuery.of(context).size.height;
-      final delta = -notification.overscroll;
-      _lastOverscrollVelocity = notification.velocity;
-      setState(() {
-        _isDragging = true;
-        _dragDistance = (_dragDistance + delta).clamp(0.0, double.infinity);
-        _dragProgress = (_dragDistance / (screenHeight * 0.35)).clamp(0.0, 1.0);
-      });
-      return true;
-    }
-
-    if (notification is ScrollUpdateNotification && _isDragging &&
-        notification.metrics.pixels > notification.metrics.minScrollExtent) {
-      // Scrolled back into content — cancel dismiss.
-      _snapBack();
+    // A new gesture begins — clean re-arm so a touch landing mid-snapback can't
+    // leave the card stuck. The first overscroll below will re-engage the pull.
+    if (notification is ScrollStartNotification) {
+      _snapBackCtrl.stop();
+      if (_isDragging ||
+          _dragProgress != 0.0 ||
+          _dragDistance != 0.0 ||
+          _dismissTriggered) {
+        setState(() {
+          _isDragging = false;
+          _dragProgress = 0.0;
+          _dragDistance = 0.0;
+          _dismissTriggered = false;
+        });
+      }
       return false;
     }
 
-    if (notification is ScrollEndNotification && _isDragging) {
-      if (_dragProgress > 0.35 || _lastOverscrollVelocity.abs() > 800) {
-        _closeStartProgress = _dragProgress;
-        _closeController.forward(from: 0);
-      } else {
-        _snapBack();
-      }
-      _lastOverscrollVelocity = 0.0;
-      return true;
+    // The top edge is clamped (see _ClampTopBouncingPhysics), so a downward drag
+    // at the top surfaces its full undamped delta here as a negative overscroll.
+    // We accumulate that raw finger travel — gated on dragDetails != null so that
+    // momentum/ballistic overscroll (finger already lifted) never accumulates.
+    if (notification is OverscrollNotification &&
+        notification.overscroll < 0 &&
+        notification.dragDetails != null) {
+      final delta = -notification.overscroll; // raw px the finger moved past top
+      setState(() {
+        if (!_isDragging) {
+          // Fresh pull — re-arm even if a prior snapback is mid-flight.
+          _isDragging = true;
+          _dismissTriggered = false;
+          _dragDistance = 0.0;
+        }
+        _dragDistance += delta;
+        _dragProgress = (_dragDistance / kPullDismissDistance).clamp(0.0, 1.0);
+      });
+      return false;
     }
 
+    // Finger still down but scrolling back into content — cancel the pull.
+    if (notification is ScrollUpdateNotification &&
+        notification.dragDetails != null &&
+        _isDragging &&
+        notification.metrics.pixels > notification.metrics.minScrollExtent) {
+      setState(() {
+        _isDragging = false;
+        _dragProgress = 0.0;
+        _dragDistance = 0.0;
+      });
+      return false;
+    }
+
+    // dragDetails == null while dragging: finger lifted — decide once.
+    final liftedFinger = (notification is ScrollUpdateNotification &&
+            notification.dragDetails == null) ||
+        notification is ScrollEndNotification;
+    if (liftedFinger && _isDragging && !_dismissTriggered) {
+      _decideAfterDrag();
+    }
     return false;
+  }
+
+  void _decideAfterDrag() {
+    _dismissTriggered = true;
+    if (_dragProgress > 0.35) {
+      _closeStartProgress = _dragProgress;
+      _closeController.forward(from: 0);
+    } else {
+      _snapBack();
+    }
   }
 
   void _snapBack() {
@@ -1392,9 +1458,45 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
         setState(() {
           _isDragging = false;
           _dragDistance = 0.0;
+          _dismissTriggered = false;
         });
       }
     });
+  }
+
+  // Pull-to-dismiss from the sticky header. The header is drawn above the scroll
+  // view, so drags on it never reach the scroll physics — these handlers feed the
+  // same dismiss machinery (_dragProgress / _decideAfterDrag) directly, so the
+  // header behaves identically to pulling the scrollable content down.
+  void _onHeaderDragStart(DragStartDetails details) {
+    if (_editController.value > 0.5) return;
+    _snapBackCtrl.stop();
+    setState(() {
+      _isDragging = true;
+      _dragDistance = 0.0;
+      _dragProgress = 0.0;
+      _dismissTriggered = false;
+    });
+  }
+
+  void _onHeaderDragUpdate(DragUpdateDetails details) {
+    if (_editController.value > 0.5 || !_isDragging) return;
+    setState(() {
+      _dragDistance =
+          (_dragDistance + details.delta.dy).clamp(0.0, double.infinity);
+      _dragProgress = (_dragDistance / kPullDismissDistance).clamp(0.0, 1.0);
+    });
+  }
+
+  void _onHeaderDragEnd(DragEndDetails details) {
+    if (_editController.value > 0.5 || !_isDragging) return;
+    if (!_dismissTriggered) _decideAfterDrag();
+  }
+
+  // Drag cancelled mid-pull (multi-touch / system interrupt) — snap back so the
+  // card can never get stuck partway through the morph.
+  void _onHeaderDragCancel() {
+    if (_isDragging && !_dismissTriggered) _snapBack();
   }
 
   @override
@@ -1442,10 +1544,16 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
           type: MaterialType.transparency,
           child: Stack(
             children: [
-              // ── Backdrop ─────────────────────────────────────────────────
+              // ── Backdrop — tap outside card to dismiss ────────────────────
               Positioned.fill(
-                child: Container(
-                  color: Colors.black.withValues(alpha: (glass ? 0.0 : 0.35) * t),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _editController.value > 0.5
+                      ? null
+                      : () => Navigator.of(context).pop(),
+                  child: Container(
+                    color: Colors.black.withValues(alpha: (glass ? 0.0 : 0.35) * t),
+                  ),
                 ),
               ),
 
@@ -1570,7 +1678,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                         child: NotificationListener<ScrollNotification>(
                                           onNotification: _onScrollNotification,
                                           child: SingleChildScrollView(
-                                          physics: const BouncingScrollPhysics(
+                                          physics: const _ClampTopBouncingPhysics(
                                               parent: AlwaysScrollableScrollPhysics()),
                                           clipBehavior: glass ? Clip.hardEdge : Clip.none,
                                           child: Column(
@@ -2307,7 +2415,13 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                             // own blur is the only blur (avoids double-blur artifact)
                             Positioned(
                               top: 0, left: 0, right: 0,
-                              child: ClipRect(
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onVerticalDragStart: _onHeaderDragStart,
+                                onVerticalDragUpdate: _onHeaderDragUpdate,
+                                onVerticalDragEnd: _onHeaderDragEnd,
+                                onVerticalDragCancel: _onHeaderDragCancel,
+                                child: ClipRect(
                                 child: BackdropFilter(
                                   filter: glass
                                       ? ImageFilter.blur(sigmaX: 0, sigmaY: 0)
@@ -2453,6 +2567,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                     ),
                                   ),
                                 ),
+                              ),
                               ),
                             ),
                                     ],

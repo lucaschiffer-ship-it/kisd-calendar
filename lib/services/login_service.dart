@@ -346,6 +346,21 @@ class LoginService extends ChangeNotifier {
 
         final actionUrl = parsed['action'] as String;
         final fields = parsed['data'] as Map<String, dynamic>;
+
+        // "Trust this device" consent page (consentValue + deviceName, with the
+        // Yes/No buttons outside form[0]). Express consent via the page's own
+        // affirmative control so a persistent mfa cookie is issued and later
+        // logins skip the OTP. If we can't find one, fall through to the empty
+        // submit below (declines, but login still completes).
+        if (fields.containsKey('consentValue') &&
+            fields.containsKey('deviceName')) {
+          final consented = await _consentTrustDevice(ctrl);
+          if (consented) {
+            _armStallTimer(); // recover if the consent click doesn't navigate
+            return;
+          }
+        }
+
         final postBody = fields.entries
             .map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value.toString())}')
             .join('&');
@@ -422,6 +437,47 @@ class LoginService extends ChangeNotifier {
       print('[login] $tag matched: ${r?.value}');
     } catch (e) {
       print('[login] $tag opt-in skipped: $e');
+    }
+  }
+
+  // Express "trust this device" on the NetIQ consent page: name the device,
+  // then click the page's affirmative control (Yes/Trust/Continue) so its own
+  // handler sets `consentValue` and submits. Returns true if a control was
+  // clicked (caller should NOT also POST). Dumps all clickable controls so the
+  // heuristic can be verified/tightened from real output.
+  Future<bool> _consentTrustDevice(InAppWebViewController ctrl) async {
+    try {
+      final r = await ctrl.callAsyncJavaScript(functionBody: r"""
+        var nameEl = document.querySelector('input[name="deviceName"]');
+        if (nameEl && !nameEl.value) {
+          nameEl.value = 'KISD App';
+          ['input','change'].forEach(function(t){
+            nameEl.dispatchEvent(new Event(t, {bubbles:true}));
+          });
+        }
+        var pos = /trust|\byes\b|continue|weiter|\bja\b|vertrau|register|best.tig|zustimm|\bok\b|accept/i;
+        var neg = /\bno\b|nicht|cancel|abbrech|deny|ablehn|don.?t|skip|[uü]berspring/i;
+        var dump = [], affirmative = null;
+        var nodes = document.querySelectorAll(
+          'button, a, input[type=button], input[type=submit], [onclick], [role=button]');
+        for (var i = 0; i < nodes.length; i++) {
+          var el = nodes[i];
+          var txt = (el.innerText || el.value || el.getAttribute('aria-label') || '')
+            .replace(/\s+/g, ' ').trim();
+          var oc = (el.getAttribute('onclick') || '');
+          dump.push(el.tagName + '|' + txt.slice(0, 40) + '|oc=' + oc.slice(0, 80));
+          if (!affirmative && txt && pos.test(txt) && !neg.test(txt)) affirmative = el;
+        }
+        var clicked = false;
+        if (affirmative) { affirmative.click(); clicked = true; }
+        return JSON.stringify({clicked: clicked, controls: dump});
+      """).timeout(const Duration(seconds: 8));
+      print('[login] trust-device consent: ${r?.value}');
+      final m = json.decode(r!.value.toString()) as Map<String, dynamic>;
+      return m['clicked'] == true;
+    } catch (e) {
+      print('[login] trust-device consent error: $e');
+      return false;
     }
   }
 

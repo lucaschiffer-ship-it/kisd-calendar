@@ -15,6 +15,7 @@ class BrowserSheet extends StatefulWidget {
     this.onCurrentUrlChanged,
     this.onPullDown,
     this.onPullEnd,
+    this.onAuthExpired,
   });
 
   final ValueChanged<String>? onPageTitleChanged;
@@ -23,6 +24,10 @@ class BrowserSheet extends StatefulWidget {
   final ValueChanged<String>? onCurrentUrlChanged;
   final ValueChanged<double>? onPullDown;
   final ValueChanged<double>? onPullEnd;
+
+  /// Fired when a page load lands on the TH-Köln IdP / WordPress login instead
+  /// of Spaces — i.e. the session expired and Spaces bounced us to re-auth.
+  final VoidCallback? onAuthExpired;
 
   @override
   State<BrowserSheet> createState() => BrowserSheetState();
@@ -36,6 +41,11 @@ class BrowserSheetState extends State<BrowserSheet> {
 
   void navigateTo(String url) =>
       _ctrl?.loadUrl(urlRequest: URLRequest(url: WebUri(url)));
+
+  /// Reload the Spaces home page. Used after login completes, since the
+  /// initial page load can happen before auth finishes (showing logged-out).
+  void reloadHome() =>
+      _ctrl?.loadUrl(urlRequest: URLRequest(url: _homeUri));
 
   void goBack() => _ctrl?.goBack();
   void goForward() => _ctrl?.goForward();
@@ -98,6 +108,17 @@ class BrowserSheetState extends State<BrowserSheet> {
             onLoadStop: (ctrl, url) async {
               await _updateNavState();
               if (mounted) setState(() => _loading = false);
+              // Session expired: Spaces redirected us to the IdP/WordPress
+              // login. Hand off to the host to re-authenticate rather than
+              // letting the raw login form show.
+              final host = url?.host ?? '';
+              final us = url?.toString() ?? '';
+              if (host == 'login.th-koeln.de' ||
+                  host == 'mfa.th-koeln.de' ||
+                  us.contains('wp-login.php')) {
+                widget.onAuthExpired?.call();
+                return;
+              }
               final isDark =
                   ThemeService.instance.currentColor.value == 'dark';
               await ctrl.evaluateJavascript(

@@ -1,4 +1,4 @@
-import 'dart:async' show Completer, TimeoutException;
+import 'dart:async' show Completer, Timer, TimeoutException;
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -14,6 +14,15 @@ class LoginService extends ChangeNotifier {
   static const _keyPass = 'kisd_password';
   static const _keyCookies = 'kisd_cookies';
 
+  // All auth domains whose cookies matter for the session. The long-lived SSO
+  // cookie (the "~2 weeks until 2FA" session) lives on the IdP domains, not on
+  // spaces.kisd.de — so persisting only spaces cookies loses it across launches.
+  static const _cookieDomains = [
+    'spaces.kisd.de',
+    'login.th-koeln.de',
+    'mfa.th-koeln.de',
+  ];
+
   final _storage = const FlutterSecureStorage();
 
   bool _isLoggedIn = false;
@@ -24,8 +33,10 @@ class LoginService extends ChangeNotifier {
 
   HeadlessInAppWebView? _webView;
   Completer<bool>? _completer;
+  Timer? _stallTimer;
   bool _samlClicked = false;
   bool _credentialsFilled = false;
+  bool _credentialsSubmitted = false;
   int _samlContinuationAttempts = 0;
   bool _courseSelectionVisited = false;
 
@@ -59,10 +70,12 @@ class LoginService extends ChangeNotifier {
       return _completer!.future;
     }
     print('[login] starting login flow');
+    _cancelStallTimer();
     _isLoading = true;
     _loginFailed = false;
     _samlClicked = false;
     _credentialsFilled = false;
+    _credentialsSubmitted = false;
     _samlContinuationAttempts = 0;
     _courseSelectionVisited = false;
     _completer = Completer<bool>();
@@ -128,6 +141,7 @@ class LoginService extends ChangeNotifier {
 
     if (s.contains('mfa.th-koeln.de') && s.contains('oauth2/grant')) {
       print('[login] MFA required');
+      _cancelStallTimer(); // credentials accepted; OTP entry has no timeout
       final otp = await _promptOtp();
       if (otp == null || otp.isEmpty) { await _finish(false); return; }
       await ctrl.evaluateJavascript(source: """
@@ -220,6 +234,8 @@ class LoginService extends ChangeNotifier {
           ),
         );
         print('[login] form submitted');
+        _credentialsSubmitted = true;
+        _armStallTimer();
 
       } on TimeoutException {
         print('[login] error: credential form polling timed out');
@@ -231,10 +247,35 @@ class LoginService extends ChangeNotifier {
         return;
       }
     } else if (s.contains('login.th-koeln.de') &&
+        s.contains('option=credential') &&
+        _credentialsSubmitted) {
+      // We already submitted credentials but landed back on a credential URL.
+      // Confirm the login form is genuinely re-rendered (password field
+      // present) before declaring failure — this avoids false-positives on
+      // transient/redirect pages. On success the POST redirects to MFA, never
+      // back here, so a re-rendered form means the credentials were rejected
+      // (e.g. wrong password). Without this the flow would fall through to the
+      // unhandled branch and the spinner would hang forever.
+      var formPresent = false;
+      try {
+        final r = await ctrl.callAsyncJavaScript(functionBody: """
+          return !!(document.getElementById('Ecom_Password') ||
+                    document.querySelector('input[type="password"]'));
+        """).timeout(const Duration(seconds: 5));
+        formPresent = r?.value == true;
+      } catch (_) {}
+      if (formPresent) {
+        print('[login] credentials rejected — login failed');
+        await _finish(false);
+      } else {
+        print('[login] option=credential page without form — ignoring (watchdog active)');
+      }
+    } else if (s.contains('login.th-koeln.de') &&
         !s.contains('option=credential') &&
         !s.contains('sid=0&sid=0') &&
         _credentialsFilled &&
         _samlContinuationAttempts < 5) {
+      _cancelStallTimer(); // progressed past credential submission
       // Final SAML assertion page (sid=0, after MFA) — JS-rendered like the
       // credential form. The sid=0&sid=0 intermediate pages self-navigate via
       // their own JS so we must NOT touch those (doing so causes -999 races).
@@ -314,8 +355,28 @@ class LoginService extends ChangeNotifier {
     }
   }
 
+  // Watchdog armed after the credential POST: if the flow neither progresses to
+  // a recognized page (MFA / SAML continuation / success) nor is detected as a
+  // rejection within the window, fail rather than hang the spinner forever.
+  // It is cancelled the moment any recognized progress occurs.
+  void _armStallTimer() {
+    _stallTimer?.cancel();
+    _stallTimer = Timer(const Duration(seconds: 20), () {
+      if (!(_completer?.isCompleted ?? true)) {
+        print('[login] stalled after credential submit — failing');
+        _finish(false);
+      }
+    });
+  }
+
+  void _cancelStallTimer() {
+    _stallTimer?.cancel();
+    _stallTimer = null;
+  }
+
   Future<void> _finish(bool success) async {
     if (_completer?.isCompleted ?? true) return;
+    _cancelStallTimer();
     _isLoggedIn = success;
     _isLoading = false;
     _webView?.dispose();
@@ -364,12 +425,19 @@ class LoginService extends ChangeNotifier {
     final mgr = CookieManager.instance();
     for (final c in list) {
       try {
+        // Restore each cookie to its OWN domain (not a hardcoded spaces URL),
+        // so IdP/SSO cookies land back on login/mfa.th-koeln.de. Carry the
+        // original expiry so persistent cookies don't degrade to session
+        // cookies that die on the next launch.
+        final domain = (c['domain'] as String?)?.replaceFirst(RegExp(r'^\.'), '');
+        final url = WebUri('https://${domain ?? 'spaces.kisd.de'}');
         await mgr.setCookie(
-          url: WebUri('https://spaces.kisd.de'),
+          url: url,
           name: c['name'] as String,
           value: c['value'] as String,
           domain: c['domain'] as String?,
           path: (c['path'] as String?) ?? '/',
+          expiresDate: c['expiresDate'] as int?,
           isSecure: c['isSecure'] as bool?,
           isHttpOnly: c['isHttpOnly'] as bool?,
         );
@@ -440,24 +508,40 @@ class LoginService extends ChangeNotifier {
   Future<void> _saveCookies() async {
     try {
       final mgr = CookieManager.instance();
-      final cookies = await mgr.getCookies(
-        url: WebUri('https://spaces.kisd.de'),
-      );
-      final serialized = cookies
-          .map((c) => {
-                'name': c.name,
-                'value': c.value,
-                'domain': c.domain,
-                'path': c.path ?? '/',
-                'isSecure': c.isSecure ?? false,
-                'isHttpOnly': c.isHttpOnly ?? false,
-              })
-          .toList();
-      await _storage.write(
-        key: _keyCookies,
-        value: json.encode(serialized),
-      );
-      print('[login] saved ${cookies.length} cookies');
+      final serialized = <Map<String, dynamic>>[];
+      final seen = <String>{};
+
+      for (final domain in _cookieDomains) {
+        final cookies = await mgr.getCookies(url: WebUri('https://$domain'));
+        // Instrumentation: surface what's actually retrievable per domain
+        // (including HttpOnly SSO cookies) and their expiry, so we can confirm
+        // whether the long-lived IdP session survives across launches.
+        print('[login][cookies] $domain: ${cookies.length} cookie(s)');
+        for (final c in cookies) {
+          final exp = c.expiresDate;
+          print('[login][cookies]   ${c.name} '
+              'domain=${c.domain} httpOnly=${c.isHttpOnly} '
+              'expires=${exp != null ? DateTime.fromMillisecondsSinceEpoch(exp).toIso8601String() : 'session'}');
+          // Dedup by (name, domain) — the same cookie can surface under
+          // multiple query domains.
+          final key = '${c.name}|${c.domain}';
+          if (seen.add(key)) {
+            serialized.add({
+              'name': c.name,
+              'value': c.value,
+              'domain': c.domain,
+              'path': c.path ?? '/',
+              'expiresDate': c.expiresDate,
+              'isSecure': c.isSecure ?? false,
+              'isHttpOnly': c.isHttpOnly ?? false,
+            });
+          }
+        }
+      }
+
+      await _storage.write(key: _keyCookies, value: json.encode(serialized));
+      print('[login] saved ${serialized.length} cookies across '
+          '${_cookieDomains.length} domains');
     } catch (e) {
       print('[login] cookie save failed: $e');
     }
@@ -476,6 +560,7 @@ class LoginService extends ChangeNotifier {
     _username = null;
     _password = null;
     _isLoggedIn = false;
+    _cancelStallTimer();
     _webView?.dispose();
     _webView = null;
     notifyListeners();

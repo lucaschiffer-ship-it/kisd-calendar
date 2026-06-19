@@ -36,6 +36,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _currentPage = _initialPage;
   String _miniBarTitle = 'Spaces';
 
+  // The browser's initial page load can happen before login finishes, leaving
+  // the Spaces bar showing a logged-out page. We track the login transition and
+  // whether the page was loaded pre-auth so we can reload it once authenticated.
+  bool _lastLoggedIn = false;
+  bool _browserLoadedPreAuth = false;
+
+  // True while we're silently re-authenticating an expired session (shows the
+  // "Reconnecting…" overlay over the Spaces browser).
+  bool _reconnecting = false;
+
   bool _canGoBack = false;
   bool _canGoForward = false;
   String _currentUrl = 'https://spaces.kisd.de';
@@ -58,11 +68,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
     _snapBackAnim = Tween<double>(begin: 0.0, end: 0.0).animate(_snapBackCtrl);
     _snapBackCtrl.addListener(_onSnapBackTick);
-    loginService.addListener(_rebuild);
+    _lastLoggedIn = loginService.isLoggedIn;
+    _browserLoadedPreAuth = !loginService.isLoggedIn;
+    loginService.addListener(_onLoginChanged);
     mailService.addListener(_rebuild);
     ThemeService.instance.currentColor.addListener(_rebuild);
     ThemeService.instance.glassEnabled.addListener(_rebuild);
     SpacesBrowser.register((url) {
+      // Explicit navigation replaces the (possibly pre-auth) home page, so the
+      // first-open reload guard no longer applies.
+      _browserLoadedPreAuth = false;
       _browserKey.currentState?.navigateTo(url);
       _openSheet();
     });
@@ -75,7 +90,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _snapBackCtrl.dispose();
     _sheetAnim.dispose();
     _pageController.dispose();
-    loginService.removeListener(_rebuild);
+    loginService.removeListener(_onLoginChanged);
     mailService.removeListener(_rebuild);
     ThemeService.instance.currentColor.removeListener(_rebuild);
     ThemeService.instance.glassEnabled.removeListener(_rebuild);
@@ -83,6 +98,54 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _rebuild() => setState(() {});
+
+  // Fires on every loginService notification. When the session transitions to
+  // logged-in, reload the Spaces browser so the bar reflects the authenticated
+  // session (its initial load may have rendered while still logged out).
+  void _onLoginChanged() {
+    final nowLoggedIn = loginService.isLoggedIn;
+    if (nowLoggedIn && !_lastLoggedIn) _reloadBrowserHome();
+    _lastLoggedIn = nowLoggedIn;
+    setState(() {});
+  }
+
+  void _reloadBrowserHome() {
+    _browserKey.currentState?.reloadHome();
+    _browserLoadedPreAuth = false;
+  }
+
+  // The Spaces browser hit the IdP login → session expired. Re-authenticate in
+  // the background (showing a "Reconnecting…" overlay; the 2FA dialog appears
+  // only if needed) and reload Spaces on success. Guarded so the redirect can't
+  // trigger overlapping re-auth loops.
+  Future<void> _onBrowserAuthExpired() async {
+    if (_reconnecting) return;
+    setState(() => _reconnecting = true);
+    bool ok = false;
+    try {
+      ok = await loginService.loginWithStoredCredentials();
+    } catch (_) {
+      ok = false;
+    }
+    if (!mounted) return;
+    setState(() => _reconnecting = false);
+    if (ok) {
+      _reloadBrowserHome();
+    } else {
+      final s = AppColorScheme.current;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text("Couldn't reconnect. Tap to retry."),
+          backgroundColor: s.surfaceElevated,
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: s.accent,
+            onPressed: _onBrowserAuthExpired,
+          ),
+        ),
+      );
+    }
+  }
 
   void _onSnapBackTick() {
     if (mounted) setState(() => _dragOffset = _snapBackAnim.value);
@@ -97,6 +160,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _openSheet() {
+    // Defensive: if the page was loaded before auth and the login transition
+    // reload was missed (ordering edge cases), reload on first open.
+    if (_browserLoadedPreAuth && loginService.isLoggedIn) _reloadBrowserHome();
     _sheetAnim.animateTo(1.0,
         duration: const Duration(milliseconds: 300), curve: Curves.easeOutCubic);
   }
@@ -211,7 +277,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   }),
                   // WebView
                   Expanded(
-                    child: BrowserSheet(
+                    child: Stack(
+                      children: [
+                        BrowserSheet(
                       key: _browserKey,
                       onPageTitleChanged: (title) =>
                           setState(() => _miniBarTitle = title),
@@ -233,6 +301,37 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           _snapBack();
                         }
                       },
+                      onAuthExpired: _onBrowserAuthExpired,
+                        ),
+                        if (_reconnecting)
+                          Positioned.fill(
+                            child: Container(
+                              color: s.surfaceElevated,
+                              alignment: Alignment.center,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  SizedBox(
+                                    width: 28,
+                                    height: 28,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.5,
+                                      color: s.accent,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'Reconnecting…',
+                                    style: TextStyle(
+                                      color: s.textSecondary,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                   // Bottom navigation bar for the browser

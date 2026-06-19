@@ -305,7 +305,22 @@ class LoginService extends ChangeNotifier {
                   data[inputs[i].name] = inputs[i].value;
                 }
                 if (Object.keys(data).length > 0) {
-                  return JSON.stringify({action: form.action, data: data});
+                  // Diagnostic: on the "trust this device" consent form
+                  // (consentValue/deviceName), dump every control so we can see
+                  // how consent is expressed before we fill it.
+                  var controls = [];
+                  if ('consentValue' in data || 'deviceName' in data) {
+                    var cs = form.querySelectorAll('button, input, select, textarea, label');
+                    for (var k = 0; k < cs.length; k++) {
+                      var e = cs[k];
+                      controls.push(e.tagName + '|type=' + (e.type || '') +
+                        '|name=' + (e.name || '') +
+                        '|value=' + String(e.value || '').slice(0, 30) +
+                        '|checked=' + (e.checked || false) +
+                        '|text=' + (e.innerText || e.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 50));
+                    }
+                  }
+                  return JSON.stringify({action: form.action, data: data, controls: controls});
                 }
               }
               await new Promise(function(r) { setTimeout(r, 400); });
@@ -390,7 +405,15 @@ class LoginService extends ChangeNotifier {
               (el.labels && el.labels.length ? el.labels[0].innerText : '') + ' ' +
               (el.getAttribute('aria-label') || '')).replace(/\\s+/g, ' ').trim();
             all.push(label);
-            if (re.test(label)) { el.checked = true; matched.push(label); }
+            if (re.test(label) && !el.checked) {
+              el.checked = true;
+              // Setting .checked alone won't fire the page's listener that
+              // records the preference — dispatch the events a real click would.
+              ['input', 'change', 'click'].forEach(function (t) {
+                el.dispatchEvent(new Event(t, { bubbles: true }));
+              });
+              matched.push(label);
+            }
           }
           return JSON.stringify({matched: matched, all: all});
         """,

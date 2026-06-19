@@ -90,9 +90,12 @@ class LoginService extends ChangeNotifier {
       return _completer!.future;
     }
 
-    // Session expired or missing — clear cookies and run the full SAML flow.
+    // Session expired or missing — clear cookies and run the full SAML flow,
+    // but preserve any persistent IdP/MFA "trust this device" cookie so re-auth
+    // can skip the 2FA OTP.
     await CookieManager.instance().deleteAllCookies();
-    print('[login] session cleared');
+    await _reinjectPersistentCookies();
+    print('[login] session cleared (persistent th-koeln cookies preserved)');
 
     _webView = HeadlessInAppWebView(
       initialUrlRequest: URLRequest(
@@ -144,6 +147,10 @@ class LoginService extends ChangeNotifier {
       _cancelStallTimer(); // credentials accepted; OTP entry has no timeout
       final otp = await _promptOtp();
       if (otp == null || otp.isEmpty) { await _finish(false); return; }
+      // Opt into "trust this device" so a persistent mfa.th-koeln.de cookie is
+      // issued and later logins can skip the OTP. Selector is heuristic; we log
+      // both what matched and every checkbox seen so it can be tightened.
+      await _enableTrustThisDevice(ctrl);
       await ctrl.evaluateJavascript(source: """
         document.getElementById('nffc').value = '${otp.replaceAll("'", "\\'")}';
         document.IDPLogin.submit();
@@ -161,6 +168,9 @@ class LoginService extends ChangeNotifier {
     } else if (s.contains('spaces.kisd.de') && !_samlClicked) {
       print('[login] reached spaces.kisd.de: true');
       _samlClicked = true;
+      // Tick WordPress "stay logged in" (remember-me) before redirecting to TH
+      // Login so the WP session cookie is long-lived (~14d) instead of ~2d.
+      await _enableStayLoggedIn(ctrl);
       await ctrl.evaluateJavascript(source: """
         (function() {
           const link = document.querySelector('#saml-login-link') ||
@@ -352,6 +362,77 @@ class LoginService extends ChangeNotifier {
     if (req.isForMainFrame == true) {
       print('[login] error: ${err.description}');
       _finish(false);
+    }
+  }
+
+  Future<void> _enableStayLoggedIn(InAppWebViewController ctrl) =>
+      _tickMatchingCheckboxes(
+          ctrl, r'remember|stay|angemeldet|keep.?me', 'stay-logged-in');
+
+  Future<void> _enableTrustThisDevice(InAppWebViewController ctrl) =>
+      _tickMatchingCheckboxes(
+          ctrl, r'trust|remember|device|vertrau|merken|ger.t', 'trust-device');
+
+  // Check every checkbox whose id/name/label matches [regexSource] (an opt-in
+  // like "stay logged in" / "trust this device"). Logs both what matched and
+  // every checkbox seen, so the heuristic can be tightened from real output.
+  Future<void> _tickMatchingCheckboxes(
+      InAppWebViewController ctrl, String regexSource, String tag) async {
+    try {
+      final r = await ctrl.callAsyncJavaScript(
+        functionBody: """
+          var re = new RegExp(pat, 'i');
+          var matched = [], all = [];
+          var nodes = document.querySelectorAll('input[type="checkbox"]');
+          for (var i = 0; i < nodes.length; i++) {
+            var el = nodes[i];
+            var label = (el.id + ' ' + el.name + ' ' +
+              (el.labels && el.labels.length ? el.labels[0].innerText : '') + ' ' +
+              (el.getAttribute('aria-label') || '')).replace(/\\s+/g, ' ').trim();
+            all.push(label);
+            if (re.test(label)) { el.checked = true; matched.push(label); }
+          }
+          return JSON.stringify({matched: matched, all: all});
+        """,
+        arguments: {'pat': regexSource},
+      ).timeout(const Duration(seconds: 5));
+      print('[login] $tag matched: ${r?.value}');
+    } catch (e) {
+      print('[login] $tag opt-in skipped: $e');
+    }
+  }
+
+  // Re-inject persisted *persistent* IdP/MFA cookies (e.g. the "trust this
+  // device" cookie) after the pre-SAML cookie clear, so re-auth can skip the
+  // OTP. Session/expired cookies and Spaces cookies are intentionally not
+  // restored here — the Spaces session stays a clean slate for the SAML flow.
+  Future<void> _reinjectPersistentCookies() async {
+    final raw = await _storage.read(key: _keyCookies);
+    if (raw == null) return;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final mgr = CookieManager.instance();
+    var count = 0;
+    for (final c in (json.decode(raw) as List)) {
+      final exp = c['expiresDate'] as int?;
+      if (exp == null || exp <= nowMs) continue; // session/expired → skip
+      final dom = (c['domain'] as String?) ?? '';
+      if (!dom.contains('th-koeln.de')) continue;
+      try {
+        await mgr.setCookie(
+          url: WebUri('https://${dom.replaceFirst(RegExp(r'^\.'), '')}'),
+          name: c['name'] as String,
+          value: c['value'] as String,
+          domain: dom,
+          path: (c['path'] as String?) ?? '/',
+          expiresDate: exp,
+          isSecure: c['isSecure'] as bool?,
+          isHttpOnly: c['isHttpOnly'] as bool?,
+        );
+        count++;
+      } catch (_) {}
+    }
+    if (count > 0) {
+      print('[login] preserved $count persistent th-koeln cookie(s) through clear');
     }
   }
 

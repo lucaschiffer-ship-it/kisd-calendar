@@ -1499,6 +1499,19 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
     if (_isDragging && !_dismissTriggered) _snapBack();
   }
 
+  // Dismiss with the same pull-down morph as a release past threshold — used by
+  // the tap-outside backdrop so it animates instead of popping instantly.
+  void _animatedClose() {
+    if (_dismissTriggered) return;
+    _dismissTriggered = true;
+    _snapBackCtrl.stop();
+    setState(() {
+      _isDragging = true; // so t follows (1 - _dragProgress) during the morph
+      _closeStartProgress = _dragProgress;
+    });
+    _closeController.forward(from: 0);
+  }
+
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
@@ -1548,9 +1561,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
               Positioned.fill(
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTap: _editController.value > 0.5
-                      ? null
-                      : () => Navigator.of(context).pop(),
+                  onTap: _editController.value > 0.5 ? null : _animatedClose,
                   child: Container(
                     color: Colors.black.withValues(alpha: (glass ? 0.0 : 0.35) * t),
                   ),

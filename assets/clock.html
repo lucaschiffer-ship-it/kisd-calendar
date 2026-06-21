@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: transparent;
+      overflow: hidden;
+    }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <script>
+let lastSec = -1;
+let secJitterT = -9999;
+
+const CX = 300, CY = 300, R = 240;
+const BAND = 60;
+const NUM_R = 155;
+
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  pixelDensity(displayDensity());
+  strokeCap(SQUARE);
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+}
+
+function draw() {
+  // transparent — the Flutter dark background shows through, matching background(0)
+  clear();
+
+  // Scale the 600×600 coordinate system to fill whatever size the WebView is
+  let sf = min(width, height) / 600;
+  let tx = (width  - 600 * sf) / 2;
+  let ty = (height - 600 * sf) / 2;
+
+  let now = new Date();
+  let s = now.getSeconds();
+  let m = now.getMinutes();
+  let h = now.getHours() % 12;
+
+  if (s !== lastSec) { lastSec = s; secJitterT = millis(); }
+
+  let sj = jitter(secJitterT, 0.05, 18, 6);
+  let t  = millis() / 1000;
+
+  let secAngle  = normalizeAngle(map(s,        0, 60, 0, TWO_PI) - HALF_PI + sj);
+  let minAngle  = normalizeAngle(map(m + s/60, 0, 60, 0, TWO_PI) - HALF_PI);
+  let hourAngle = normalizeAngle(map(h + m/60, 0, 12, 0, TWO_PI) - HALF_PI);
+
+  push();
+  translate(tx, ty);
+  scale(sf);
+
+  drawRimBlack(t, hourAngle, minAngle, secAngle);
+  drawRimTint(t, hourAngle, minAngle, secAngle);
+  drawTicks();
+  drawNumbers();
+
+  pop();
+}
+
+function normalizeAngle(a) {
+  return ((a % TWO_PI) + TWO_PI) % TWO_PI;
+}
+
+function angularDist(a, b) {
+  let d = ((a - b) % TWO_PI + TWO_PI) % TWO_PI;
+  if (d > PI) d = TWO_PI - d;
+  return d;
+}
+
+function jitter(startT, amp, freq, decay) {
+  let e = (millis() - startT) / 1000;
+  if (e > 2) return 0;
+  return amp * sin(freq * e * TWO_PI) * exp(-decay * e);
+}
+
+function getR(a, frac, t, hourAngle, minAngle, secAngle) {
+  let innerR = R - BAND / 2;
+  let baseR  = innerR + frac * BAND;
+
+  let wave =
+    sin(2 * a - t * 0.5 + frac * 6.0) * 4.0 +
+    sin(3 * a + t * 0.3 + frac * 4.5) * 2.5 +
+    sin(5 * a - t * 0.2 + frac * 8.0) * 1.5;
+
+  let dHour    = angularDist(a, hourAngle);
+  let bumpHour = -60 * exp(-(dHour * dHour) / 0.05) * (1.0 - frac);
+
+  let dMin    = angularDist(a, minAngle);
+  let bumpMin = -32 * exp(-(dMin * dMin) / 0.018) * pow(1.0 - frac, 1.5);
+
+  let dSec    = angularDist(a, secAngle);
+  let bumpSec = -18 * exp(-(dSec * dSec) / 0.008) * pow(1.0 - frac, 2.0);
+
+  return baseR + wave + bumpHour + bumpMin + bumpSec;
+}
+
+function getTint(a, frac, hourAngle, minAngle, secAngle) {
+  let dHour = angularDist(a, hourAngle);
+  let dMin  = angularDist(a, minAngle);
+  let dSec  = angularDist(a, secAngle);
+
+  let tHour = exp(-(dHour * dHour) / 0.06)  * (1.0 - frac)              * 1.0;
+  let tMin  = exp(-(dMin  * dMin)  / 0.025) * (1.0 - frac)              * 0.75;
+  let tSec  = exp(-(dSec  * dSec)  / 0.01)  * pow(1.0 - frac, 2.0)     * 0.9;
+
+  return constrain(tHour + tMin + tSec, 0, 1);
+}
+
+function drawRimBlack(t, hourAngle, minAngle, secAngle) {
+  let numLines = 44;
+  noFill();
+
+  for (let li = 0; li < numLines; li++) {
+    let frac      = li / (numLines - 1);
+    let baseAlpha = map(abs(frac - 0.5), 0, 0.5, 210, 10);
+    stroke(255, baseAlpha);
+    strokeWeight(0.9);
+
+    beginShape();
+    for (let i = 0; i <= 360; i++) {
+      let a = map(i, 0, 360, 0, TWO_PI);
+      let r = getR(a, frac, t, hourAngle, minAngle, secAngle);
+      vertex(CX + cos(a) * r, CY + sin(a) * r);
+    }
+    endShape(CLOSE);
+  }
+}
+
+function drawRimTint(t, hourAngle, minAngle, secAngle) {
+  let numLines = 44;
+  let steps    = 180;
+  noFill();
+
+  for (let li = 0; li < numLines; li++) {
+    let frac      = li / (numLines - 1);
+    let baseAlpha = map(abs(frac - 0.5), 0, 0.5, 210, 10);
+    strokeWeight(0.9);
+
+    for (let i = 0; i < steps; i++) {
+      let a1   = map(i,     0, steps, 0, TWO_PI);
+      let a2   = map(i + 1, 0, steps, 0, TWO_PI);
+      let aMid = (a1 + a2) / 2;
+
+      let tint = getTint(aMid, frac, hourAngle, minAngle, secAngle);
+      if (tint < 0.02) continue;
+
+      let r1 = getR(a1, frac, t, hourAngle, minAngle, secAngle);
+      let r2 = getR(a2, frac, t, hourAngle, minAngle, secAngle);
+
+      stroke(200, 80, 80, tint * baseAlpha * 1.75);
+      line(
+        CX + cos(a1) * r1, CY + sin(a1) * r1,
+        CX + cos(a2) * r2, CY + sin(a2) * r2
+      );
+    }
+  }
+}
+
+function drawTicks() {
+  let tickOuter = NUM_R + 10;
+  let tickInner = NUM_R - 10;
+
+  stroke(255, 80);
+  strokeWeight(0.5);
+
+  for (let i = 0; i < 12; i++) {
+    if (i % 3 === 0) continue;
+    let a = map(i, 0, 12, 0, TWO_PI) - HALF_PI;
+    line(
+      CX + cos(a) * tickOuter, CY + sin(a) * tickOuter,
+      CX + cos(a) * tickInner, CY + sin(a) * tickInner
+    );
+  }
+}
+
+function drawNumbers() {
+  let labels = [
+    { n: '12', a: -HALF_PI },
+    { n: '3',  a: 0        },
+    { n: '6',  a: HALF_PI  },
+    { n: '9',  a: PI       },
+  ];
+
+  drawingContext.font = '100 28px interstate, system-ui, sans-serif';
+  drawingContext.textAlign = 'center';
+  drawingContext.textBaseline = 'middle';
+  drawingContext.fillStyle = 'white';
+
+  for (let i = 0; i < labels.length; i++) {
+    let x = CX + cos(labels[i].a) * NUM_R;
+    let y = CY + sin(labels[i].a) * NUM_R;
+    drawingContext.fillText(labels[i].n, x, y);
+  }
+}
+  </script>
+</body>
+</html>

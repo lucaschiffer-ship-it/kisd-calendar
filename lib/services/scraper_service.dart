@@ -17,9 +17,13 @@ class ScraperService extends ChangeNotifier {
       'https://spaces.kisd.de/course-selection/?semester=2026-1&mycourses=on';
   static const _allCoursesUrl =
       'https://spaces.kisd.de/course-selection/?semester=2026-1';
+  // `all_posts=1` is WordPress's own "All" view param — without it wp-admin
+  // defaults to the "Mine" filter (only events authored by the logged-in
+  // account), which collapsed the list to a single event. See [evt-recon]
+  // view-tab counts: All (412) | Mine (1) | Published (376).
   static const _kEventsUrl =
       'https://spaces.kisd.de/home/wp-admin/edit.php'
-      '?post_type=event&mode=list&posts_per_page=400&paged=1';
+      '?post_type=event&mode=list&all_posts=1&posts_per_page=400&paged=1';
 
   bool _isLoading = false;
   String? _error;
@@ -107,6 +111,10 @@ class ScraperService extends ChangeNotifier {
             const viewTabs = subsubsub
               ? subsubsub.textContent.replace(/\s+/g, ' ').trim()
               : '(not found)';
+            const viewLinks = subsubsub
+              ? Array.from(subsubsub.querySelectorAll('a')).map(
+                  a => a.textContent.replace(/\s+/g, ' ').trim() + ' => ' + a.href)
+              : [];
 
             const mainTable = document.querySelector('table.wp-list-table');
             const wpListTableInnerHtml = mainTable
@@ -118,7 +126,7 @@ class ScraperService extends ChangeNotifier {
               tableIds, colnames, firstTrHtml, hasLoginForm,
               allTrCount, tbodyInfos, dataRowHtml,
               tdEventCount, tdColnameTotal, thColnameTotal,
-              displayingNumText, viewTabs,
+              displayingNumText, viewTabs, viewLinks,
               wpListTableExists: !!mainTable, wpListTableInnerHtml
             });
           """);
@@ -146,6 +154,7 @@ class ScraperService extends ChangeNotifier {
             print('[evt-recon] th[data-colname] total=${r['thColnameTotal']}');
             print('[evt-recon] displaying-num=${r['displayingNumText']}');
             print('[evt-recon] view tabs=${r['viewTabs']}');
+            print('[evt-recon] view links=${r['viewLinks']}');
             print('[evt-recon] wp-list-table exists=${r['wpListTableExists']}');
             if (r['wpListTableInnerHtml'] != null) {
               print('[evt-recon] wp-list-table innerHTML=${r['wpListTableInnerHtml']}');

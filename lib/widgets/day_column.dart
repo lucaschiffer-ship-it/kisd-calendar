@@ -155,7 +155,7 @@ class _DayColumnState extends State<DayColumn> {
             decoration: BoxDecoration(
               border: Border(
                 right: BorderSide(
-                  color: AppThemeTokens.cardBorder,
+                  color: AppThemeTokens.dividerColor,
                   width: 0.5,
                 ),
               ),
@@ -173,7 +173,7 @@ class _DayColumnState extends State<DayColumn> {
   }
 
   Widget _buildGrid() {
-    final dividerColor = AppThemeTokens.cardBorder;
+    final dividerColor = AppThemeTokens.dividerColor;
     final labelStyle = GoogleFonts.inter(
       fontSize: 11,
       fontWeight: FontWeight.w400,

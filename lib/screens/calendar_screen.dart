@@ -1317,7 +1317,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                       decoration: BoxDecoration(
                         border: Border(
                           right: BorderSide(
-                            color: tokens.AppThemeTokens.cardBorder,
+                            color: tokens.AppThemeTokens.dividerColor,
                             width: 0.5,
                           ),
                         ),
@@ -1431,7 +1431,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                       ? Colors.white.withValues(alpha: 0.08)
                       : Colors.white.withValues(alpha: 0.50),
                   border: Border(bottom: BorderSide(
-                      color: tokens.AppThemeTokens.cardBorder, width: 0.5)),
+                      color: tokens.AppThemeTokens.dividerColor, width: 0.5)),
                 ),
                 child: bandContent,
               ),
@@ -1441,7 +1441,7 @@ class _CalendarScreenState extends State<CalendarScreen>
             decoration: BoxDecoration(
               color: baseColor,
               border: Border(bottom: BorderSide(
-                  color: tokens.AppThemeTokens.cardBorder, width: 0.5)),
+                  color: tokens.AppThemeTokens.dividerColor, width: 0.5)),
             ),
             child: bandContent,
           );
@@ -1878,7 +1878,7 @@ class _AllDayBandState extends State<_AllDayBand> {
                                 child: DecoratedBox(
                                   decoration: BoxDecoration(
                                     border: Border(right: BorderSide(
-                                      color: tokens.AppThemeTokens.cardBorder,
+                                      color: tokens.AppThemeTokens.dividerColor,
                                       width: 0.5,
                                     )),
                                   ),
@@ -2411,7 +2411,7 @@ class _ViewButtonState extends State<_ViewButton> {
           if (i > 0)
             Container(
               height: 0.5,
-              color: tokens.AppThemeTokens.cardBorder,
+              color: tokens.AppThemeTokens.dividerColor,
             ),
           _buildRow(_items[i], isDark),
         ],

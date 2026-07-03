@@ -24,6 +24,7 @@ class AppThemeTokens {
   static Color get backgroundColor  => _s.background;
   static Color get cardBackground   => _s.cardBackground;
   static Color get cardBorder       => _s.cardBorder;
+  static Color get dividerColor     => _s.divider;
   static Color get titleColor       => _s.textPrimary;
   static Color get timesColor       => _s.accent;
   static Color get locationColor    => _s.textTertiary;   // de-emphasised grey
@@ -48,6 +49,7 @@ class AppThemeTokens {
     required Widget child,
     double blur = AppGlass.cardBlur,
     double opacity = 0.12,
+    double borderAlpha = AppGlass.borderAlpha,
     BorderRadius? borderRadius,
     Color? tintColor,
   }) {
@@ -62,7 +64,7 @@ class AppThemeTokens {
               color: tint.withValues(alpha: opacity),
               borderRadius: borderRadius,
               border: Border.all(
-                color: tint.withValues(alpha: AppGlass.borderAlpha),
+                color: tint.withValues(alpha: borderAlpha),
                 width: 0.5,
               ),
             ),

@@ -93,8 +93,8 @@ class AppColorScheme {
     background:      Color(0xFF000000),
     surface:         Color(0xFF141414),
     surfaceElevated: Color(0xFF1E1E1E),
-    cardBackground:  Color(0xFF1A1A1A),
-    cardBorder:      Color(0xFF2A2A2A),
+    cardBackground:  Color(0xFF070707),
+    cardBorder:      Color(0xFF0D0D0D),
     divider:         Color(0xFF1E1E1E),
     textPrimary:     Color(0xFFFFFFFF),
     textSecondary:   Color(0x80FFFFFF), // white 50 %

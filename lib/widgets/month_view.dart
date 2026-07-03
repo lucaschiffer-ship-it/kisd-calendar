@@ -252,7 +252,7 @@ class _MonthSectionState extends State<_MonthSection> {
     return Container(
       decoration: BoxDecoration(
         border: Border(
-          top: BorderSide(color: AppThemeTokens.cardBorder, width: 0.5),
+          top: BorderSide(color: AppThemeTokens.dividerColor, width: 0.5),
         ),
       ),
       child: Row(

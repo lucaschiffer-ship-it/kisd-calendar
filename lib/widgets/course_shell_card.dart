@@ -323,8 +323,10 @@ class _CourseShellCardState extends State<CourseShellCard>
               ],
             );
             if (glass) {
+              final dark = ThemeService.instance.currentColor.value == 'dark';
               return tokens.AppThemeTokens.glassContainer(
-                opacity: 0.08,
+                opacity: dark ? 0.03 : 0.08,
+                borderAlpha: dark ? 0.05 : 0.20,
                 blur: 15,
                 borderRadius: BorderRadius.circular(radius),
                 child: Padding(
@@ -440,8 +442,10 @@ class _NewCourseCardState extends State<NewCourseCard> {
                 ),
               );
               if (glass) {
+                final dark = ThemeService.instance.currentColor.value == 'dark';
                 return tokens.AppThemeTokens.glassContainer(
-                  opacity: 0.08,
+                  opacity: dark ? 0.03 : 0.08,
+                  borderAlpha: dark ? 0.05 : 0.20,
                   blur: 15,
                   borderRadius: BorderRadius.circular(radius),
                   child: Padding(

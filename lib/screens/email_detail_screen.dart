@@ -153,7 +153,7 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
               ],
             ),
           ),
-          Divider(height: 1, color: tokens.AppThemeTokens.cardBorder),
+          Divider(height: 1, color: tokens.AppThemeTokens.dividerColor),
 
           // ── Body ────────────────────────────────────────────────────────
           Expanded(
@@ -292,7 +292,7 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
         decoration: BoxDecoration(
           border: Border(
             top: BorderSide(
-                color: tokens.AppThemeTokens.cardBorder, width: 0.5),
+                color: tokens.AppThemeTokens.dividerColor, width: 0.5),
           ),
         ),
         child: Row(

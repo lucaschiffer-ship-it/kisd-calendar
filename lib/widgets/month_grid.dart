@@ -233,7 +233,7 @@ class _MonthGridState extends State<MonthGrid> {
       height: kWeekRowH,
       decoration: BoxDecoration(
         border: Border(
-          top: BorderSide(color: AppThemeTokens.cardBorder, width: 0.5),
+          top: BorderSide(color: AppThemeTokens.dividerColor, width: 0.5),
         ),
       ),
       child: Row(

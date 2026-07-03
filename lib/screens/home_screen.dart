@@ -584,7 +584,7 @@ class _IosTabBar extends StatelessWidget {
     final s = AppColorScheme.current;
 
     final bgColor      = tokens.AppThemeTokens.navBarBg;
-    final dividerColor = tokens.AppThemeTokens.cardBorder;
+    final dividerColor = tokens.AppThemeTokens.dividerColor;
     final activeColor  = tokens.AppThemeTokens.eventAccent;
     final inactiveColor = tokens.AppThemeTokens.locationColor;
 

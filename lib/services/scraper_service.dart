@@ -10,7 +10,7 @@ import '../models/one_off_event.dart';
 import 'cache_service.dart';
 import 'calendar_service.dart';
 import 'service_locator.dart';
-import 'spaces_dark_mode.dart';
+import 'spaces_theme.dart';
 
 class ScraperService extends ChangeNotifier {
   static const _myCoursesUrl =
@@ -454,7 +454,7 @@ class ScraperService extends ChangeNotifier {
 
     view = HeadlessInAppWebView(
       initialUrlRequest: URLRequest(url: WebUri(url)),
-      initialUserScripts: UnmodifiableListView([spacesDarkModeScript]),
+      initialUserScripts: UnmodifiableListView(spacesThemeScripts()),
       initialSettings: InAppWebViewSettings(
         javaScriptEnabled: true,
         domStorageEnabled: true,

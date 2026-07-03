@@ -3,7 +3,7 @@ import 'dart:collection';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
-import '../services/spaces_dark_mode.dart';
+import '../services/spaces_theme.dart';
 import '../services/theme_service.dart';
 
 class BrowserSheet extends StatefulWidget {
@@ -38,6 +38,33 @@ class BrowserSheetState extends State<BrowserSheet> {
 
   InAppWebViewController? _ctrl;
   bool _loading = false;
+  late List<UserScript> _themeScripts;
+
+  @override
+  void initState() {
+    super.initState();
+    _themeScripts = spacesThemeScripts();
+    ThemeService.instance.currentColor.addListener(_onThemeChanged);
+  }
+
+  @override
+  void dispose() {
+    ThemeService.instance.currentColor.removeListener(_onThemeChanged);
+    super.dispose();
+  }
+
+  // App theme switched while the browser is alive: swap the document-start
+  // script (for future navigations) and restyle the current page in place.
+  Future<void> _onThemeChanged() async {
+    _themeScripts = spacesThemeScripts();
+    final ctrl = _ctrl;
+    if (ctrl == null) return;
+    await ctrl.removeAllUserScripts();
+    for (final script in _themeScripts) {
+      await ctrl.addUserScript(userScript: script);
+    }
+    await ctrl.evaluateJavascript(source: spacesThemeJs());
+  }
 
   void navigateTo(String url) =>
       _ctrl?.loadUrl(urlRequest: URLRequest(url: WebUri(url)));
@@ -73,7 +100,7 @@ class BrowserSheetState extends State<BrowserSheet> {
         Expanded(
           child: InAppWebView(
             initialUrlRequest: URLRequest(url: _homeUri),
-            initialUserScripts: UnmodifiableListView([spacesDarkModeScript]),
+            initialUserScripts: UnmodifiableListView(_themeScripts),
             initialSettings: InAppWebViewSettings(
               javaScriptEnabled: true,
               domStorageEnabled: true,
@@ -119,12 +146,6 @@ class BrowserSheetState extends State<BrowserSheet> {
                 widget.onAuthExpired?.call();
                 return;
               }
-              final isDark =
-                  ThemeService.instance.currentColor.value == 'dark';
-              await ctrl.evaluateJavascript(
-                source:
-                    "document.documentElement.setAttribute('data-theme', '${isDark ? 'dark' : 'light'}');",
-              );
               await ctrl.evaluateJavascript(source: """
 (function() {
   let startY = 0;

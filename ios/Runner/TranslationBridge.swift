@@ -117,7 +117,7 @@ final class TranslationBroker: ObservableObject {
         TranslationSession.Request(sourceText: text, clientIdentifier: String(index))
       }
       var results = [String](repeating: "", count: job.texts.count)
-      for try await response in session.translations(from: requests) {
+      for response in try await session.translations(from: requests) {
         if let id = response.clientIdentifier, let index = Int(id),
            results.indices.contains(index) {
           results[index] = response.targetText

@@ -34,7 +34,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   double _dragOffset = 0;
 
   int _currentPage = _initialPage;
-  String _miniBarTitle = 'Spaces';
+
+  // The "last opened tab" shown on the right half of the mini bar. Only pages
+  // other than the Spaces home (and never IdP/MFA pages) are recorded, so the
+  // tab survives the user going Home in between.
+  String? _lastTabTitle;
+  String? _lastTabUrl;
+
+  // Where an explicit last-tab navigation was headed. If that load bounces to
+  // the IdP (expired session), the re-auth path resumes here instead of home.
+  String? _pendingBrowserUrl;
 
   // The browser's initial page load can happen before login finishes, leaving
   // the Spaces bar showing a logged-out page. We track the login transition and
@@ -75,9 +84,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     ThemeService.instance.currentColor.addListener(_rebuild);
     ThemeService.instance.glassEnabled.addListener(_rebuild);
     SpacesBrowser.register((url) {
-      // Explicit navigation replaces the (possibly pre-auth) home page, so the
-      // first-open reload guard no longer applies.
-      _browserLoadedPreAuth = false;
+      // Loads in the content tab; the pinned home tab (and its pre-auth
+      // reload guard in _openSheet) is unaffected.
       _browserKey.currentState?.navigateTo(url);
       _openSheet();
     });
@@ -114,6 +122,76 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _browserLoadedPreAuth = false;
   }
 
+  bool _isHomeUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return false;
+    return uri.host == 'spaces.kisd.de' &&
+        (uri.path.isEmpty || uri.path == '/');
+  }
+
+  // A login page from the (re-)authentication flow: the TH-Köln IdP/MFA hosts
+  // or the Spaces WordPress login.
+  bool _isAuthUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return true;
+    return uri.host == 'login.th-koeln.de' ||
+        uri.host == 'mfa.th-koeln.de' ||
+        uri.path.contains('wp-login.php');
+  }
+
+  // The logged-out landing page the Spaces home redirects to.
+  bool _isPublicHome(String url) {
+    final uri = Uri.tryParse(url);
+    return uri != null &&
+        uri.host == 'spaces.kisd.de' &&
+        (uri.path == '/public' || uri.path == '/public/');
+  }
+
+  // Whether a page qualifies as the mini bar's "last tab": anything except the
+  // Spaces home (and its logged-out landing) and the login pages that appear
+  // during (re-)authentication. Only the content webview reports titles, so
+  // home loads can't reset the last tab anyway — this is a second line of
+  // defence for home-URL navigations inside the content tab.
+  bool _isTrackablePage(String url) {
+    if (_isAuthUrl(url)) return false;
+    if (_isPublicHome(url)) return false;
+    return !_isHomeUrl(url);
+  }
+
+  Future<void> _openHomeTab() async {
+    _pendingBrowserUrl = null;
+    _browserKey.currentState?.showHomeTab();
+    _openSheet();
+    // The pinned home webview only ever hosts the home page and its auth
+    // redirects, so it just needs a reload if it's stuck on a login page or
+    // on the logged-out landing while we're now logged in.
+    final current = await _browserKey.currentState?.getCurrentUrl();
+    final needsReload = current == null ||
+        _isAuthUrl(current) ||
+        (_isPublicHome(current) && loginService.isLoggedIn);
+    if (needsReload) _reloadBrowserHome();
+  }
+
+  Future<void> _openLastTab() async {
+    final url = _lastTabUrl;
+    if (url == null) {
+      _openSheet();
+      return;
+    }
+    _browserKey.currentState?.showContentTab();
+    _openSheet();
+    // The content tab normally still holds the page (that's what makes it
+    // instant); only (re-)load if it was never loaded or an expired session
+    // bounced it to a login page.
+    final current = await _browserKey.currentState?.getCurrentUrl();
+    if (current == null || current == 'about:blank' || _isAuthUrl(current)) {
+      // Remember the target so a session-expiry re-auth returns here instead
+      // of falling back to the home page.
+      _pendingBrowserUrl = url;
+      _browserKey.currentState?.navigateTo(url);
+    }
+  }
+
   // The Spaces browser hit the IdP login → session expired. Re-authenticate in
   // the background (showing a "Reconnecting…" overlay; the 2FA dialog appears
   // only if needed) and reload Spaces on success. Guarded so the redirect can't
@@ -130,7 +208,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (!mounted) return;
     setState(() => _reconnecting = false);
     if (ok) {
+      final pending = _pendingBrowserUrl;
+      _pendingBrowserUrl = null;
+      // The home tab may have been bounced to the login page too — reload it
+      // in place (doesn't change which tab is visible).
       _reloadBrowserHome();
+      if (pending != null) {
+        _browserKey.currentState?.navigateTo(pending);
+      } else {
+        // If the expiry hit the content tab, restore its page in the
+        // background so the last tab stays intact.
+        final lastTab = _lastTabUrl;
+        if (lastTab != null) {
+          final contentUrl = await _browserKey.currentState?.getContentUrl();
+          if (contentUrl != null && _isAuthUrl(contentUrl)) {
+            _browserKey.currentState?.navigateTo(lastTab, show: false);
+          }
+        }
+      }
     } else {
       final s = AppColorScheme.current;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -231,7 +326,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
             );
           },
-          child: _MiniBrowserBar(title: _miniBarTitle, onTap: _openSheet),
+          child: _MiniBrowserBar(
+            lastTabTitle: _lastTabTitle,
+            onHomeTap: _openHomeTab,
+            onLastTabTap: _openLastTab,
+          ),
         ),
 
         // ── Full-screen browser overlay ───────────────────────────────────
@@ -281,13 +380,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       children: [
                         BrowserSheet(
                       key: _browserKey,
-                      onPageTitleChanged: (title) =>
-                          setState(() => _miniBarTitle = title),
+                      onPageTitleChanged: (title, url) {
+                        if (url == null || !_isTrackablePage(url)) return;
+                        setState(() {
+                          _lastTabTitle = title;
+                          _lastTabUrl = url;
+                        });
+                      },
                       onNavStateChanged: (back, fwd) => setState(() {
                         _canGoBack = back;
                         _canGoForward = fwd;
                       }),
-                      onCurrentUrlChanged: (url) => _currentUrl = url,
+                      onCurrentUrlChanged: (url) {
+                        _currentUrl = url;
+                        if (url == _pendingBrowserUrl) _pendingBrowserUrl = null;
+                      },
                       onPullDown: (deltaY) {
                         if (_snapBackCtrl.isAnimating) _snapBackCtrl.stop();
                         setState(
@@ -342,7 +449,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     onForward: () => _browserKey.currentState?.goForward(),
                     onReload: () => _browserKey.currentState?.reload(),
                     onOpenInBrowser: () async {
-                      final uri = Uri.tryParse(_currentUrl);
+                      // Live URL of whichever tab is visible; the cached
+                      // _currentUrl only tracks the content tab.
+                      final url =
+                          await _browserKey.currentState?.getCurrentUrl() ??
+                              _currentUrl;
+                      final uri = Uri.tryParse(url);
                       if (uri != null) {
                         await launchUrl(uri,
                             mode: LaunchMode.externalApplication);
@@ -377,10 +489,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 // ── Mini browser bar ─────────────────────────────────────────────────────────
 
 class _MiniBrowserBar extends StatelessWidget {
-  const _MiniBrowserBar({required this.title, required this.onTap});
+  const _MiniBrowserBar({
+    required this.lastTabTitle,
+    required this.onHomeTap,
+    required this.onLastTabTap,
+  });
 
-  final String title;
-  final VoidCallback onTap;
+  /// Title of the last opened page, or null if none exists yet (then the
+  /// Home segment fills the whole bar).
+  final String? lastTabTitle;
+  final VoidCallback onHomeTap;
+  final VoidCallback onLastTabTap;
 
   @override
   Widget build(BuildContext context) {
@@ -391,51 +510,90 @@ class _MiniBrowserBar extends StatelessWidget {
         builder: (context, glass, _) {
           final s = AppColorScheme.current;
           final fg = s.onAccent; // text on the orange bar is always on-accent
+          final hasTab = lastTabTitle != null;
 
-          final barContent = Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(AppRadius.tag),
-                  child: Image.asset(
-                    'assets/images/spaces_icon.png',
-                    width: 24,
-                    height: 24,
-                    errorBuilder: (_, err, stack) => Container(
+          final textStyle = AppTextStyles.bodySmall(color: fg).copyWith(
+            fontWeight: FontWeight.w500,
+            decoration: TextDecoration.none,
+          );
+
+          final arrowUp = Opacity(
+            opacity: 0.7,
+            child: Icon(Icons.keyboard_arrow_up, color: fg, size: 18),
+          );
+
+          final homeSegment = GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onHomeTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                mainAxisSize: hasTab ? MainAxisSize.min : MainAxisSize.max,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(AppRadius.tag),
+                    child: Image.asset(
+                      'assets/images/spaces_icon.png',
                       width: 24,
                       height: 24,
-                      decoration: BoxDecoration(
-                        color: s.accent,
-                        borderRadius: BorderRadius.circular(AppRadius.tag),
+                      errorBuilder: (_, err, stack) => Container(
+                        width: 24,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: s.accent,
+                          borderRadius: BorderRadius.circular(AppRadius.tag),
+                        ),
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: AppTextStyles.bodySmall(color: fg).copyWith(
-                      fontWeight: FontWeight.w500,
-                      decoration: TextDecoration.none,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Opacity(
-                  opacity: 0.7,
-                  child: Icon(Icons.keyboard_arrow_up, color: fg, size: 18),
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  hasTab
+                      ? Text('Home', style: textStyle, maxLines: 1)
+                      : Expanded(
+                          child: Text('Home', style: textStyle, maxLines: 1)),
+                  if (!hasTab) ...[const SizedBox(width: 4), arrowUp],
+                ],
+              ),
             ),
           );
 
-          return GestureDetector(
-            onTap: onTap,
-            child: SizedBox(
+          final barContent = hasTab
+              ? Row(
+                  children: [
+                    homeSegment,
+                    Container(
+                      width: 0.5,
+                      height: 20,
+                      color: fg.withValues(alpha: 0.25),
+                    ),
+                    Expanded(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: onLastTabTap,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  lastTabTitle!,
+                                  style: textStyle,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              arrowUp,
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              : homeSegment;
+
+          return SizedBox(
               height: 50,
               child: glass
                   ? tokens.AppThemeTokens.glassContainer(
@@ -460,7 +618,6 @@ class _MiniBrowserBar extends StatelessWidget {
                       ),
                       child: barContent,
                     ),
-            ),
           );
         },
       ),

@@ -706,6 +706,8 @@ class _ListScreenState extends State<ListScreen>
                             child: ListView(
                               controller: _eventsScrollCtrl,
                               padding: EdgeInsets.zero,
+                              keyboardDismissBehavior:
+                                  ScrollViewKeyboardDismissBehavior.onDrag,
                               children: [
                                 for (final e in _todayEvents)
                                   _TodayEventRow(event: e),
@@ -973,6 +975,7 @@ class _ListScreenState extends State<ListScreen>
       child: CustomScrollView(
         controller: _scrollCtrls[index],
         physics: const AlwaysScrollableScrollPhysics(),
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         slivers: [
           // Transparent spacer — keeps cards below the glass overlay
           SliverPersistentHeader(

@@ -377,6 +377,7 @@ class _MailScreenState extends State<MailScreen>
           },
           child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             slivers: [
               SliverPadding(padding: EdgeInsets.only(top: headerH)),
               if (!hasData)

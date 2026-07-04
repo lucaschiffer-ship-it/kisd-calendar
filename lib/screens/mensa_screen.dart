@@ -7,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../config/app_theme.dart' as tokens;
 import '../services/mensa_service.dart';
 import '../services/theme_service.dart';
+import '../services/translation_service.dart';
 import '../theme/tokens.dart';
 import 'settings_screen.dart';
 
@@ -38,6 +39,7 @@ class _MensaScreenState extends State<MensaScreen>
   late final DateTime _baseDate;
   late final PageController _pageController;
   DateTime _selectedDate = DateTime.now();
+  bool _translate = false;
 
   @override
   void initState() {
@@ -68,6 +70,17 @@ class _MensaScreenState extends State<MensaScreen>
     final weekday = _weekdays[d.weekday - 1];
     final month   = _months[d.month - 1];
     return '$weekday, ${d.day}. $month';
+  }
+
+  Future<void> _toggleTranslate() async {
+    if (!_translate && !await translationService.isSupported()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Übersetzung benötigt iOS 18 oder neuer.'),
+      ));
+      return;
+    }
+    if (mounted) setState(() => _translate = !_translate);
   }
 
   @override
@@ -111,7 +124,16 @@ class _MensaScreenState extends State<MensaScreen>
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Row(
                 children: [
-                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: Icon(
+                      Icons.translate,
+                      color: _translate
+                          ? s.accent
+                          : tokens.AppThemeTokens.navBarIcon,
+                    ),
+                    tooltip: 'Auf Englisch übersetzen',
+                    onPressed: _toggleTranslate,
+                  ),
                   Expanded(
                     child: Center(
                       child: Text(
@@ -189,6 +211,7 @@ class _MensaScreenState extends State<MensaScreen>
           key: ValueKey('${date.year}-${date.month}-${date.day}'),
           date: date,
           headerHeight: headerH,
+          translate: _translate,
         );
       },
     );
@@ -209,10 +232,12 @@ class _MensaDayPage extends StatefulWidget {
     super.key,
     required this.date,
     required this.headerHeight,
+    required this.translate,
   });
 
   final DateTime date;
   final double headerHeight;
+  final bool translate;
 
   @override
   State<_MensaDayPage> createState() => _MensaDayPageState();
@@ -220,6 +245,8 @@ class _MensaDayPage extends StatefulWidget {
 
 class _MensaDayPageState extends State<_MensaDayPage> {
   List<MensaMeal> _meals = [];
+  List<MensaMeal>? _translatedMeals;
+  bool _translating = false;
   bool _loading = true;
   String? _error;
 
@@ -229,13 +256,62 @@ class _MensaDayPageState extends State<_MensaDayPage> {
     _fetchMeals();
   }
 
+  @override
+  void didUpdateWidget(covariant _MensaDayPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.translate && !oldWidget.translate) _translateMeals();
+  }
+
   Future<void> _fetchMeals() async {
-    setState(() { _loading = true; _error = null; });
+    setState(() {
+      _loading = true;
+      _error = null;
+      _translatedMeals = null;
+    });
     try {
       final meals = await mensaService.fetchMeals(widget.date);
-      if (mounted) setState(() { _meals = meals; _loading = false; });
+      if (mounted) {
+        setState(() { _meals = meals; _loading = false; });
+        if (widget.translate) _translateMeals();
+      }
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _loading = false; });
+    }
+  }
+
+  Future<void> _translateMeals() async {
+    if (_translating || _translatedMeals != null || _meals.isEmpty) return;
+    _translating = true;
+    try {
+      // Flatten name, category, and notes of every meal into one batch;
+      // the service returns translations in the same order.
+      final texts = <String>[];
+      for (final m in _meals) {
+        texts..add(m.name)..add(m.category)..addAll(m.notes);
+      }
+      final translated = await translationService.translate(texts);
+      var i = 0;
+      final result = _meals.map((m) {
+        final name     = translated[i++];
+        final category = translated[i++];
+        final notes    = m.notes.map((_) => translated[i++]).toList();
+        return MensaMeal(
+          name: name,
+          category: category,
+          notes: notes,
+          priceStudents: m.priceStudents,
+          priceEmployees: m.priceEmployees,
+        );
+      }).toList();
+      if (mounted) setState(() => _translatedMeals = result);
+    } catch (_) {
+      if (mounted && widget.translate) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Übersetzung nicht verfügbar.'),
+        ));
+      }
+    } finally {
+      _translating = false;
     }
   }
 
@@ -268,7 +344,10 @@ class _MensaDayPageState extends State<_MensaDayPage> {
       );
     }
 
-    final grouped = _groupByCategory(_meals);
+    final displayMeals = widget.translate && _translatedMeals != null
+        ? _translatedMeals!
+        : _meals;
+    final grouped = _groupByCategory(displayMeals);
     return RefreshIndicator(
       color: s.accent,
       onRefresh: () {
@@ -327,7 +406,9 @@ class _MealRow extends StatelessWidget {
   Color _tagColor(String note) {
     final n = note.toLowerCase();
     if (n == 'vegan') return _veganColor;
-    if (n == 'vegetarisch' || n == 'veggie') return _vegColor;
+    if (n == 'vegetarisch' || n == 'veggie' || n == 'vegetarian') {
+      return _vegColor;
+    }
     if (n.contains('schwein') || n.contains('pork')) return _porkColor;
     if (n.contains('rind') || n.contains('beef')) return _beefColor;
     return tokens.AppThemeTokens.secondaryTextColor;

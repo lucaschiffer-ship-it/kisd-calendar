@@ -14,6 +14,7 @@ void main() async {
   await loginService.initialize();
   CalendarService.instance.performStartupCleanup().ignore();
   loginService.navigatorKey = navigatorKey;
+  pagePrefetcher.start();
 
   // Keep AppColorScheme.current in sync with ThemeService so all AppThemeTokens
   // reads are mode-correct at widget build time.  The listener fires before any

@@ -47,6 +47,14 @@ class KisdCalendarApp extends StatelessWidget {
           theme: buildLightTheme(),
           darkTheme: buildDarkTheme(),
           themeMode: colorKey == 'light' ? ThemeMode.light : ThemeMode.dark,
+          // Dismiss the keyboard when tapping anywhere that isn't itself
+          // tappable (standard iOS behaviour). Interactive widgets win the
+          // gesture arena, so buttons and fields are unaffected.
+          builder: (context, child) => GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+            child: child,
+          ),
           home: const AppRoot(),
         );
       },

@@ -14,6 +14,7 @@ class ComposeScreen extends StatefulWidget {
 }
 
 class _ComposeScreenState extends State<ComposeScreen> {
+  final _fromCtrl = TextEditingController();
   late final TextEditingController _toCtrl;
   late final TextEditingController _subjectCtrl;
   late final TextEditingController _bodyCtrl;
@@ -23,6 +24,7 @@ class _ComposeScreenState extends State<ComposeScreen> {
   @override
   void initState() {
     super.initState();
+    _prefillFrom();
     final reply = widget.replyTo;
     if (reply != null) {
       final senders = reply.decodeSender();
@@ -43,8 +45,20 @@ class _ComposeScreenState extends State<ComposeScreen> {
     }
   }
 
+  // The account address is not part of the login (only the Campus ID is), so
+  // the sender identity is shown and editable like in any mail client. A
+  // wrong sender is accepted by the TH relay and then dropped silently, so
+  // it must never be an invisible guess.
+  Future<void> _prefillFrom() async {
+    final email = await mailService.accountEmail();
+    if (mounted && email != null && _fromCtrl.text.isEmpty) {
+      setState(() => _fromCtrl.text = email);
+    }
+  }
+
   @override
   void dispose() {
+    _fromCtrl.dispose();
     _toCtrl.dispose();
     _subjectCtrl.dispose();
     _bodyCtrl.dispose();
@@ -52,7 +66,14 @@ class _ComposeScreenState extends State<ComposeScreen> {
   }
 
   Future<void> _send() async {
+    final from = _fromCtrl.text.trim();
     final to = _toCtrl.text.trim();
+    if (!from.contains('@')) {
+      setState(() => _sendError =
+          'Enter your TH Köln address in the From field — you can see it in '
+          'webmail under Sent.');
+      return;
+    }
     if (!to.contains('@')) {
       setState(() => _sendError = 'Invalid email address.');
       return;
@@ -63,6 +84,7 @@ class _ComposeScreenState extends State<ComposeScreen> {
         to,
         _subjectCtrl.text.trim(),
         _bodyCtrl.text,
+        from: from,
       );
       if (mounted) Navigator.pop(context);
     } catch (e) {
@@ -160,6 +182,13 @@ class _ComposeScreenState extends State<ComposeScreen> {
                         ),
                       ),
                     _ComposeField(
+                      label: 'From',
+                      controller: _fromCtrl,
+                      keyboardType: TextInputType.emailAddress,
+                      hintText: 'your.name@smail.th-koeln.de',
+                    ),
+                    const _Divider(),
+                    _ComposeField(
                       label: 'To',
                       controller: _toCtrl,
                       keyboardType: TextInputType.emailAddress,
@@ -204,12 +233,14 @@ class _ComposeField extends StatelessWidget {
     required this.controller,
     this.keyboardType,
     this.autofocus = false,
+    this.hintText,
   });
 
   final String label;
   final TextEditingController controller;
   final TextInputType? keyboardType;
   final bool autofocus;
+  final String? hintText;
 
   @override
   Widget build(BuildContext context) {
@@ -230,9 +261,11 @@ class _ComposeField extends StatelessWidget {
               controller:   controller,
               keyboardType: keyboardType,
               autofocus:    autofocus,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 border:         InputBorder.none,
                 contentPadding: EdgeInsets.zero,
+                hintText:       hintText,
+                hintStyle: AppTextStyles.bodyLarge(color: s.textTertiary),
               ),
               style: AppTextStyles.bodyLarge(color: AppColorScheme.current.textPrimary),
             ),

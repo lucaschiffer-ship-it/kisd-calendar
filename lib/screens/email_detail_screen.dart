@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../config/app_theme.dart' as tokens;
+import '../services/mail_service.dart' show MailFolder;
 import '../services/service_locator.dart';
 import '../services/spaces_browser.dart';
 import '../services/theme_service.dart';
@@ -16,10 +17,14 @@ class EmailDetailScreen extends StatefulWidget {
     super.key,
     required this.message,
     required this.onReply,
+    this.folder = MailFolder.inbox,
   });
 
   final MimeMessage message;
   final void Function(MimeMessage) onReply;
+
+  /// IMAP folder the message lives in — UIDs are only valid per folder.
+  final MailFolder folder;
 
   @override
   State<EmailDetailScreen> createState() => _EmailDetailScreenState();
@@ -36,10 +41,11 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
   }
 
   Future<void> _load() async {
-    unawaited(mailService.markAsRead(widget.message));
+    unawaited(mailService.markAsRead(widget.message, folder: widget.folder));
     final uid = widget.message.uid;
     if (uid != null) {
-      final full = await mailService.fetchFullMessage(uid);
+      final full =
+          await mailService.fetchFullMessage(uid, folder: widget.folder);
       if (mounted) setState(() { _full = full; _loading = false; });
     } else {
       if (mounted) setState(() { _full = widget.message; _loading = false; });
@@ -84,7 +90,8 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
             icon: Icon(CupertinoIcons.delete,
                 color: tokens.AppThemeTokens.secondaryTextColor),
             onPressed: () {
-              mailService.deleteMessage(widget.message);
+              mailService.deleteMessage(widget.message,
+                  folder: widget.folder);
               Navigator.pop(context);
             },
           ),
@@ -202,6 +209,7 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
                 onClose: () => nav.push(CupertinoPageRoute<void>(
                   builder: (_) => EmailDetailScreen(
                     message: msg,
+                    folder: widget.folder,
                     onReply: onReply,
                   ),
                 )),
@@ -327,7 +335,8 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
               label: 'Delete',
               color: s.danger,
               onTap: () {
-                mailService.deleteMessage(widget.message);
+                mailService.deleteMessage(widget.message,
+                    folder: widget.folder);
                 Navigator.pop(context);
               },
             ),

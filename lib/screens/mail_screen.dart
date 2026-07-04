@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../config/app_theme.dart' as tokens;
+import '../services/mail_service.dart' show MailFolder;
 import '../services/service_locator.dart';
 import '../services/theme_service.dart';
 import '../theme/tokens.dart';
@@ -13,7 +14,7 @@ import 'compose_screen.dart';
 import 'email_detail_screen.dart';
 import 'settings_screen.dart';
 
-enum _MailFilter { all, unread, flagged, trash }
+enum _MailFilter { all, unread, drafts, sent, trash }
 
 class MailScreen extends StatefulWidget {
   const MailScreen({super.key});
@@ -29,6 +30,8 @@ class _MailScreenState extends State<MailScreen>
 
   _MailFilter _filter = _MailFilter.all;
   bool _trashFetchTriggered = false;
+  bool _sentFetchTriggered = false;
+  bool _draftsFetchTriggered = false;
   bool _reloadDone = false;
   final _searchCtrl = TextEditingController();
   String _searchQuery = '';
@@ -75,10 +78,21 @@ class _MailScreenState extends State<MailScreen>
     );
   }
 
+  // The IMAP folder backing the currently selected filter tab.
+  MailFolder get _currentFolder => switch (_filter) {
+        _MailFilter.trash  => MailFolder.trash,
+        _MailFilter.sent   => MailFolder.sent,
+        _MailFilter.drafts => MailFolder.drafts,
+        _                  => MailFolder.inbox,
+      };
+
   List<MimeMessage> get _filtered {
-    var msgs = _filter == _MailFilter.trash
-        ? mailService.trashedMessages.toList()
-        : mailService.messages.toList();
+    var msgs = switch (_filter) {
+      _MailFilter.trash  => mailService.trashedMessages.toList(),
+      _MailFilter.sent   => mailService.sentMessages.toList(),
+      _MailFilter.drafts => mailService.draftMessages.toList(),
+      _                  => mailService.messages.toList(),
+    };
     if (_searchQuery.isNotEmpty) {
       final q = _searchQuery.toLowerCase();
       msgs = msgs.where((m) {
@@ -90,9 +104,7 @@ class _MailScreenState extends State<MailScreen>
     }
     return switch (_filter) {
       _MailFilter.unread   => msgs.where((m) => !m.isSeen).toList(),
-      _MailFilter.flagged => msgs.where((m) => m.isFlagged).toList(),
-      _MailFilter.trash   => msgs,
-      _MailFilter.all     => msgs,
+      _ => msgs,
     };
   }
 
@@ -111,12 +123,18 @@ class _MailScreenState extends State<MailScreen>
   Widget _buildContent() {
     final s = AppColorScheme.current;
     final isTrashTab = _filter == _MailFilter.trash;
-    final loading = isTrashTab
-        ? mailService.isFetchingTrash
-        : (mailService.isConnecting || mailService.isFetching);
-    final hasData = isTrashTab
-        ? mailService.trashedMessages.isNotEmpty
-        : mailService.messages.isNotEmpty;
+    final loading = switch (_filter) {
+      _MailFilter.trash  => mailService.isFetchingTrash,
+      _MailFilter.sent   => mailService.isFetchingSent,
+      _MailFilter.drafts => mailService.isFetchingDrafts,
+      _ => mailService.isConnecting || mailService.isFetching,
+    };
+    final hasData = switch (_filter) {
+      _MailFilter.trash  => mailService.trashedMessages.isNotEmpty,
+      _MailFilter.sent   => mailService.sentMessages.isNotEmpty,
+      _MailFilter.drafts => mailService.draftMessages.isNotEmpty,
+      _ => mailService.messages.isNotEmpty,
+    };
     final error = mailService.connectionError;
 
     if (loading && !hasData) {
@@ -286,10 +304,29 @@ class _MailScreenState extends State<MailScreen>
                       ),
                       const SizedBox(width: 8),
                       _FilterChip(
-                        label: 'Flagged',
-                        selected: _filter == _MailFilter.flagged,
-                        onTap: () =>
-                            setState(() => _filter = _MailFilter.flagged),
+                        label: 'Drafts',
+                        selected: _filter == _MailFilter.drafts,
+                        onTap: () {
+                          setState(() => _filter = _MailFilter.drafts);
+                          if (!_draftsFetchTriggered) {
+                            _draftsFetchTriggered = true;
+                            mailService.fetchDrafts();
+                          }
+                        },
+                        radius: radius,
+                        glass: glass,
+                      ),
+                      const SizedBox(width: 8),
+                      _FilterChip(
+                        label: 'Sent',
+                        selected: _filter == _MailFilter.sent,
+                        onTap: () {
+                          setState(() => _filter = _MailFilter.sent);
+                          if (!_sentFetchTriggered) {
+                            _sentFetchTriggered = true;
+                            mailService.fetchSent();
+                          }
+                        },
                         radius: radius,
                         glass: glass,
                       ),
@@ -332,15 +369,27 @@ class _MailScreenState extends State<MailScreen>
       children: [
         RefreshIndicator(
           color: s.accent,
-          onRefresh: () => _filter == _MailFilter.trash
-              ? mailService.fetchTrash()
-              : mailService.reloadInbox(),
+          onRefresh: () => switch (_filter) {
+            _MailFilter.trash  => mailService.fetchTrash(),
+            _MailFilter.sent   => mailService.fetchSent(),
+            _MailFilter.drafts => mailService.fetchDrafts(),
+            _ => mailService.reloadInbox(),
+          },
           child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
               SliverPadding(padding: EdgeInsets.only(top: headerH)),
               if (!hasData)
-                const SliverFillRemaining(child: _EmptyState())
+                SliverFillRemaining(
+                  child: _EmptyState(
+                    subtitle: switch (_filter) {
+                      _MailFilter.drafts => 'No drafts.',
+                      _MailFilter.sent   => 'No sent mail.',
+                      _MailFilter.trash  => 'Trash is empty.',
+                      _ => 'Your inbox is empty.',
+                    },
+                  ),
+                )
               else if (filtered.isEmpty)
                 SliverFillRemaining(
                   child: Center(
@@ -364,23 +413,30 @@ class _MailScreenState extends State<MailScreen>
                         key: ValueKey(
                             'email_${msg.uid ?? msg.sequenceId ?? msg.hashCode}'),
                         message: msg,
-                        onTap: () => Navigator.push<void>(
-                          context,
-                          CupertinoPageRoute(
-                            builder: (_) => EmailDetailScreen(
-                              message: msg,
-                              onReply: (m) => openCompose(replyTo: m),
+                        onTap: () {
+                          final folder = _currentFolder;
+                          Navigator.push<void>(
+                            context,
+                            CupertinoPageRoute(
+                              builder: (_) => EmailDetailScreen(
+                                message: msg,
+                                folder: folder,
+                                onReply: (m) => openCompose(replyTo: m),
+                              ),
                             ),
-                          ),
-                        ),
-                        onDelete: () => mailService.deleteMessage(msg),
+                          );
+                        },
+                        onDelete: () => mailService.deleteMessage(msg,
+                            folder: _currentFolder),
                         isArchiveItem: isTrashTab,
                         onRestore: () => mailService.restoreFromTrash(msg),
                         onToggleRead: () {
                           if (msg.isSeen) {
-                            mailService.markAsUnread(msg);
+                            mailService.markAsUnread(msg,
+                                folder: _currentFolder);
                           } else {
-                            mailService.markAsRead(msg);
+                            mailService.markAsRead(msg,
+                                folder: _currentFolder);
                           }
                         },
                       );
@@ -757,7 +813,9 @@ class _EmailCard extends StatelessWidget {
 // ── Empty state ───────────────────────────────────────────────────────────────
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState();
+  const _EmptyState({this.subtitle = 'Your inbox is empty.'});
+
+  final String subtitle;
 
   @override
   Widget build(BuildContext context) {
@@ -775,7 +833,7 @@ class _EmptyState extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            'Your inbox is empty.',
+            subtitle,
             style: AppTextStyles.body(
                 color: tokens.AppThemeTokens.secondaryTextColor),
           ),

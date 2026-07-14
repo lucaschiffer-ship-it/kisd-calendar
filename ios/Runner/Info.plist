@@ -55,7 +55,11 @@
 	<string>KISD Calendar benötigt vollen Kalenderzugriff, um Kurstermine zu schreiben und zu verwalten.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoads</key>
+		<!-- ATS stays fully enforced for app-level networking (mensa API,
+		     mail, SAML posts). Only content rendered *inside* the Spaces
+		     browser WebView may load non-ATS resources (mixed-content pages
+		     linked from courses). -->
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
 		<true/>
 	</dict>
 	<key>UILaunchStoryboardName</key>

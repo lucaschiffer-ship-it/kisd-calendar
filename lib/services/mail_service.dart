@@ -7,6 +7,12 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 /// Which IMAP folder a message lives in — used for folder-aware operations.
 enum MailFolder { inbox, drafts, sent, trash }
 
+// Mail diagnostics include addresses and server responses — release builds
+// log nothing to the device console.
+void _log(String message) {
+  if (kDebugMode) debugPrint(message);
+}
+
 class MailService extends ChangeNotifier {
   static const _imapHost = 'imap.intranet.fh-koeln.de';
   static const _imapPort = 993;
@@ -15,7 +21,13 @@ class MailService extends ChangeNotifier {
   static const _smtpResponseTimeout = Duration(seconds: 30);
   static const _emailStorageKey = 'kisd_email';
 
-  final _storage = const FlutterSecureStorage();
+  // Must match LoginService's options — both services share the credential
+  // keys, and iOS Keychain lookups are scoped by these attributes.
+  final _storage = const FlutterSecureStorage(
+    iOptions: IOSOptions(
+      accessibility: KeychainAccessibility.first_unlock_this_device,
+    ),
+  );
 
   ImapClient? _imap;
   bool _isConnected = false;
@@ -78,17 +90,17 @@ class MailService extends ChangeNotifier {
       }
       _cachedUsername = username;
 
-      print('[mail] connecting to $_imapHost...');
+      _log('[mail] connecting to $_imapHost...');
       _imap?.disconnect();
       _imap = ImapClient(isLogEnabled: false);
       await _imap!.connectToServer(_imapHost, _imapPort, isSecure: true);
       await _imap!.login(username, password);
       _isConnected = true;
       _connectionError = null;
-      print('[mail] connected — fetching inbox');
+      _log('[mail] connected — fetching inbox');
       return true;
     } catch (e) {
-      print('[mail] error: $e');
+      _log('[mail] error: $e');
       _isConnected = false;
       _imap?.disconnect();
       _imap = null;
@@ -98,9 +110,9 @@ class MailService extends ChangeNotifier {
   }
 
   Future<void> reloadInbox() async {
-    print('[mail] manual reload triggered');
+    _log('[mail] manual reload triggered');
     await fetchInbox();
-    print('[mail] fetched ${_messages.length} messages after reload');
+    _log('[mail] fetched ${_messages.length} messages after reload');
   }
 
   Future<List<MimeMessage>> fetchInbox({int limit = 50}) async {
@@ -121,10 +133,10 @@ class MailService extends ChangeNotifier {
       );
       _messages = result.messages.reversed.toList();
       final unread = unreadCount;
-      print('[mail] fetched ${_messages.length} messages ($unread unread)');
+      _log('[mail] fetched ${_messages.length} messages ($unread unread)');
       _unreadController.add(unread);
     } catch (e) {
-      print('[mail] error: $e');
+      _log('[mail] error: $e');
       _isConnected = false;
       _imap?.disconnect();
       _imap = null;
@@ -175,7 +187,7 @@ class MailService extends ChangeNotifier {
       final result = await _imap!.uidFetchMessage(uid, 'BODY[]');
       return result.messages.isNotEmpty ? result.messages.first : null;
     } catch (e) {
-      print('[mail] error: $e');
+      _log('[mail] error: $e');
       _isConnected = false;
       _imap?.disconnect();
       _imap = null;
@@ -214,7 +226,7 @@ class MailService extends ChangeNotifier {
     }
     if (from != null) await setAccountEmail(from);
 
-    print('[mail] sending email to $to (from $fromEmail)');
+    _log('[mail] sending email to $to (from $fromEmail)');
     final smtp = SmtpClient('fh-koeln.de', isLogEnabled: kDebugMode);
     try {
       // enough_mail's SMTP commands await the server with no timeout of
@@ -234,10 +246,10 @@ class MailService extends ChangeNotifier {
           await smtp.sendMessage(message).timeout(_smtpResponseTimeout);
       // The acceptance line carries the server's queue ID — the proof the
       // message entered the mail system, and the handle Campus IT can trace.
-      print('[mail] smtp accepted: ${response.code} ${response.message}');
+      _log('[mail] smtp accepted: ${response.code} ${response.message}');
       await _appendToSent(message);
     } catch (e) {
-      print('[mail] error: $e');
+      _log('[mail] error: $e');
       rethrow;
     } finally {
       try {
@@ -264,7 +276,7 @@ class MailService extends ChangeNotifier {
       // A Campus-ID identity (e.g. lschiff9@fh-koeln.de — webmail's broken
       // default, mail from it is accepted and then dropped) or a role
       // address (noreply@…) is never this account. Discard and re-detect.
-      print('[mail] discarding cached invalid sender $cached');
+      _log('[mail] discarding cached invalid sender $cached');
       await _storage.delete(key: _emailStorageKey);
     }
 
@@ -283,7 +295,7 @@ class MailService extends ChangeNotifier {
             ..addAll(m.cc ?? const []);
         }
       } catch (e) {
-        print('[mail] account email lookup failed: $e');
+        _log('[mail] account email lookup failed: $e');
       }
     }
 
@@ -291,7 +303,7 @@ class MailService extends ChangeNotifier {
         sentFrom: sentFrom,
         inboxRecipients: inboxRecipients,
         username: username);
-    if (email != null) print('[mail] detected account email: $email');
+    if (email != null) _log('[mail] detected account email: $email');
     // Not persisted here: detection is only a prefill. The address is stored
     // once the user sends with it (setAccountEmail), i.e. after they saw it.
     return email;
@@ -303,7 +315,7 @@ class MailService extends ChangeNotifier {
     final current = await _storage.read(key: _emailStorageKey);
     if (current == normalized) return;
     await _storage.write(key: _emailStorageKey, value: normalized);
-    print('[mail] account email set to $normalized');
+    _log('[mail] account email set to $normalized');
   }
 
   /// True when [email]'s local part is the login's Campus ID — webmail's
@@ -409,9 +421,9 @@ class MailService extends ChangeNotifier {
       if (sent == null) return;
       await _imap!.appendMessage(message,
           targetMailbox: sent, flags: [r'\Seen']);
-      print('[mail] appended sent copy to ${sent.path}');
+      _log('[mail] appended sent copy to ${sent.path}');
     } catch (e) {
-      print('[mail] could not append to sent folder: $e');
+      _log('[mail] could not append to sent folder: $e');
     }
   }
 
@@ -428,7 +440,7 @@ class MailService extends ChangeNotifier {
       final trash = await _resolveTrashMailbox();
       if (!await _selectFolder(folder)) return;
       if (trash == null) {
-        print('[mail] deleteMessage: no trash folder — expunging instead');
+        _log('[mail] deleteMessage: no trash folder — expunging instead');
         final seq = MessageSequence.fromId(uid, isUid: true);
         await _imap!.uidMarkDeleted(seq);
         await _imap!.uidExpunge(seq);
@@ -436,12 +448,12 @@ class MailService extends ChangeNotifier {
         final seq = MessageSequence.fromId(uid, isUid: true);
         try {
           await _imap!.uidMove(seq, targetMailbox: trash);
-          print('[mail] moved $uid to trash via MOVE');
+          _log('[mail] moved $uid to trash via MOVE');
         } catch (_) {
           await _imap!.uidCopy(seq, targetMailbox: trash);
           await _imap!.uidMarkDeleted(seq);
           await _imap!.uidExpunge(seq);
-          print('[mail] moved $uid to trash via COPY+DELETE');
+          _log('[mail] moved $uid to trash via COPY+DELETE');
         }
       }
       _mutableListFor(folder).removeWhere((m) => m.uid == uid);
@@ -450,7 +462,7 @@ class MailService extends ChangeNotifier {
       // Refresh trash in background so the deleted message appears immediately.
       unawaited(fetchTrash());
     } catch (e) {
-      print('[mail] deleteMessage error: $e');
+      _log('[mail] deleteMessage error: $e');
     }
   }
 
@@ -469,7 +481,7 @@ class MailService extends ChangeNotifier {
       _unreadController.add(unreadCount);
       notifyListeners();
     } catch (e) {
-      print('[mail] error: $e');
+      _log('[mail] error: $e');
     }
   }
 
@@ -488,7 +500,7 @@ class MailService extends ChangeNotifier {
       _unreadController.add(unreadCount);
       notifyListeners();
     } catch (e) {
-      print('[mail] error: $e');
+      _log('[mail] error: $e');
     }
   }
 
@@ -503,7 +515,7 @@ class MailService extends ChangeNotifier {
         _trashMailbox = mailboxes.firstWhere(
           (mb) => mb.flags.contains(MailboxFlag.trash),
         );
-        print('[mail] found trash folder by flag: ${_trashMailbox!.path}');
+        _log('[mail] found trash folder by flag: ${_trashMailbox!.path}');
         return _trashMailbox;
       } on StateError {
         // No \Trash flag — fall through to name matching.
@@ -520,7 +532,7 @@ class MailService extends ChangeNotifier {
                 mb.name.toLowerCase() == name.toLowerCase() ||
                 mb.path.toLowerCase() == name.toLowerCase(),
           );
-          print('[mail] found trash folder by name: ${_trashMailbox!.path}');
+          _log('[mail] found trash folder by name: ${_trashMailbox!.path}');
           return _trashMailbox;
         } on StateError {
           continue;
@@ -528,12 +540,12 @@ class MailService extends ChangeNotifier {
       }
 
       // No matching folder — create one.
-      print('[mail] no trash folder found (available: '
+      _log('[mail] no trash folder found (available: '
           '${mailboxes.map((m) => m.name).join(', ')}), creating "Trash"');
       _trashMailbox = await _imap!.createMailbox('Trash');
-      print('[mail] created trash folder: ${_trashMailbox!.path}');
+      _log('[mail] created trash folder: ${_trashMailbox!.path}');
     } catch (e) {
-      print('[mail] could not resolve trash folder: $e');
+      _log('[mail] could not resolve trash folder: $e');
     }
     return _trashMailbox;
   }
@@ -547,7 +559,7 @@ class MailService extends ChangeNotifier {
     try {
       final trash = _trashMailbox ?? await _resolveTrashMailbox();
       if (trash == null) {
-        print('[mail] restoreFromTrash: no trash folder found');
+        _log('[mail] restoreFromTrash: no trash folder found');
         return;
       }
       // Select inbox to get its Mailbox reference, then switch to trash to operate.
@@ -556,17 +568,17 @@ class MailService extends ChangeNotifier {
       final seq = MessageSequence.fromId(uid, isUid: true);
       try {
         await _imap!.uidMove(seq, targetMailbox: inboxMailbox);
-        print('[mail] restored $uid from trash via MOVE');
+        _log('[mail] restored $uid from trash via MOVE');
       } catch (_) {
         await _imap!.uidCopy(seq, targetMailbox: inboxMailbox);
         await _imap!.uidMarkDeleted(seq);
         await _imap!.uidExpunge(seq);
-        print('[mail] restored $uid from trash via COPY+DELETE');
+        _log('[mail] restored $uid from trash via COPY+DELETE');
       }
       _trashedMessages.removeWhere((m) => m.uid == uid);
       notifyListeners();
     } catch (e) {
-      print('[mail] restoreFromTrash error: $e');
+      _log('[mail] restoreFromTrash error: $e');
     }
   }
 
@@ -580,7 +592,7 @@ class MailService extends ChangeNotifier {
     try {
       final trash = await _resolveTrashMailbox();
       if (trash == null) {
-        print('[mail] fetchTrash: no trash folder available');
+        _log('[mail] fetchTrash: no trash folder available');
       } else {
         await _imap!.selectMailbox(trash);
         final result = await _imap!.fetchRecentMessages(
@@ -589,10 +601,10 @@ class MailService extends ChangeNotifier {
           responseTimeout: const Duration(seconds: 90),
         );
         _trashedMessages = result.messages.reversed.toList();
-        print('[mail] fetched ${_trashedMessages.length} trashed messages');
+        _log('[mail] fetched ${_trashedMessages.length} trashed messages');
       }
     } catch (e) {
-      print('[mail] fetchTrash error: $e');
+      _log('[mail] fetchTrash error: $e');
       _isConnected = false;
       _imap?.disconnect();
       _imap = null;
@@ -618,7 +630,7 @@ class MailService extends ChangeNotifier {
         final mb = mailboxes.firstWhere(
           (mb) => mb.flags.contains(flag),
         );
-        print('[mail] found $label folder by flag: ${mb.path}');
+        _log('[mail] found $label folder by flag: ${mb.path}');
         return mb;
       } on StateError {
         // No special-use flag — fall through to name matching.
@@ -631,17 +643,17 @@ class MailService extends ChangeNotifier {
                 mb.name.toLowerCase() == name.toLowerCase() ||
                 mb.path.toLowerCase() == name.toLowerCase(),
           );
-          print('[mail] found $label folder by name: ${mb.path}');
+          _log('[mail] found $label folder by name: ${mb.path}');
           return mb;
         } on StateError {
           continue;
         }
       }
 
-      print('[mail] no $label folder found (available: '
+      _log('[mail] no $label folder found (available: '
           '${mailboxes.map((m) => m.name).join(', ')})');
     } catch (e) {
-      print('[mail] could not resolve $label folder: $e');
+      _log('[mail] could not resolve $label folder: $e');
     }
     return null;
   }
@@ -679,7 +691,7 @@ class MailService extends ChangeNotifier {
     try {
       final sent = await _resolveSentMailbox();
       if (sent == null) {
-        print('[mail] fetchSent: no sent folder available');
+        _log('[mail] fetchSent: no sent folder available');
       } else {
         await _imap!.selectMailbox(sent);
         final result = await _imap!.fetchRecentMessages(
@@ -688,10 +700,10 @@ class MailService extends ChangeNotifier {
           responseTimeout: const Duration(seconds: 90),
         );
         _sentMessages = result.messages.reversed.toList();
-        print('[mail] fetched ${_sentMessages.length} sent messages');
+        _log('[mail] fetched ${_sentMessages.length} sent messages');
       }
     } catch (e) {
-      print('[mail] fetchSent error: $e');
+      _log('[mail] fetchSent error: $e');
       _isConnected = false;
       _imap?.disconnect();
       _imap = null;
@@ -713,7 +725,7 @@ class MailService extends ChangeNotifier {
     try {
       final drafts = await _resolveDraftsMailbox();
       if (drafts == null) {
-        print('[mail] fetchDrafts: no drafts folder available');
+        _log('[mail] fetchDrafts: no drafts folder available');
       } else {
         await _imap!.selectMailbox(drafts);
         final result = await _imap!.fetchRecentMessages(
@@ -722,10 +734,10 @@ class MailService extends ChangeNotifier {
           responseTimeout: const Duration(seconds: 90),
         );
         _draftMessages = result.messages.reversed.toList();
-        print('[mail] fetched ${_draftMessages.length} draft messages');
+        _log('[mail] fetched ${_draftMessages.length} draft messages');
       }
     } catch (e) {
-      print('[mail] fetchDrafts error: $e');
+      _log('[mail] fetchDrafts error: $e');
       _isConnected = false;
       _imap?.disconnect();
       _imap = null;

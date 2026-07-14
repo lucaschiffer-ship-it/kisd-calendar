@@ -79,6 +79,9 @@ flutter:
   assets:
     - assets/clock.html
     - assets/images/
+    # Bundled Inter + Space Grotesk (OFL). google_fonts loads these instead of
+    # fetching from Google's CDN — runtime fetching is disabled in main().
+    - google_fonts/
 
   # To add assets to your application, add an assets section, like this:
   # assets:
@@ -109,4 +112,4 @@ flutter:
   #         weight: 700
   #
   # For details regarding fonts from package dependencies,
-  # see https://flutter.dev/to/font-from-package
+# see https://flutter.dev/to/font-from-package

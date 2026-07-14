@@ -1,13 +1,19 @@
 import 'dart:async' show Completer, Timer, TimeoutException;
 import 'dart:collection';
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'spaces_theme.dart';
+
+// Flow diagnostics (URLs, cookie names, form structure) must never reach the
+// device console of an end user's phone — release builds log nothing.
+void _log(String message) {
+  if (kDebugMode) debugPrint(message);
+}
 
 class LoginService extends ChangeNotifier {
   static const _keyUser = 'kisd_username';
@@ -23,7 +29,14 @@ class LoginService extends ChangeNotifier {
     'mfa.th-koeln.de',
   ];
 
-  final _storage = const FlutterSecureStorage();
+  // this_device_only keeps the Campus-ID credentials out of iCloud Keychain
+  // sync and device backups — "stored only on this device" must mean exactly
+  // that. MailService pins the same options for the shared keys.
+  final _storage = const FlutterSecureStorage(
+    iOptions: IOSOptions(
+      accessibility: KeychainAccessibility.first_unlock_this_device,
+    ),
+  );
 
   bool _isLoggedIn = false;
   bool _isLoading = false;
@@ -69,7 +82,7 @@ class LoginService extends ChangeNotifier {
     if (_isLoading && _completer != null && !_completer!.isCompleted) {
       return _completer!.future;
     }
-    print('[login] starting login flow');
+    _log('[login] starting login flow');
     _cancelStallTimer();
     _isLoading = true;
     _loginFailed = false;
@@ -95,7 +108,7 @@ class LoginService extends ChangeNotifier {
     // can skip the 2FA OTP.
     await CookieManager.instance().deleteAllCookies();
     await _reinjectPersistentCookies();
-    print('[login] session cleared (persistent th-koeln cookies preserved)');
+    _log('[login] session cleared (persistent th-koeln cookies preserved)');
 
     _webView = HeadlessInAppWebView(
       initialUrlRequest: URLRequest(
@@ -134,16 +147,16 @@ class LoginService extends ChangeNotifier {
 
   void _onPageStart(InAppWebViewController ctrl, WebUri? url) {
     if (url == null) return;
-    print('[login] navigation start → ${url.toString()}');
+    _log('[login] navigation start → ${url.toString()}');
   }
 
   Future<void> _onPageLoaded(InAppWebViewController ctrl, WebUri? url) async {
     if (url == null || (_completer?.isCompleted ?? true)) return;
     final s = url.toString();
-    print('[login] landed on: $s');
+    _log('[login] landed on: $s');
 
     if (s.contains('mfa.th-koeln.de') && s.contains('oauth2/grant')) {
-      print('[login] MFA required');
+      _log('[login] MFA required');
       _cancelStallTimer(); // credentials accepted; OTP entry has no timeout
       final otp = await _promptOtp();
       if (otp == null || otp.isEmpty) { await _finish(false); return; }
@@ -157,16 +170,16 @@ class LoginService extends ChangeNotifier {
       """);
     } else if (s.contains('spaces.kisd.de/course-selection')) {
       await Future.delayed(const Duration(seconds: 2));
-      print('[login] login complete');
+      _log('[login] login complete');
       await _finish(true);
     } else if (s.contains('spaces.kisd.de') && _samlClicked && !_courseSelectionVisited) {
-      print('[login] post-auth on spaces — navigating to course-selection');
+      _log('[login] post-auth on spaces — navigating to course-selection');
       _courseSelectionVisited = true;
       await ctrl.loadUrl(
         urlRequest: URLRequest(url: WebUri('https://spaces.kisd.de/course-selection/')),
       );
     } else if (s.contains('spaces.kisd.de') && !_samlClicked) {
-      print('[login] reached spaces.kisd.de: true');
+      _log('[login] reached spaces.kisd.de: true');
       _samlClicked = true;
       // Tick WordPress "stay logged in" (remember-me) before redirecting to TH
       // Login so the WP session cookie is long-lived (~14d) instead of ~2d.
@@ -180,7 +193,7 @@ class LoginService extends ChangeNotifier {
       """);
     } else if (s.contains('login.th-koeln.de') && !_credentialsFilled) {
       _credentialsFilled = true;
-      print('[login] waiting for credential form (JS-rendered)...');
+      _log('[login] waiting for credential form (JS-rendered)...');
 
       try {
         // Poll for the form — the page renders it asynchronously after onLoadStop.
@@ -222,7 +235,9 @@ class LoginService extends ChangeNotifier {
         if (asyncResult?.value == null) throw Exception('callAsyncJavaScript returned null');
 
         final parsed = json.decode(asyncResult!.value.toString()) as Map<String, dynamic>;
-        print('[login] credentials injected — parsed: $parsed');
+        // Never log `parsed` itself — its `data` map carries the plaintext
+        // Campus-ID username and password.
+        _log('[login] credentials injected — action: ${parsed['action']}');
 
         if (parsed.containsKey('error')) {
           throw Exception('form: ${parsed['error']} | body=${parsed['body']}');
@@ -234,7 +249,7 @@ class LoginService extends ChangeNotifier {
             .map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value.toString())}')
             .join('&');
 
-        print('[login] submitting form via POST to $actionUrl');
+        _log('[login] submitting form via POST to $actionUrl');
         await ctrl.loadUrl(
           urlRequest: URLRequest(
             url: WebUri(actionUrl),
@@ -243,16 +258,16 @@ class LoginService extends ChangeNotifier {
             headers: {'Content-Type': 'application/x-www-form-urlencoded'},
           ),
         );
-        print('[login] form submitted');
+        _log('[login] form submitted');
         _credentialsSubmitted = true;
         _armStallTimer();
 
       } on TimeoutException {
-        print('[login] error: credential form polling timed out');
+        _log('[login] error: credential form polling timed out');
         await _finish(false);
         return;
       } catch (e) {
-        print('[login] error: $e');
+        _log('[login] error: $e');
         await _finish(false);
         return;
       }
@@ -275,10 +290,10 @@ class LoginService extends ChangeNotifier {
         formPresent = r?.value == true;
       } catch (_) {}
       if (formPresent) {
-        print('[login] credentials rejected — login failed');
+        _log('[login] credentials rejected — login failed');
         await _finish(false);
       } else {
-        print('[login] option=credential page without form — ignoring (watchdog active)');
+        _log('[login] option=credential page without form — ignoring (watchdog active)');
       }
     } else if (s.contains('login.th-koeln.de') &&
         !s.contains('option=credential') &&
@@ -290,7 +305,7 @@ class LoginService extends ChangeNotifier {
       // credential form. The sid=0&sid=0 intermediate pages self-navigate via
       // their own JS so we must NOT touch those (doing so causes -999 races).
       _samlContinuationAttempts++;
-      print('[login] SAML assertion page (attempt $_samlContinuationAttempts) — polling for form');
+      _log('[login] SAML assertion page (attempt $_samlContinuationAttempts) — polling for form');
 
       try {
         final asyncResult = await ctrl.callAsyncJavaScript(
@@ -332,15 +347,17 @@ class LoginService extends ChangeNotifier {
         ).timeout(const Duration(seconds: 12));
 
         if (asyncResult?.value == null) {
-          print('[login] SAML continuation: no result, continuing');
+          _log('[login] SAML continuation: no result, continuing');
           return;
         }
 
         final parsed = json.decode(asyncResult!.value.toString()) as Map<String, dynamic>;
-        print('[login] SAML continuation parsed: $parsed');
+        // Log field names only — `data` holds the signed SAMLResponse payload.
+        _log('[login] SAML continuation form: ${parsed['action']} '
+            'fields: ${(parsed['data'] as Map<String, dynamic>?)?.keys.toList()}');
 
         if (parsed.containsKey('error')) {
-          print('[login] SAML continuation: ${parsed['error']} | body=${parsed['body']}');
+          _log('[login] SAML continuation: ${parsed['error']} | body=${parsed['body']}');
           return;
         }
 
@@ -365,7 +382,7 @@ class LoginService extends ChangeNotifier {
             .map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value.toString())}')
             .join('&');
 
-        print('[login] POSTing SAML continuation to $actionUrl');
+        _log('[login] POSTing SAML continuation to $actionUrl');
         await ctrl.loadUrl(
           urlRequest: URLRequest(
             url: WebUri(actionUrl),
@@ -375,12 +392,12 @@ class LoginService extends ChangeNotifier {
           ),
         );
       } on TimeoutException {
-        print('[login] SAML continuation timed out, continuing');
+        _log('[login] SAML continuation timed out, continuing');
       } catch (e) {
-        print('[login] SAML continuation error: $e');
+        _log('[login] SAML continuation error: $e');
       }
     } else {
-      print('[login] unhandled URL — no action');
+      _log('[login] unhandled URL — no action');
     }
   }
 
@@ -390,7 +407,7 @@ class LoginService extends ChangeNotifier {
     WebResourceError err,
   ) {
     if (req.isForMainFrame == true) {
-      print('[login] error: ${err.description}');
+      _log('[login] error: ${err.description}');
       _finish(false);
     }
   }
@@ -434,9 +451,9 @@ class LoginService extends ChangeNotifier {
         """,
         arguments: {'pat': regexSource},
       ).timeout(const Duration(seconds: 5));
-      print('[login] $tag matched: ${r?.value}');
+      _log('[login] $tag matched: ${r?.value}');
     } catch (e) {
-      print('[login] $tag opt-in skipped: $e');
+      _log('[login] $tag opt-in skipped: $e');
     }
   }
 
@@ -472,11 +489,11 @@ class LoginService extends ChangeNotifier {
         if (affirmative) { affirmative.click(); clicked = true; }
         return JSON.stringify({clicked: clicked, controls: dump});
       """).timeout(const Duration(seconds: 8));
-      print('[login] trust-device consent: ${r?.value}');
+      _log('[login] trust-device consent: ${r?.value}');
       final m = json.decode(r!.value.toString()) as Map<String, dynamic>;
       return m['clicked'] == true;
     } catch (e) {
-      print('[login] trust-device consent error: $e');
+      _log('[login] trust-device consent error: $e');
       return false;
     }
   }
@@ -511,7 +528,7 @@ class LoginService extends ChangeNotifier {
       } catch (_) {}
     }
     if (count > 0) {
-      print('[login] preserved $count persistent th-koeln cookie(s) through clear');
+      _log('[login] preserved $count persistent th-koeln cookie(s) through clear');
     }
   }
 
@@ -523,7 +540,7 @@ class LoginService extends ChangeNotifier {
     _stallTimer?.cancel();
     _stallTimer = Timer(const Duration(seconds: 20), () {
       if (!(_completer?.isCompleted ?? true)) {
-        print('[login] stalled after credential submit — failing');
+        _log('[login] stalled after credential submit — failing');
         _finish(false);
       }
     });
@@ -575,12 +592,12 @@ class LoginService extends ChangeNotifier {
   Future<bool> _tryRestoreSession() async {
     final cookiesJson = await _storage.read(key: _keyCookies);
     if (cookiesJson == null) {
-      print('[login] no saved session — running full login flow');
+      _log('[login] no saved session — running full login flow');
       return false;
     }
 
     final list = json.decode(cookiesJson) as List;
-    print('[login] restoring ${list.length} saved cookies');
+    _log('[login] restoring ${list.length} saved cookies');
 
     final mgr = CookieManager.instance();
     for (final c in list) {
@@ -606,9 +623,9 @@ class LoginService extends ChangeNotifier {
 
     final valid = await _checkSession();
     if (valid) {
-      print('[login] session still valid — skipping login');
+      _log('[login] session still valid — skipping login');
     } else {
-      print('[login] session expired — running full login flow');
+      _log('[login] session expired — running full login flow');
     }
     return valid;
   }
@@ -676,10 +693,10 @@ class LoginService extends ChangeNotifier {
         // Instrumentation: surface what's actually retrievable per domain
         // (including HttpOnly SSO cookies) and their expiry, so we can confirm
         // whether the long-lived IdP session survives across launches.
-        print('[login][cookies] $domain: ${cookies.length} cookie(s)');
+        _log('[login][cookies] $domain: ${cookies.length} cookie(s)');
         for (final c in cookies) {
           final exp = c.expiresDate;
-          print('[login][cookies]   ${c.name} '
+          _log('[login][cookies]   ${c.name} '
               'domain=${c.domain} httpOnly=${c.isHttpOnly} '
               'expires=${exp != null ? DateTime.fromMillisecondsSinceEpoch(exp).toIso8601String() : 'session'}');
           // Dedup by (name, domain) — the same cookie can surface under
@@ -700,10 +717,10 @@ class LoginService extends ChangeNotifier {
       }
 
       await _storage.write(key: _keyCookies, value: json.encode(serialized));
-      print('[login] saved ${serialized.length} cookies across '
+      _log('[login] saved ${serialized.length} cookies across '
           '${_cookieDomains.length} domains');
     } catch (e) {
-      print('[login] cookie save failed: $e');
+      _log('[login] cookie save failed: $e');
     }
   }
 
@@ -717,6 +734,12 @@ class LoginService extends ChangeNotifier {
     await _storage.delete(key: _keyUser);
     await _storage.delete(key: _keyPass);
     await _storage.delete(key: _keyCookies);
+    // Written by MailService, but it must not survive an account switch.
+    await _storage.delete(key: 'kisd_email');
+    // Wipe the WebView cookie store too (incl. the IdP "trust this device"
+    // cookie) — logout must leave no usable session behind, regardless of
+    // which UI path triggered it.
+    await CookieManager.instance().deleteAllCookies();
     _username = null;
     _password = null;
     _isLoggedIn = false;

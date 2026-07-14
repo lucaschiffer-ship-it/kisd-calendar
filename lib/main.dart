@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/calendar_service.dart';
@@ -10,6 +12,9 @@ import 'theme/tokens.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Fonts are bundled under google_fonts/ — never fetch from Google's CDN at
+  // runtime, so the app makes no third-party connections carrying device data.
+  GoogleFonts.config.allowRuntimeFetching = false;
   await ThemeService.instance.init();
   await loginService.initialize();
   CalendarService.instance.performStartupCleanup().ignore();
@@ -76,11 +81,13 @@ class _AppRootState extends State<AppRoot> {
     loginService.addListener(_rebuild);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final hasCreds = loginService.hasStoredCredentials;
-      final cookieCount = await _countCookies();
       final willRun = hasCreds && !loginService.isLoggedIn;
-      print('[startup] credentials present in secure storage: $hasCreds');
-      print('[startup] cookies restored: $cookieCount cookies');
-      print('[startup] running login flow: $willRun');
+      if (kDebugMode) {
+        final cookieCount = await _countCookies();
+        debugPrint('[startup] credentials present in secure storage: $hasCreds');
+        debugPrint('[startup] cookies restored: $cookieCount cookies');
+        debugPrint('[startup] running login flow: $willRun');
+      }
       if (willRun) loginService.loginWithStoredCredentials().ignore();
     });
   }

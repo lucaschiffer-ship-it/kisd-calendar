@@ -1,16 +1,29 @@
-MIT License
+KISD Calendar Source-Available License
 
-Copyright (c) 2026 Luca Schiffer
+Copyright (c) 2026 Luca Schiffer. All rights reserved.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+of this software and associated documentation files (the "Software"), to:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. view and study the source code;
+2. download, compile, and run the Software for personal, non-commercial use;
+3. modify the Software for personal, non-commercial use.
+
+The following are expressly NOT permitted without prior written permission
+from the copyright holder:
+
+1. distributing, publishing, or otherwise sharing the Software or any
+   modified version of it, in source or binary form;
+2. sublicensing the Software or granting any rights in it to third parties;
+3. selling the Software, charging for access to it, or using it — in
+   original or modified form — for any commercial purpose or monetary gain.
+
+All rights not expressly granted above are reserved by the copyright holder.
+
+This license does not cover the bundled third-party components, which remain
+under their own licenses (e.g. the Inter and Space Grotesk fonts under the
+SIL Open Font License, see google_fonts/, and the Dart/Flutter package
+dependencies listed in pubspec.yaml).
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,

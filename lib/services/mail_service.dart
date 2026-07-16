@@ -273,7 +273,7 @@ class MailService extends ChangeNotifier {
       if (!isCampusIdAddress(cached, username) && !isRoleAddress(cached)) {
         return cached;
       }
-      // A Campus-ID identity (e.g. lschiff9@fh-koeln.de — webmail's broken
+      // A Campus-ID identity (e.g. mmuster1@fh-koeln.de — webmail's broken
       // default, mail from it is accepted and then dropped) or a role
       // address (noreply@…) is never this account. Discard and re-detect.
       _log('[mail] discarding cached invalid sender $cached');

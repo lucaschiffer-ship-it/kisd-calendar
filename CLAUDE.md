@@ -109,15 +109,6 @@ IMAP via `enough_mail`. Credentials reused from `LoginService` (TH Köln email).
 
 ---
 
-## GBrain Configuration (configured by /setup-gbrain)
-- Mode: local-stdio
-- Engine: pglite
-- Config file: ~/.gbrain/config.json (mode 0600)
-- Setup date: 2026-05-26
-- MCP registered: yes (user scope, `/Users/luca/.bun/bin/gbrain serve`)
-- Artifacts sync: full → https://github.com/lucaschiffer-ship-it/gstack-artifacts-luca.git
-- Current repo policy: read-write (github.com/lucaschiffer-ship-it/KISDCalendar)
-
 ## Skill routing
 
 When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.

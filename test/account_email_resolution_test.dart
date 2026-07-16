@@ -6,24 +6,24 @@ void main() {
   group('MailService.pickAccountEmail', () {
     test('prefers the From address of a sent message', () {
       final email = MailService.pickAccountEmail(
-        sentFrom: [MailAddress(null, 'Luca.Schiffer@smail.th-koeln.de')],
+        sentFrom: [MailAddress(null, 'Max.Mustermann@smail.th-koeln.de')],
         inboxRecipients: [
           MailAddress(null, 'other.person@smail.th-koeln.de'),
           MailAddress(null, 'other.person@smail.th-koeln.de'),
         ],
       );
-      expect(email, 'luca.schiffer@smail.th-koeln.de');
+      expect(email, 'max.mustermann@smail.th-koeln.de');
     });
 
     test('prefers a th-koeln sent address over a foreign one', () {
       final email = MailService.pickAccountEmail(
         sentFrom: [
           MailAddress(null, 'someone@example.com'),
-          MailAddress(null, 'luca.schiffer@smail.th-koeln.de'),
+          MailAddress(null, 'max.mustermann@smail.th-koeln.de'),
         ],
         inboxRecipients: const [],
       );
-      expect(email, 'luca.schiffer@smail.th-koeln.de');
+      expect(email, 'max.mustermann@smail.th-koeln.de');
     });
 
     test('picks the most frequent sent address, not the newest', () {
@@ -32,12 +32,12 @@ void main() {
       final email = MailService.pickAccountEmail(
         sentFrom: [
           MailAddress(null, 'wrongguess@smail.th-koeln.de'),
-          MailAddress(null, 'luca.schiffer@smail.th-koeln.de'),
-          MailAddress(null, 'luca.schiffer@smail.th-koeln.de'),
+          MailAddress(null, 'max.mustermann@smail.th-koeln.de'),
+          MailAddress(null, 'max.mustermann@smail.th-koeln.de'),
         ],
         inboxRecipients: const [],
       );
-      expect(email, 'luca.schiffer@smail.th-koeln.de');
+      expect(email, 'max.mustermann@smail.th-koeln.de');
     });
 
     test('falls back to a foreign sent address when no th-koeln one exists',
@@ -55,16 +55,16 @@ void main() {
       // must never win detection over the deliverable smail address.
       final email = MailService.pickAccountEmail(
         sentFrom: [
-          MailAddress(null, 'lschiff9@fh-koeln.de'),
-          MailAddress(null, 'lschiff9@fh-koeln.de'),
-          MailAddress(null, 'lschiff9@fh-koeln.de'),
+          MailAddress(null, 'mmuster1@fh-koeln.de'),
+          MailAddress(null, 'mmuster1@fh-koeln.de'),
+          MailAddress(null, 'mmuster1@fh-koeln.de'),
         ],
         inboxRecipients: [
-          MailAddress(null, 'luca.schiffer@smail.th-koeln.de'),
+          MailAddress(null, 'max.mustermann@smail.th-koeln.de'),
         ],
-        username: 'lschiff9',
+        username: 'mmuster1',
       );
-      expect(email, 'luca.schiffer@smail.th-koeln.de');
+      expect(email, 'max.mustermann@smail.th-koeln.de');
     });
 
     test('prefers a th-koeln inbox recipient over a foreign sent address', () {
@@ -72,10 +72,10 @@ void main() {
       final email = MailService.pickAccountEmail(
         sentFrom: [MailAddress(null, 'someone@example.com')],
         inboxRecipients: [
-          MailAddress(null, 'luca.schiffer@smail.th-koeln.de'),
+          MailAddress(null, 'max.mustermann@smail.th-koeln.de'),
         ],
       );
-      expect(email, 'luca.schiffer@smail.th-koeln.de');
+      expect(email, 'max.mustermann@smail.th-koeln.de');
     });
 
     test('never picks a noreply mass-mail recipient over the smail address',
@@ -89,10 +89,10 @@ void main() {
           MailAddress(null, 'noreply@f02.th-koeln.de'),
           MailAddress(null, 'noreply@f02.th-koeln.de'),
           MailAddress(null, 'noreply@f02.th-koeln.de'),
-          MailAddress(null, 'luca.schiffer@smail.th-koeln.de'),
+          MailAddress(null, 'max.mustermann@smail.th-koeln.de'),
         ],
       );
-      expect(email, 'luca.schiffer@smail.th-koeln.de');
+      expect(email, 'max.mustermann@smail.th-koeln.de');
     });
 
     test('prefers a smail recipient over a more frequent staff-domain one',
@@ -102,17 +102,17 @@ void main() {
         inboxRecipients: [
           MailAddress(null, 'sekretariat@f02.th-koeln.de'),
           MailAddress(null, 'sekretariat@f02.th-koeln.de'),
-          MailAddress(null, 'luca.schiffer@smail.th-koeln.de'),
+          MailAddress(null, 'max.mustermann@smail.th-koeln.de'),
         ],
       );
-      expect(email, 'luca.schiffer@smail.th-koeln.de');
+      expect(email, 'max.mustermann@smail.th-koeln.de');
     });
 
     test('returns null when only campus-id addresses exist anywhere', () {
       final email = MailService.pickAccountEmail(
-        sentFrom: [MailAddress(null, 'lschiff9@fh-koeln.de')],
-        inboxRecipients: [MailAddress(null, 'lschiff9@smail.th-koeln.de')],
-        username: 'lschiff9',
+        sentFrom: [MailAddress(null, 'mmuster1@fh-koeln.de')],
+        inboxRecipients: [MailAddress(null, 'mmuster1@smail.th-koeln.de')],
+        username: 'mmuster1',
       );
       expect(email, isNull);
     });
@@ -122,15 +122,15 @@ void main() {
       final email = MailService.pickAccountEmail(
         sentFrom: const [],
         inboxRecipients: [
-          MailAddress(null, 'luca.schiffer@smail.th-koeln.de'),
+          MailAddress(null, 'max.mustermann@smail.th-koeln.de'),
           MailAddress(null, 'classmate@smail.th-koeln.de'),
-          MailAddress(null, 'luca.schiffer@smail.th-koeln.de'),
+          MailAddress(null, 'max.mustermann@smail.th-koeln.de'),
           MailAddress(null, 'stranger@gmail.com'),
           MailAddress(null, 'stranger@gmail.com'),
           MailAddress(null, 'stranger@gmail.com'),
         ],
       );
-      expect(email, 'luca.schiffer@smail.th-koeln.de');
+      expect(email, 'max.mustermann@smail.th-koeln.de');
     });
 
     test('ignores non-th-koeln inbox recipients entirely', () {
@@ -157,26 +157,26 @@ void main() {
   group('MailService.isCampusIdAddress', () {
     test('matches the login Campus ID on any domain, case-insensitively', () {
       expect(
-          MailService.isCampusIdAddress('lschiff9@fh-koeln.de', 'lschiff9'),
+          MailService.isCampusIdAddress('mmuster1@fh-koeln.de', 'mmuster1'),
           isTrue);
       expect(
-          MailService.isCampusIdAddress('LSchiff9@fh-koeln.de', 'lschiff9'),
+          MailService.isCampusIdAddress('MMuster1@fh-koeln.de', 'mmuster1'),
           isTrue);
       expect(
           MailService.isCampusIdAddress(
-              'lschiff9@smail.th-koeln.de', 'lschiff9'),
+              'mmuster1@smail.th-koeln.de', 'mmuster1'),
           isTrue);
     });
 
     test('does not match real addresses or when username is unknown', () {
       expect(
           MailService.isCampusIdAddress(
-              'luca.schiffer@smail.th-koeln.de', 'lschiff9'),
+              'max.mustermann@smail.th-koeln.de', 'mmuster1'),
           isFalse);
-      expect(MailService.isCampusIdAddress('lschiff9@fh-koeln.de', null),
+      expect(MailService.isCampusIdAddress('mmuster1@fh-koeln.de', null),
           isFalse);
       expect(
-          MailService.isCampusIdAddress('lschiff9@fh-koeln.de', ''), isFalse);
+          MailService.isCampusIdAddress('mmuster1@fh-koeln.de', ''), isFalse);
     });
   });
 
@@ -189,7 +189,7 @@ void main() {
     });
 
     test('does not match personal addresses', () {
-      expect(MailService.isRoleAddress('luca.schiffer@smail.th-koeln.de'),
+      expect(MailService.isRoleAddress('max.mustermann@smail.th-koeln.de'),
           isFalse);
       expect(MailService.isRoleAddress('sekretariat@f02.th-koeln.de'),
           isFalse);

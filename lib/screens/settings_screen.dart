@@ -5,6 +5,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import '../services/cache_service.dart';
 import '../services/calendar_service.dart';
 import '../services/service_locator.dart';
+import 'privacy_screen.dart';
 import '../services/theme_service.dart';
 import '../theme/tokens.dart';
 
@@ -203,7 +204,33 @@ class SettingsScreen extends StatelessWidget {
             ),
           ),
 
+          // Apple guideline 5.1.1(i): the privacy policy must be reachable
+          // from inside the app, not only from the App Store listing.
           const SizedBox(height: 32),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: ListTile(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadius.input),
+              ),
+              tileColor: s.surfaceElevated,
+              leading: Icon(
+                CupertinoIcons.lock_shield,
+                color: s.textSecondary,
+              ),
+              title: Text(
+                'Privacy Policy',
+                style: AppTextStyles.bodyLarge(color: s.textPrimary)
+                    .copyWith(fontWeight: FontWeight.w500),
+              ),
+              onTap: () => Navigator.push(
+                context,
+                CupertinoPageRoute(builder: (_) => const PrivacyScreen()),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 12),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: ListTile(

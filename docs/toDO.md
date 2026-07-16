@@ -35,14 +35,27 @@ shows up → stop, report it back.
 
 Space Grotesk and Inter are now bundled; runtime fetching from Google is disabled.
 
-1. **Delete the app** from the phone (clears any previously cached fonts — this
-   is what makes the test valid).
-2. Enable **Airplane Mode**.
-3. Install & launch a fresh build.
+> ℹ️ A dev-signed install **cannot be installed/first-launched in Airplane Mode**
+> (iOS needs the network to verify the developer certificate). Do it in this order:
+
+1. **Delete the app**, then install & **launch once while online** (satisfies the
+   certificate check).
+2. **Force-quit** the app.
+3. Enable **Airplane Mode** and relaunch.
 4. Check headlines (Space Grotesk) and body text (Inter) on the list screen.
 
 **Pass =** typography looks exactly like before while offline.
 **Fail =** generic/system-looking font → the asset bundling isn't being picked up.
+
+> Note: this test is belt-and-braces. Runtime fetching is disabled *in code*
+> (`GoogleFonts.config.allowRuntimeFetching = false`), so a CDN fetch is
+> impossible — if the type looks like Space Grotesk/Inter at all (even online),
+> the bundle is already proven.
+
+> 🛠 Fixed 16 Jul: an offline relaunch used to throw you onto the login UI
+> (the background re-login treated "no network" as "login failed"). Network
+> failures now keep you in the app with cached content — retest: airplane-mode
+> relaunch must land on the HomeScreen, not the login screen.
 
 ## 3 · Spaces browser still renders everything (ATS change)
 
@@ -61,15 +74,27 @@ re-enabling `NSAllowsArbitraryLoads`.
 
 ## 4 · Logout really wipes everything
 
-`logout()` now also clears WebView cookies and the stored sender address.
+`logout()` now clears WebView cookies, WebView storage (localStorage etc.), and
+the stored sender address.
 
-1. Log in fully (incl. OTP, so a trust-device cookie exists).
+1. Log in fully.
 2. Sign out via **Settings**.
 3. Relaunch the app.
 
-**Pass =** you land on the login screen, and logging back in requires the **full
-flow including a fresh OTP** (proves the trust-device cookie was wiped).
-**Fail =** auto-login or OTP skipped right after sign-out.
+**Pass =** you land on the login screen and logging back in requires your
+**username + password** (no auto-login).
+**Fail =** the app logs you in without asking for credentials.
+
+> ⚠️ An OTP re-prompt is **NOT part of the pass criterion.** Verified on device
+> (15 Jul 2026): the TH Köln IdP can recognize a trusted device server-side
+> (device fingerprint / known network), so the OTP may be skipped even after a
+> complete local wipe. That is the IdP's own "trust this device" feature working
+> as designed — identical to Safari. Full de-trust = delete the device
+> **"KISD App"** in the TH Köln MFA portal.
+>
+> Re-verified 16 Jul with the WebView-storage wipe in place: OTP is *still*
+> skipped → the recognition is definitively server-side. This is final; no
+> further app-side change can (or needs to) affect it.
 
 ## 5 · Regression sanity pass
 
@@ -88,6 +113,13 @@ Quick once-over that the hardening broke nothing:
   sure every sentence is still true for the build you ship.
 - [ ] App Store Connect: set privacy label to **"Data Not Collected"** and the
   privacy policy URL to wherever you host `PRIVACY.md`.
+- [ ] The **in-app policy** Apple requires (guideline 5.1.1(i)) exists: Settings →
+  Privacy Policy opens a native, offline-readable screen (no URL dependency —
+  the GitHub link 404'd while the repo is private).
+- [ ] **Before App Store submission**: App Store Connect's privacy policy field
+  needs a *public URL* — make the repo public (recommended anyway) or host
+  `PRIVACY.md` on GitHub Pages / a Gist, and keep it in sync with the in-app
+  screen (`lib/screens/privacy_screen.dart`).
 - [ ] Decide on **open-sourcing the repo** — strongest possible answer to the
   Spaces admin's concern (see `docs/privacy.md`, Verdict section).
 - [ ] Consider the display name ("Kisd Calendar") — an unofficial app using the

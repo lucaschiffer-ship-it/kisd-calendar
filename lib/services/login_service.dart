@@ -65,16 +65,23 @@ class LoginService extends ChangeNotifier {
     _password = await _storage.read(key: _keyPass);
   }
 
+  // True while running an explicit login the user just typed on the
+  // LoginScreen — there, ANY failure (network too) must keep them on the
+  // login screen rather than dropping them into an empty HomeScreen.
+  bool _explicitLogin = false;
+
   Future<bool> login(String username, String password) async {
     await _storage.write(key: _keyUser, value: username);
     await _storage.write(key: _keyPass, value: password);
     _username = username;
     _password = password;
+    _explicitLogin = true;
     return _run();
   }
 
   Future<bool> loginWithStoredCredentials() async {
     if (!hasStoredCredentials) return false;
+    _explicitLogin = false;
     return _run();
   }
 
@@ -159,7 +166,11 @@ class LoginService extends ChangeNotifier {
       _log('[login] MFA required');
       _cancelStallTimer(); // credentials accepted; OTP entry has no timeout
       final otp = await _promptOtp();
-      if (otp == null || otp.isEmpty) { await _finish(false); return; }
+      if (otp == null || otp.isEmpty) {
+        // Abandoned OTP needs the user's attention — treat like a rejection.
+        await _finish(false, rejected: true);
+        return;
+      }
       // Opt into "trust this device" so a persistent mfa.th-koeln.de cookie is
       // issued and later logins can skip the OTP. Selector is heuristic; we log
       // both what matched and every checkbox seen so it can be tightened.
@@ -291,7 +302,7 @@ class LoginService extends ChangeNotifier {
       } catch (_) {}
       if (formPresent) {
         _log('[login] credentials rejected — login failed');
-        await _finish(false);
+        await _finish(false, rejected: true);
       } else {
         _log('[login] option=credential page without form — ignoring (watchdog active)');
       }
@@ -551,14 +562,19 @@ class LoginService extends ChangeNotifier {
     _stallTimer = null;
   }
 
-  Future<void> _finish(bool success) async {
+  // `rejected` marks failures where the credentials themselves are the
+  // problem (wrong password, abandoned OTP). Only those set `loginFailed`,
+  // which is what AppRoot uses to swap HomeScreen for the login UI — a mere
+  // network failure (offline launch, flaky Wi-Fi) must NOT log the user out
+  // of the app; they keep their cached content instead.
+  Future<void> _finish(bool success, {bool rejected = false}) async {
     if (_completer?.isCompleted ?? true) return;
     _cancelStallTimer();
     _isLoggedIn = success;
     _isLoading = false;
     _webView?.dispose();
     _webView = null;
-    if (!success) _loginFailed = true;
+    if (!success && (rejected || _explicitLogin)) _loginFailed = true;
     if (success) await _saveCookies();
     _completer!.complete(success);
     notifyListeners();
@@ -740,6 +756,17 @@ class LoginService extends ChangeNotifier {
     // cookie) — logout must leave no usable session behind, regardless of
     // which UI path triggered it.
     await CookieManager.instance().deleteAllCookies();
+    // Cookies aren't the whole story: the NetIQ MFA can keep a device
+    // identifier in localStorage, which survives a cookie wipe (observed on
+    // device: OTP skipped after logout despite a clean cookie store). Clear
+    // all website data as well. The IdP may still recognize the device via
+    // fingerprint/network scoring — that part is server-side; full revocation
+    // is removing "KISD App" in the TH Köln MFA portal.
+    try {
+      await WebStorageManager.instance().deleteAllData();
+    } catch (e) {
+      _log('[login] web storage wipe failed: $e');
+    }
     _username = null;
     _password = null;
     _isLoggedIn = false;

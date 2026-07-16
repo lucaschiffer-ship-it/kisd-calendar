@@ -4,6 +4,25 @@ imap_test.dart
 *_credentials*.dart
 devtools_options.yaml
 
+# Secrets & local data that must never be committed
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.key
+*.keystore
+*.jks
+*.cer
+*.certSigningRequest
+*.mobileprovision
+*.provisionprofile
+**/GoogleService-Info.plist
+**/google-services.json
+key.properties
+*.bundle
+.mailmap
+
 # Miscellaneous
 *.class
 *.log

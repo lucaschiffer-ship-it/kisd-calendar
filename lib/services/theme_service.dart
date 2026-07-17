@@ -12,7 +12,7 @@ class ThemeService {
   // Accepts 'light' or 'dark' only.
   // A persisted 'pastel' value migrates to 'dark' on first read.
   final ValueNotifier<String> currentColor   = ValueNotifier<String>('dark');
-  final ValueNotifier<bool>   glassEnabled   = ValueNotifier<bool>(false);
+  final ValueNotifier<bool>   glassEnabled   = ValueNotifier<bool>(true);
   final ValueNotifier<bool>   showKisdEvents = ValueNotifier<bool>(true);
 
   Future<void> init() async {
@@ -20,7 +20,7 @@ class ThemeService {
     final stored = prefs.getString(_colorKey) ?? 'dark';
     // Migrate pastel → dark
     currentColor.value   = stored == 'pastel' ? 'dark' : stored;
-    glassEnabled.value   = prefs.getBool(_glassKey) ?? false;
+    glassEnabled.value   = prefs.getBool(_glassKey) ?? true;
     showKisdEvents.value = prefs.getBool(_showKisdEventsKey) ?? true;
   }
 

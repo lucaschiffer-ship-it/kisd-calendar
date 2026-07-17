@@ -854,6 +854,9 @@ class _ListScreenState extends State<ListScreen>
                       ? Icon(icon, size: 15, color: color)
                       : Text(
                           label ?? '',
+                          maxLines: 1,
+                          softWrap: false,
+                          overflow: TextOverflow.visible,
                           style: AppTextStyle.label
                               .copyWith(fontSize: 13, color: color),
                         ),

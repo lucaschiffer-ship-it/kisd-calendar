@@ -934,6 +934,10 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
   late final AnimationController _closeController;
   double _closeStartProgress = 0.0;
 
+  /// Duration of the close morph over its FULL range; _startClose scales it
+  /// down by the distance the drag already covered.
+  static const Duration _kCloseDuration = Duration(milliseconds: 260);
+
   // ── Description expand (Stage 2) ─────────────────────────────────────────
   bool _descriptionExpanded = false;
 
@@ -998,7 +1002,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
 
     _closeController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 260),
+      duration: _kCloseDuration,
     );
     _closeController.addListener(() {
       setState(() {
@@ -1210,8 +1214,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
         );
         if (discard != true || !mounted) return;
       }
-      _closeStartProgress = _dragProgress;
-      _closeController.forward(from: 0);
+      _startClose();
       return;
     }
     if (!_detectChanges()) {
@@ -1448,11 +1451,25 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
   void _decideAfterDrag() {
     _dismissTriggered = true;
     if (_dragProgress > 0.35) {
-      _closeStartProgress = _dragProgress;
-      _closeController.forward(from: 0);
+      _startClose();
     } else {
       _snapBack();
     }
+  }
+
+  /// Continue the dismiss morph from wherever the drag left off. The base
+  /// duration covers the full morph; scale it by the remaining distance so a
+  /// card already pulled (almost) all the way to its smallest state pops
+  /// immediately instead of sitting frozen for the full duration.
+  void _startClose() {
+    _closeStartProgress = _dragProgress;
+    final remaining = 1.0 - _closeStartProgress;
+    if (remaining <= 0.01) {
+      Navigator.of(context).pop();
+      return;
+    }
+    _closeController.duration = _kCloseDuration * remaining;
+    _closeController.forward(from: 0);
   }
 
   void _snapBack() {
@@ -1511,9 +1528,8 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
     _snapBackCtrl.stop();
     setState(() {
       _isDragging = true; // so t follows (1 - _dragProgress) during the morph
-      _closeStartProgress = _dragProgress;
     });
-    _closeController.forward(from: 0);
+    _startClose();
   }
 
   @override

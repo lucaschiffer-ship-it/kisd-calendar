@@ -52,7 +52,10 @@ class ScraperService extends ChangeNotifier {
 
         if (urlStr.contains('login.th-koeln.de') ||
             urlStr.contains('mfa.th-koeln.de') ||
-            urlStr.contains('wp-login.php')) {
+            urlStr.contains('wp-login.php') ||
+            // WP bounces unauthenticated wp-admin requests to the public
+            // landing page with the original URL in `redirect_to=`.
+            urlStr.contains('redirect_to=')) {
           if (!completer.isCompleted) {
             completer.completeError(
                 Exception('[events] auth_required: redirected to $urlStr'));
@@ -286,6 +289,17 @@ class ScraperService extends ChangeNotifier {
       // previously a non-enrolled course (allCourses-only, isFavourite: false
       // by default), treat it as newly enrolled and keep isFavourite: true.
       final existing = await CacheService().loadCourses();
+
+      // Guard against wiping real data: an empty my-courses result for a user
+      // whose cache holds enrolled courses is a dead session (the page is
+      // public and renders logged-out with 0 cards), not mass un-enrolment.
+      // Saving it would overwrite the cache and delete the calendar events.
+      if (scraped.isEmpty &&
+          existing.map(_fromJson).any((s) => s.isMyCourse && !s.isManual)) {
+        throw Exception(
+            'auth_required: my-courses scrape empty but cache has enrolled courses');
+      }
+
       final cachedById = <String, Map<String, dynamic>>{
         for (final c in existing) if (c['id'] != null) c['id'] as String: c,
       };
@@ -482,6 +496,44 @@ class ScraperService extends ChangeNotifier {
         if (!urlStr.contains('course-selection')) return;
         processing = true;
         print('[scraper] page loaded: $urlStr');
+
+        // course-selection is PUBLIC: with a dead session there is no IdP
+        // redirect — the page renders normally and `mycourses=on` just yields
+        // 0 cards. Silently accepting that once overwrote a populated cache
+        // with 0 courses (and wiped the device calendar). Verify the page was
+        // served logged-in (same body-class check as LoginService._checkSession)
+        // before trusting a my-courses result.
+        if (isMyCourse) {
+          // Exact-token check: WordPress adds body class `logged-in` only for
+          // authenticated users. The theme's unconditional `student` class on
+          // this page must never count as evidence of a session.
+          var loggedIn = false;
+          try {
+            final r = await ctrl.callAsyncJavaScript(functionBody: """
+              var body = document.body;
+              return JSON.stringify({
+                loggedIn: body ? body.classList.contains('logged-in') : false,
+                cls: body ? body.className : '',
+              });
+            """).timeout(const Duration(seconds: 10));
+            final m = json.decode(r?.value?.toString() ?? '{}')
+                as Map<String, dynamic>;
+            loggedIn = m['loggedIn'] == true;
+            print('[scraper] logged-in check: $loggedIn (body classes: ${m['cls']})');
+          } catch (e) {
+            print('[scraper] logged-in check failed: $e');
+          }
+          if (!loggedIn) {
+            if (!completer.isCompleted) {
+              completer.completeError(
+                  Exception('auth_required: course-selection served logged-out'));
+            }
+            view?.dispose();
+            view = null;
+            return;
+          }
+        }
+
         try {
           final result = await _extractFromPage(ctrl,
               isMyCourse: isMyCourse, skipTitles: skipTitles);

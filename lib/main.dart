@@ -82,20 +82,23 @@ class _AppRootState extends State<AppRoot> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final hasCreds = loginService.hasStoredCredentials;
       final willRun = hasCreds && !loginService.isLoggedIn;
+      // Kick off the login BEFORE any diagnostics: a stalled
+      // CookieManager.getCookies call must never keep the app logged out.
+      if (willRun) loginService.loginWithStoredCredentials().ignore();
       if (kDebugMode) {
         final cookieCount = await _countCookies();
         debugPrint('[startup] credentials present in secure storage: $hasCreds');
         debugPrint('[startup] cookies restored: $cookieCount cookies');
         debugPrint('[startup] running login flow: $willRun');
       }
-      if (willRun) loginService.loginWithStoredCredentials().ignore();
     });
   }
 
   Future<int> _countCookies() async {
     try {
       final cookies = await CookieManager.instance()
-          .getCookies(url: WebUri('https://spaces.kisd.de'));
+          .getCookies(url: WebUri('https://spaces.kisd.de'))
+          .timeout(const Duration(seconds: 3));
       return cookies.length;
     } catch (_) {
       return -1;

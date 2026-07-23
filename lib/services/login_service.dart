@@ -52,6 +52,12 @@ class LoginService extends ChangeNotifier {
   bool _credentialsSubmitted = false;
   int _samlContinuationAttempts = 0;
   bool _courseSelectionVisited = false;
+  int _mfaContinuationAttempts = 0;
+  // Set once any mfa.th-koeln.de page is reached: credentials were accepted,
+  // and a later definitive failure means the saved (stale) trust cookies are
+  // steering the IdP into a broken flow — see _finish.
+  bool _mfaReached = false;
+  bool _otpDialogOpen = false;
 
   GlobalKey<NavigatorState>? navigatorKey;
 
@@ -98,6 +104,9 @@ class LoginService extends ChangeNotifier {
     _credentialsSubmitted = false;
     _samlContinuationAttempts = 0;
     _courseSelectionVisited = false;
+    _mfaContinuationAttempts = 0;
+    _mfaReached = false;
+    _otpDialogOpen = false;
     _completer = Completer<bool>();
     notifyListeners();
 
@@ -162,23 +171,16 @@ class LoginService extends ChangeNotifier {
     final s = url.toString();
     _log('[login] landed on: $s');
 
-    if (s.contains('mfa.th-koeln.de') && s.contains('oauth2/grant')) {
-      _log('[login] MFA required');
+    if (s.contains('mfa.th-koeln.de')) {
+      // ANY page on the MFA host counts as progress — not just the classic
+      // OTP-entry URL (…/oauth2/grant). Once the "trust this device" state
+      // expires server-side the IdP serves other variants (recognized-device,
+      // method-selection); URL-matching only oauth2/grant made those fall
+      // through to the unhandled branch and the OTP dialog never appeared.
+      // Detection now probes the DOM for the OTP field instead.
       _cancelStallTimer(); // credentials accepted; OTP entry has no timeout
-      final otp = await _promptOtp();
-      if (otp == null || otp.isEmpty) {
-        // Abandoned OTP needs the user's attention — treat like a rejection.
-        await _finish(false, rejected: true);
-        return;
-      }
-      // Opt into "trust this device" so a persistent mfa.th-koeln.de cookie is
-      // issued and later logins can skip the OTP. Selector is heuristic; we log
-      // both what matched and every checkbox seen so it can be tightened.
-      await _enableTrustThisDevice(ctrl);
-      await ctrl.evaluateJavascript(source: """
-        document.getElementById('nffc').value = '${otp.replaceAll("'", "\\'")}';
-        document.IDPLogin.submit();
-      """);
+      _mfaReached = true;
+      await _handleMfaPage(ctrl, s);
     } else if (s.contains('spaces.kisd.de/course-selection')) {
       await Future.delayed(const Duration(seconds: 2));
       _log('[login] login complete');
@@ -409,7 +411,157 @@ class LoginService extends ChangeNotifier {
       }
     } else {
       _log('[login] unhandled URL — no action');
+      // Post-submit dead-end (e.g. SAML-continuation attempts exhausted, or a
+      // page variant none of the branches recognize) with no watchdog running
+      // used to hang the spinner forever — bound it. `_stallTimer == null`
+      // keeps repeated unhandled loads from indefinitely postponing the fail.
+      if (_credentialsSubmitted && _stallTimer == null) _armStallTimer();
     }
+  }
+
+  // Handles every mfa.th-koeln.de page. Probes the DOM for the OTP field
+  // (#nffc); if present, runs the OTP dialog flow. Otherwise this is an
+  // interstitial variant page — dump its structure to the log (names/types
+  // only, never values) and try a generic form continuation like the SAML
+  // handler does, bounded by an attempt cap and the stall watchdog.
+  Future<void> _handleMfaPage(InAppWebViewController ctrl, String pageUrl) async {
+    Map<String, dynamic> probe;
+    try {
+      final r = await ctrl.callAsyncJavaScript(
+        functionBody: """
+          var deadline = Date.now() + 6000;
+          var formSeenAt = 0;
+          while (Date.now() < deadline) {
+            var otp = document.getElementById('nffc') ||
+                      document.querySelector('input[name="nffc"]');
+            if (otp) return JSON.stringify({otp: true});
+            // Page rendered a form but no OTP field: give the field a short
+            // grace period to appear, then treat the page as an interstitial.
+            var form = document.forms[0];
+            if (form) {
+              if (!formSeenAt) formSeenAt = Date.now();
+              if (Date.now() - formSeenAt > 1500) break;
+            }
+            await new Promise(function(r) { setTimeout(r, 300); });
+          }
+
+          // Diagnostic dump: structure only, no field values.
+          var forms = [];
+          for (var f = 0; f < document.forms.length; f++) {
+            var fm = document.forms[f];
+            var els = fm.querySelectorAll('input, select, textarea, button');
+            var inputs = [];
+            for (var i = 0; i < els.length; i++) {
+              var e = els[i];
+              inputs.push(e.tagName + '|type=' + (e.type || '') +
+                '|name=' + (e.name || '') +
+                '|text=' + (e.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 40));
+            }
+            forms.push({action: fm.action || '', inputs: inputs});
+          }
+          var buttons = [];
+          var bs = document.querySelectorAll('button, input[type=submit], [role=button]');
+          for (var b = 0; b < bs.length; b++) {
+            buttons.push((bs[b].innerText || bs[b].value || '')
+              .replace(/\\s+/g, ' ').trim().slice(0, 40));
+          }
+
+          // Payload for the generic continuation POST (values stay JS→Dart
+          // only; the Dart side logs just the keys).
+          var contAction = null, contData = null;
+          var f0 = document.forms[0];
+          if (f0 && f0.action) {
+            contAction = f0.action;
+            contData = {};
+            var ins = f0.querySelectorAll('input[name], select[name], textarea[name]');
+            for (var i = 0; i < ins.length; i++) {
+              var el = ins[i];
+              if (el.type !== 'submit' && el.type !== 'button' && el.type !== 'reset') {
+                contData[el.name] = el.value;
+              }
+            }
+          }
+          return JSON.stringify({otp: false, forms: forms, buttons: buttons,
+                                 contAction: contAction, contData: contData});
+        """,
+        arguments: const {},
+      ).timeout(const Duration(seconds: 10));
+      if (r?.value == null) throw Exception('probe returned null');
+      probe = json.decode(r!.value.toString()) as Map<String, dynamic>;
+    } catch (e) {
+      // Most likely the page self-navigated and destroyed the JS context —
+      // the next onLoadStop handles the new page; bound this one meanwhile.
+      _log('[login] mfa probe failed: $e');
+      _armStallTimer();
+      return;
+    }
+
+    if (probe['otp'] == true) {
+      _log('[login] MFA required (OTP field found on $pageUrl)');
+      await _runOtpFlow(ctrl);
+      return;
+    }
+
+    _log('[login] mfa page without OTP field — url: $pageUrl');
+    _log('[login]   forms: ${probe['forms']}');
+    _log('[login]   buttons: ${probe['buttons']}');
+
+    final action = probe['contAction'] as String?;
+    final data = (probe['contData'] as Map?)?.cast<String, dynamic>();
+    if (action != null && data != null && _mfaContinuationAttempts < 3) {
+      _mfaContinuationAttempts++;
+      _log('[login] mfa generic continuation (attempt $_mfaContinuationAttempts) '
+          '→ $action fields: ${data.keys.toList()}');
+      final postBody = data.entries
+          .map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value.toString())}')
+          .join('&');
+      _armStallTimer(); // recover if the POST doesn't lead anywhere
+      await ctrl.loadUrl(
+        urlRequest: URLRequest(
+          url: WebUri(action),
+          method: 'POST',
+          body: Uint8List.fromList(utf8.encode(postBody)),
+          headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        ),
+      );
+    } else {
+      _log('[login] mfa page has no usable form or attempts exhausted — failing via watchdog');
+      _armStallTimer();
+    }
+  }
+
+  Future<void> _runOtpFlow(InAppWebViewController ctrl) async {
+    // A self-navigating interstitial can land on the OTP page while a probe
+    // from the previous load is still resolving — never stack two dialogs.
+    if (_otpDialogOpen) return;
+    _otpDialogOpen = true;
+    String? otp;
+    try {
+      otp = await _promptOtp();
+    } finally {
+      _otpDialogOpen = false;
+    }
+    if (otp == null || otp.isEmpty) {
+      // Abandoned OTP needs the user's attention — treat like a rejection.
+      await _finish(false, rejected: true);
+      return;
+    }
+    // Opt into "trust this device" so a persistent mfa.th-koeln.de cookie is
+    // issued and later logins can skip the OTP. Selector is heuristic; we log
+    // both what matched and every checkbox seen so it can be tightened.
+    await _enableTrustThisDevice(ctrl);
+    // Submit via the OTP field's own form — document.IDPLogin only exists on
+    // the classic oauth2/grant page, not necessarily on variant OTP pages.
+    await ctrl.evaluateJavascript(source: """
+      (function() {
+        var field = document.getElementById('nffc') ||
+                    document.querySelector('input[name="nffc"]');
+        if (!field) return;
+        field.value = '${otp.replaceAll("'", "\\'")}';
+        var form = field.form || document.IDPLogin;
+        if (form) form.submit();
+      })();
+    """);
   }
 
   void _onError(
@@ -575,6 +727,16 @@ class LoginService extends ChangeNotifier {
     _webView?.dispose();
     _webView = null;
     if (!success && (rejected || _explicitLogin)) _loginFailed = true;
+    if (!success && (rejected || _mfaReached)) {
+      // Definitive auth failure (rejection, or a dead-end after reaching the
+      // MFA host): the saved cookies — notably a stale "trust this device"
+      // cookie that _reinjectPersistentCookies would re-add — are what steer
+      // the IdP into the broken flow. Drop them so the next attempt runs the
+      // clean first-login path. Pure network failures keep their cookies so
+      // offline launches can still restore the session.
+      await _storage.delete(key: _keyCookies);
+      _log('[login] cleared saved cookies after definitive auth failure');
+    }
     if (success) await _saveCookies();
     _completer!.complete(success);
     notifyListeners();
@@ -666,13 +828,29 @@ class LoginService extends ChangeNotifier {
         final urlStr = url?.toString() ?? '';
         var isValid = urlStr.contains('spaces.kisd.de/course-selection');
         if (isValid) {
+          // WordPress adds the exact body class `logged-in` only for
+          // authenticated users. Never substring-match `student` here: the
+          // theme puts a literal `student` class on this page for EVERYONE,
+          // which made this check pass on dead sessions — restore always
+          // "succeeded", the full SAML flow never ran, and the MFA dialog
+          // could never appear.
           final result = await ctrl.callAsyncJavaScript(
             functionBody: """
-              var classes = document.body ? document.body.className : '';
-              return classes.indexOf('logged-in') !== -1 || classes.indexOf('student') !== -1;
+              var body = document.body;
+              return JSON.stringify({
+                loggedIn: body ? body.classList.contains('logged-in') : false,
+                cls: body ? body.className : '',
+              });
             """,
           );
-          isValid = result?.value == true;
+          var loggedIn = false;
+          try {
+            final m = json.decode(result?.value?.toString() ?? '{}')
+                as Map<String, dynamic>;
+            loggedIn = m['loggedIn'] == true;
+            _log('[login] session check body classes: ${m['cls']}');
+          } catch (_) {}
+          isValid = loggedIn;
         }
         checkView?.dispose();
         checkView = null;

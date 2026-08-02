@@ -1,17 +1,28 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../config/app_theme.dart';
+import '../models/app_event.dart';
+import '../screens/store_event_sheets.dart';
 import '../services/calendar_service.dart';
+import '../services/event_store.dart';
 import '../services/theme_service.dart';
+import 'event_edit_layer.dart';
 
 // ─── Overlap layout helpers ───────────────────────────────────────────────────
 
 class _EvtItem {
-  _EvtItem({required this.event, required this.startMin, required this.endMin});
-  final DeviceCalendarEvent event;
+  _EvtItem({
+    this.event,
+    this.occ,
+    required this.startMin,
+    required this.endMin,
+  });
+  final DeviceCalendarEvent? event; // device-calendar event …
+  final StoreOccurrence? occ; //       … or interactive app-store occurrence
   final int startMin;
   final int endMin;
 }
@@ -29,6 +40,7 @@ class DayColumn extends StatefulWidget {
     this.showHourLabels = true,
     this.embedded = false,
     this.topInset = 0,
+    this.editController,
   });
 
   final DateTime day;
@@ -36,6 +48,11 @@ class DayColumn extends StatefulWidget {
   /// Called with the tapped event and the day it belongs to.
   final void Function(DeviceCalendarEvent, DateTime)? onEventTap;
   final bool showHourLabels;
+
+  /// When set, app-store occurrences render as interactive blocks: tap for the
+  /// detail sheet, 400 ms long-press to pick up (move/resize via the edit
+  /// layer), and long-press on empty space creates a draft event.
+  final EventEditController? editController;
 
   /// When true, omits the internal SingleChildScrollView — the parent owns scrolling.
   final bool embedded;
@@ -54,6 +71,7 @@ class DayColumn extends StatefulWidget {
 class _DayColumnState extends State<DayColumn> {
   ScrollController? _scrollController;
   List<DeviceCalendarEvent> _events = [];
+  List<StoreOccurrence> _occs = [];
   DateTime _now = DateTime.now();
   late Timer _timer;
 
@@ -67,6 +85,14 @@ class _DayColumnState extends State<DayColumn> {
     _events = CalendarService.instance.getCachedEvents(widget.day) ?? [];
     _loadEvents();
     CalendarService.instance.writeRevision.addListener(_onWriteRevisionChanged);
+    EventStore.instance.revision.addListener(_onStoreChanged);
+    widget.editController?.addListener(_onEditControllerChanged);
+    if (EventStore.instance.isLoaded) {
+      _occs = EventStore.instance.occurrencesForDay(widget.day);
+    }
+    EventStore.instance.ensureLoaded().then((_) {
+      if (mounted) _loadOccs();
+    });
     _timer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() => _now = DateTime.now());
     });
@@ -78,11 +104,16 @@ class _DayColumnState extends State<DayColumn> {
   @override
   void didUpdateWidget(DayColumn old) {
     super.didUpdateWidget(old);
+    if (old.editController != widget.editController) {
+      old.editController?.removeListener(_onEditControllerChanged);
+      widget.editController?.addListener(_onEditControllerChanged);
+    }
     if (old.day != widget.day) {
       // Show cached events immediately while the async refresh runs.
       setState(() =>
           _events = CalendarService.instance.getCachedEvents(widget.day) ?? []);
       _loadEvents();
+      _loadOccs();
       if (!widget.embedded) {
         WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToFocus());
       }
@@ -92,12 +123,26 @@ class _DayColumnState extends State<DayColumn> {
   @override
   void dispose() {
     CalendarService.instance.writeRevision.removeListener(_onWriteRevisionChanged);
+    EventStore.instance.revision.removeListener(_onStoreChanged);
+    widget.editController?.removeListener(_onEditControllerChanged);
     _timer.cancel();
     _scrollController?.dispose();
     super.dispose();
   }
 
   void _onWriteRevisionChanged() => _loadEvents();
+
+  void _onStoreChanged() => _loadOccs();
+
+  // Active-key changes hide/reveal the occurrence held by the edit layer.
+  void _onEditControllerChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _loadOccs() {
+    if (!mounted || !EventStore.instance.isLoaded) return;
+    setState(() => _occs = EventStore.instance.occurrencesForDay(widget.day));
+  }
 
   Future<void> _loadEvents() async {
     final events = await CalendarService.instance.getEventsForDay(widget.day);
@@ -143,7 +188,7 @@ class _DayColumnState extends State<DayColumn> {
           child: Stack(
             clipBehavior: Clip.none,
             children: [
-              _buildGrid(),
+              _buildCreateAwareGrid(),
               ..._buildEventCards(eventAreaWidth, leftOffset),
               if (_isToday) _buildTimeIndicator(constraints.maxWidth, leftOffset),
             ],
@@ -169,6 +214,27 @@ class _DayColumnState extends State<DayColumn> {
           child: stack,
         );
       },
+    );
+  }
+
+  /// Grid, plus (when interactive) a 400 ms long-press on empty space that
+  /// starts a create draft. Event cards sit above the grid in the stack, so
+  /// this only fires on empty slots.
+  Widget _buildCreateAwareGrid() {
+    final ctrl = widget.editController;
+    if (ctrl == null) return _buildGrid();
+    return RawGestureDetector(
+      behavior: HitTestBehavior.translucent,
+      gestures: {
+        LongPressGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+          () => LongPressGestureRecognizer(
+              duration: const Duration(milliseconds: 400)),
+          (g) => g.onLongPressStart =
+              (d) => ctrl.requestCreate(widget.day, d.localPosition.dy),
+        ),
+      },
+      child: _buildGrid(),
     );
   }
 
@@ -215,14 +281,28 @@ class _DayColumnState extends State<DayColumn> {
   }
 
   List<Widget> _buildEventCards(double eventAreaWidth, double leftOffset) {
-    if (_events.isEmpty) return const [];
-
-    final items = _events.where((e) => !e.allDay).map((e) {
+    // Device events, minus the mirrored "KISD" calendar — those events are
+    // app-store projections and render as interactive store blocks instead.
+    final deviceItems = _events
+        .where((e) => !e.allDay && e.calendarName != 'KISD')
+        .map((e) {
       final startMin = e.start.hour * 60 + e.start.minute;
       final endMin = (e.end.hour * 60 + e.end.minute).clamp(startMin + 15, 24 * 60);
       return _EvtItem(event: e, startMin: startMin, endMin: endMin);
-    }).toList()
+    });
+
+    // App-store occurrences; the one held by the edit layer is hidden.
+    final activeKey = widget.editController?.activeKey;
+    final occItems = _occs.where((o) => o.key != activeKey).map((o) {
+      final startMin = o.start.hour * 60 + o.start.minute;
+      final endMin =
+          (o.end.hour * 60 + o.end.minute).clamp(startMin + 15, 24 * 60);
+      return _EvtItem(occ: o, startMin: startMin, endMin: endMin);
+    });
+
+    final items = [...deviceItems, ...occItems]
       ..sort((a, b) => a.startMin.compareTo(b.startMin));
+    if (items.isEmpty) return const [];
 
     final n = items.length;
 
@@ -308,17 +388,20 @@ class _DayColumnState extends State<DayColumn> {
       final height = ((item.endMin - item.startMin) / 60.0 * DayColumn.hourHeight)
           .clamp(20.0, DayColumn.hourHeight * 24);
 
+      final occ = item.occ;
       widgets.add(Positioned(
         top: top,
         left: left,
         width: laneWidth,
         height: height,
-        child: _EventCard(
-          event: item.event,
-          onTap: widget.onEventTap != null
-              ? () => widget.onEventTap!(item.event, widget.day)
-              : null,
-        ),
+        child: occ != null
+            ? _StoreEventCard(occ: occ, controller: widget.editController)
+            : _EventCard(
+                event: item.event!,
+                onTap: widget.onEventTap != null
+                    ? () => widget.onEventTap!(item.event!, widget.day)
+                    : null,
+              ),
       ));
     }
     return widgets;
@@ -352,6 +435,138 @@ class _DayColumnState extends State<DayColumn> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ─── Store event card (interactive app-store occurrence) ─────────────────────
+
+class _StoreEventCard extends StatelessWidget {
+  const _StoreEventCard({required this.occ, this.controller});
+
+  final StoreOccurrence occ;
+  final EventEditController? controller;
+
+  String _fmt(DateTime d) =>
+      '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+
+  @override
+  Widget build(BuildContext context) {
+    final ctrl = controller;
+    final radius = BorderRadius.circular(AppThemeTokens.cardBorderRadius);
+    final color = occ.collection.color;
+
+    final card = Container(
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: radius,
+        border: Border.all(
+          color: color.withValues(alpha: 0.35),
+          width: 0.5,
+        ),
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            width: 3,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.only(
+                topLeft: radius.topLeft,
+                bottomLeft: radius.bottomLeft,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final h = constraints.maxHeight.isFinite
+                      ? constraints.maxHeight
+                      : 999.0;
+                  final showTitle = h >= 12;
+                  final showTime = h >= 30;
+                  final showLocation = h >= 44 &&
+                      occ.event.location != null &&
+                      occ.event.location!.isNotEmpty;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (showTitle)
+                        Text(
+                          occ.event.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: AppThemeTokens.titleColor,
+                          ),
+                        ),
+                      if (showTime)
+                        Text(
+                          '${_fmt(occ.start)} – ${_fmt(occ.end)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(
+                            fontSize: 10,
+                            color: AppThemeTokens.secondaryTextColor,
+                          ),
+                        ),
+                      if (showLocation)
+                        Text(
+                          occ.event.location!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(
+                            fontSize: 10,
+                            color: AppThemeTokens.locationColor,
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (ctrl == null) {
+      return GestureDetector(
+        onTap: () => showStoreEventDetail(context, occ),
+        child: card,
+      );
+    }
+
+    // Tap → detail sheet; 400 ms long-press → pick up. The recognizer keeps
+    // ownership of the pointer, so the drag may cross day columns freely.
+    return RawGestureDetector(
+      behavior: HitTestBehavior.opaque,
+      gestures: {
+        TapGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
+          () => TapGestureRecognizer(),
+          (g) => g.onTap = () => showStoreEventDetail(context, occ),
+        ),
+        LongPressGestureRecognizer:
+            GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+          () => LongPressGestureRecognizer(
+              duration: const Duration(milliseconds: 400)),
+          (g) {
+            g.onLongPressStart = (d) => ctrl.pickup(occ, d.globalPosition);
+            g.onLongPressMoveUpdate = (d) => ctrl.pickupMove(d.globalPosition);
+            g.onLongPressEnd = (_) => ctrl.pickupEnd();
+            g.onLongPressCancel = ctrl.pickupCancel;
+          },
+        ),
+      },
+      child: card,
     );
   }
 }

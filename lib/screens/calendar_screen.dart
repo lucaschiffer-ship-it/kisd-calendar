@@ -14,6 +14,7 @@ import '../services/service_locator.dart';
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/day_column.dart';
+import '../widgets/event_edit_layer.dart';
 import '../widgets/month_grid.dart';
 import '../widgets/month_view.dart';
 import '../widgets/year_view.dart';
@@ -115,6 +116,9 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   // Shared vertical scroll controller — survives mode switches
   final _timelineScrollController = ScrollController();
+
+  // Drag-to-move / resize / long-press-create state for the timeline.
+  final _editController = EventEditController();
   // Saved offset so returning from list mode restores the exact hour alignment.
   double? _savedTimelineOffset;
 
@@ -200,6 +204,7 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   @override
   void dispose() {
+    _editController.dispose();
     _monthScrollCtrl?.dispose();
     _monthCurved.dispose();
     _monthAnim.dispose();
@@ -1517,20 +1522,33 @@ class _CalendarScreenState extends State<CalendarScreen>
                       _onHorizontalDragEnd(d, effectiveStep),
                   child: ClipRect(
                     child: Stack(
-                      children: List.generate(5, (i) => Positioned(
-                        left: slotLefts[i],
-                        top: 0,
-                        width: slotW,
-                        height: DayColumn.hourHeight * 24,
-                        child: DayColumn(
-                          key: _slotKeys[i],
-                          day: days[i],
-                          showHourLabels: false,
-                          embedded: true,
-                          onEventTap: (e, d) =>
-                              showEventDetail(context, e, d),
+                      children: [
+                        ...List.generate(5, (i) => Positioned(
+                          left: slotLefts[i],
+                          top: 0,
+                          width: slotW,
+                          height: DayColumn.hourHeight * 24,
+                          child: DayColumn(
+                            key: _slotKeys[i],
+                            day: days[i],
+                            showHourLabels: false,
+                            embedded: true,
+                            editController: _editController,
+                            onEventTap: (e, d) =>
+                                showEventDetail(context, e, d),
+                          ),
+                        )),
+                        // Interaction layer: renders the picked-up / draft
+                        // block above the columns; ignores pointers when idle.
+                        EventEditLayer(
+                          controller: _editController,
+                          days: days,
+                          slotLefts: slotLefts,
+                          slotWidth: slotW,
+                          scrollController: _timelineScrollController,
+                          headerInset: topOffset + _kColLabelH,
                         ),
-                      )),
+                      ],
                     ),
                   ),
                 ),

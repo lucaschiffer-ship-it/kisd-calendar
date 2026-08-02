@@ -9,6 +9,7 @@ import 'package:timezone/timezone.dart' as tz;
 
 import '../models/course_shell.dart';
 import '../models/kisd_event.dart';
+import 'event_store.dart';
 
 // ─── Simple event model returned to UI ────────────────────────────────────────
 
@@ -58,8 +59,6 @@ class CalendarService {
   CalendarService._();
   static final CalendarService instance = CalendarService._();
 
-  static const _kKeyCalId  = 'kisd_cal_id';
-  static const _kKeyEvtIds = 'kisd_event_ids';
   static const _kisdColor  = Color(0xFFEB5A01);
 
   // device_calendar's objective_c FFI bridge is absent in newer iOS simulator
@@ -128,31 +127,6 @@ class CalendarService {
     if (r.isSuccess && r.data == true) return true;
     r = await _plugin.requestPermissions();
     return r.isSuccess && r.data == true;
-  }
-
-  // ── KISD calendar ID — create if absent ────────────────────────────────────
-
-  Future<String?> _calendarId() async {
-    final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString(_kKeyCalId);
-
-    if (saved != null) {
-      final cals = await _plugin.retrieveCalendars();
-      if (cals.isSuccess && (cals.data?.any((c) => c.id == saved) ?? false)) {
-        return saved;
-      }
-    }
-
-    final r = await _plugin.createCalendar(
-      'KISD',
-      calendarColor: _kisdColor,
-      localAccountName: 'KISD',
-    );
-    if (r.isSuccess && r.data != null) {
-      await prefs.setString(_kKeyCalId, r.data!);
-      return r.data;
-    }
-    return null;
   }
 
   // ── One-time startup cleanup: wipe the old KISD Events calendar + stale prefs
@@ -383,109 +357,15 @@ class CalendarService {
 
   // ── Write courses ───────────────────────────────────────────────────────────
 
+  /// Course→calendar writes now flow through the app-owned [EventStore] — the
+  /// single source of truth. The store reconciles per scrapeKey and the
+  /// [IosMirrorService] projects it into the "KISD" calendar (its first diff
+  /// sync also removes the events this method used to write directly).
   Future<void> writeCourses(List<CourseShell> shells) async {
-    if (_isSimulator) return;
-    print('[cal] writeCourses ${shells.length} shells, favourited=${shells.where((s) => s.isFavourite).length}');
+    print('[cal] writeCourses ${shells.length} shells → EventStore import, '
+        'favourited=${shells.where((s) => s.isFavourite).length}');
     try {
-      await _ensureTz();
-      if (!await _hasPermission()) return;
-      final calId = await _calendarId();
-      if (calId == null) return;
-
-      final prefs = await SharedPreferences.getInstance();
-
-      // ── a. Load stored event IDs from the previous write run ──────────────
-      final storedIds = prefs.getStringList(_kKeyEvtIds) ?? [];
-      print('[calendar] writeCourses: loaded ${storedIds.length} stored event IDs');
-
-      // ── b. Delete each stored ID one by one, sequentially ─────────────────
-      var deleteCount = 0;
-      for (final id in storedIds) {
-        try {
-          await _plugin.deleteEvent(calId, id);
-          deleteCount++;
-        } catch (_) {}
-      }
-      print('[calendar] writeCourses: called delete on $deleteCount event IDs');
-
-      // ── c. Clear stored IDs immediately after deletion ────────────────────
-      await prefs.remove(_kKeyEvtIds);
-
-      // ── d & e. Write new events, collect returned IDs ─────────────────────
-      final newIds = <String>[];
-      final loc = tz.local;
-
-      print('[cal] writing recurring for ${shells.where((s) => s.isFavourite).length} shells');
-      for (final shell in shells) {
-        if (!shell.isFavourite) continue; // weekly recurrences only for favourited courses
-
-        final desc = shell.links.isNotEmpty ? shell.links.first.url : null;
-
-        for (final mt in shell.meetingTimes) {
-          final targetWd = mt.weekday.index + 1; // 1=Mon … 7=Sun
-          final base = DateTime(
-              shell.startDate.year, shell.startDate.month, shell.startDate.day);
-          final skip = (targetWd - base.weekday + 7) % 7;
-          final first = base.add(Duration(days: skip));
-          if (first.isAfter(shell.endDate)) continue;
-
-          final evtStart = tz.TZDateTime(loc,
-              first.year, first.month, first.day,
-              mt.startTime.hour, mt.startTime.minute);
-          final evtEnd = tz.TZDateTime(loc,
-              first.year, first.month, first.day,
-              mt.endTime.hour, mt.endTime.minute);
-          final ruleEnd = DateTime(
-              shell.endDate.year, shell.endDate.month, shell.endDate.day, 23, 59, 59);
-
-          final event = Event(calId)
-            ..title = shell.title
-            ..start = evtStart
-            ..end = evtEnd
-            ..location = shell.location
-            ..description = desc
-            ..recurrenceRule =
-                RecurrenceRule(RecurrenceFrequency.Weekly, endDate: ruleEnd);
-
-          final r = await _plugin.createOrUpdateEvent(event);
-          if (r != null && r.isSuccess && r.data != null) {
-            newIds.add(r.data!);
-          }
-        }
-      }
-
-      // ── e2. Write one-off events for favourited shells ───────────────────────────
-      print('[cal] writing oneOffs total=${shells.where((s) => s.isFavourite).fold<int>(0, (sum, s) => sum + s.oneOffEvents.length)}');
-      for (final shell in shells) {
-        if (!shell.isFavourite) continue;
-        final desc = shell.links.isNotEmpty ? shell.links.first.url : null;
-        for (final e in shell.oneOffEvents) {
-          final evtStart = tz.TZDateTime(loc,
-              e.date.year, e.date.month, e.date.day,
-              e.startTime.hour, e.startTime.minute);
-          final evtEnd = tz.TZDateTime(loc,
-              e.date.year, e.date.month, e.date.day,
-              e.endTime.hour, e.endTime.minute);
-          final event = Event(calId)
-            ..title = e.title ?? shell.title
-            ..start = evtStart
-            ..end = evtEnd
-            ..location = e.location ?? shell.location
-            ..description = desc;
-          final r = await _plugin.createOrUpdateEvent(event);
-          if (r != null && r.isSuccess && r.data != null) {
-            newIds.add(r.data!);
-          }
-        }
-      }
-
-      // ── f. Save new event IDs ─────────────────────────────────────────────
-      await prefs.setStringList(_kKeyEvtIds, newIds);
-      print('[calendar] writeCourses: saved ${newIds.length} new event IDs');
-
-      // ── g. Invalidate in-memory cache and notify listeners ────────────────
-      clearCache();
-      writeRevision.value++;
+      await EventStore.instance.importFromShells(shells);
     } catch (e) {
       print('[calendar] writeCourses: $e');
     }

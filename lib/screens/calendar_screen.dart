@@ -7,9 +7,9 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../config/app_theme.dart' as tokens;
 import '../screens/event_detail_screen.dart';
-import '../screens/settings_screen.dart';
 import '../services/cache_service.dart';
 import '../services/calendar_service.dart';
+import '../services/page_actions.dart';
 import '../services/service_locator.dart';
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
@@ -17,6 +17,7 @@ import '../widgets/day_column.dart';
 import '../widgets/event_edit_layer.dart';
 import '../widgets/month_grid.dart';
 import '../widgets/month_view.dart';
+import '../widgets/morphing_glass_header.dart';
 import '../widgets/year_view.dart';
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
@@ -64,7 +65,10 @@ class _MonthFlight {
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
 class CalendarScreen extends StatefulWidget {
-  const CalendarScreen({super.key});
+  const CalendarScreen({super.key, required this.actions, required this.header});
+
+  final PageActionController actions;
+  final PageHeaderHandle header;
 
   @override
   State<CalendarScreen> createState() => _CalendarScreenState();
@@ -81,7 +85,8 @@ class _CalendarScreenState extends State<CalendarScreen>
   ];
 
   // Header layout constants
-  static const double _kTitleRowH   = 56.0;
+  // Gap below the status bar (the title row moved to the bottom bar).
+  static const double _kTitleRowH   = 6.0;
   static const double _kButtonsRowH = 60.0;
   static const double _kDayBarH     = 70.0;
   static const double _kColLabelH   = 28.0;
@@ -158,15 +163,19 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   // ── Computed header dimensions ─────────────────────────────────────────────
 
+  // Exact at every frame (no AnimatedSize smoothing): the strip's real height
+  // is (_kDayBarH - 42·mv) scaled by the day-bar visibility, so the pinned
+  // MorphingGlassHeader surface can be sized to it directly.
   double _headerHeight(double statusH) =>
       statusH + _kTitleRowH +
-      (_navLevel == _NavLevel.day ? _kDayBarH * _dayBarCurved.value : 0);
+      (_kDayBarH - 42.0 * _monthCurved.value) * _dayBarCurved.value;
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   @override
   void initState() {
     super.initState();
+    widget.actions.handler = _onReload;
     final n = DateTime.now();
     _today = DateTime(n.year, n.month, n.day);
     _displayedYear = _today.year;
@@ -233,6 +242,8 @@ class _CalendarScreenState extends State<CalendarScreen>
         case _NavLevel.day:
           _navLevel = _NavLevel.month;
           _displayedMonth = DateTime(_selectedDate.year, _selectedDate.month);
+          // Ease the week strip (and with it the header surface) out.
+          _dayBarAnim.reverse();
         case _NavLevel.year:
           break;
       }
@@ -249,7 +260,7 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   void _drillToDay(DateTime day) {
     _slideBegin = const Offset(0.15, 0);
-    if (_dayViewMode != _DayViewMode.list) _dayBarAnim.value = 1.0;
+    if (_dayViewMode != _DayViewMode.list) _dayBarAnim.forward();
 
     final targetPage = _kTodayPage + day.difference(_today).inDays;
 
@@ -289,7 +300,7 @@ class _CalendarScreenState extends State<CalendarScreen>
     _slideBegin = const Offset(0.15, 0);
 
     if (_navLevel == _NavLevel.day && _dayViewMode != _DayViewMode.list) {
-      _dayBarAnim.value = 1.0;
+      _dayBarAnim.forward();
       _jumpToPage(_kTodayPage);
       return;
     }
@@ -304,7 +315,7 @@ class _CalendarScreenState extends State<CalendarScreen>
         _dayViewMode = _DayViewMode.multiDay;
       }
     });
-    _dayBarAnim.value = 1.0;
+    _dayBarAnim.forward();
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToDefaultTime());
     _preloadRange(_kTodayPage);
   }
@@ -367,15 +378,17 @@ class _CalendarScreenState extends State<CalendarScreen>
     }
   }
 
-  void _openSettings() {
-    Navigator.push(
-      context,
-      CupertinoPageRoute(builder: (_) => const SettingsScreen()),
-    );
-  }
-
   bool _reloading  = false;
   bool _reloadDone = false;
+
+  // Mirrors the reload busy/done state into the bottom bar's slot.
+  void _syncActionPhase() {
+    widget.actions.phase.value = _reloading
+        ? ActionPhase.busy
+        : _reloadDone
+            ? ActionPhase.done
+            : ActionPhase.idle;
+  }
 
   Future<void> _reload() async {
     CalendarService.instance.clearCache();
@@ -389,14 +402,18 @@ class _CalendarScreenState extends State<CalendarScreen>
   void _onReload() {
     if (_reloading) return;
     setState(() => _reloading = true);
+    _syncActionPhase();
     _reload().then((_) {
       if (!mounted) return;
       setState(() {
         _reloading  = false;
         _reloadDone = true;
       });
+      _syncActionPhase();
       Future.delayed(const Duration(seconds: 1), () {
-        if (mounted) setState(() => _reloadDone = false);
+        if (!mounted) return;
+        setState(() => _reloadDone = false);
+        _syncActionPhase();
       });
     });
   }
@@ -821,13 +838,7 @@ class _CalendarScreenState extends State<CalendarScreen>
         _monthAnim,
       ]),
       builder: (context, _) {
-        final glass    = ThemeService.instance.glassEnabled.value;
         final colorKey = ThemeService.instance.currentColor.value;
-        final glassBg  = colorKey == 'dark'
-            ? Colors.white.withValues(alpha: 0.06)
-            : Colors.white.withValues(alpha: 0.40);
-        final titleColor    = tokens.AppThemeTokens.titleColor;
-        final secondaryColor = tokens.AppThemeTokens.secondaryTextColor;
 
         final view    = View.of(context);
         final statusH = view.viewPadding.top / view.devicePixelRatio;
@@ -842,19 +853,7 @@ class _CalendarScreenState extends State<CalendarScreen>
             if (_monthActive) _buildMonthLayer(colorKey),
             Positioned(
               top: 0, left: 0, right: 0,
-              child: AnimatedSize(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeOut,
-                alignment: Alignment.topCenter,
-                child: _buildHeader(
-                  statusH: statusH,
-                  glass: glass,
-                  colorKey: colorKey,
-                  glassBg: glassBg,
-                  titleColor: titleColor,
-                  secondaryColor: secondaryColor,
-                ),
-              ),
+              child: _buildHeader(statusH: statusH, headerH: headerH),
             ),
             // Flying week row: the morphing numbers row of the week↔month
             // transition. Above the header so the glass fill never tints it.
@@ -972,105 +971,25 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   // ── Unified glass header ──────────────────────────────────────────────────
 
-  Widget _buildHeader({
-    required double statusH,
-    required bool glass,
-    required String colorKey,
-    required Color glassBg,
-    required Color titleColor,
-    required Color secondaryColor,
-  }) {
-    final borderColor = colorKey == 'dark'
-        ? const Color(0x1AFFFFFF)
-        : tokens.AppThemeTokens.cardBorder;
-
-    final body = Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildHeader({required double statusH, required double headerH}) {
+    return MorphingGlassHeader(
+      handle: widget.header,
+      height: headerH,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(height: statusH),
+          SizedBox(height: statusH + _kTitleRowH),
 
-          // ── Title row ──────────────────────────────────────────────────
-          SizedBox(
-            height: _kTitleRowH,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 9),
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: GestureDetector(
-                      onTap: _reloading ? null : _onReload,
-                      behavior: HitTestBehavior.opaque,
-                      child: Padding(
-                        padding: const EdgeInsets.all(11),
-                        child: _reloading
-                            ? SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: Center(
-                                  child: SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: secondaryColor,
-                                    ),
-                                  ),
-                                ),
-                              )
-                            : _reloadDone
-                                ? const Icon(Icons.check,
-                                    color: AppColors.success, size: 22)
-                                : Icon(CupertinoIcons.arrow_clockwise,
-                                    color: secondaryColor, size: 22),
-                      ),
-                    ),
-                  ),
-                  Text(
-                    'Calendar',
-                    style: AppTextStyle.navTitle.copyWith(color: titleColor),
-                  ),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: GestureDetector(
-                      onTap: _openSettings,
-                      behavior: HitTestBehavior.opaque,
-                      child: Padding(
-                        padding: const EdgeInsets.all(11),
-                        child: Icon(CupertinoIcons.settings,
-                            color: secondaryColor, size: 22),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // ── Week strip (animates in/out when toggling list mode) ──────────
-          if (_navLevel == _NavLevel.day)
+          // ── Week strip (animates in/out when toggling list mode and when
+          // leaving day level; stays mounted until fully collapsed) ─────────
+          if (_navLevel == _NavLevel.day || !_dayBarAnim.isDismissed)
             SizeTransition(
               sizeFactor: _dayBarCurved,
               axisAlignment: -1.0,
               child: _buildWeekStrip(),
             ),
         ],
-    );
-
-    final decoration = BoxDecoration(
-      color: glass ? glassBg : tokens.AppThemeTokens.backgroundColor,
-      border: Border(bottom: BorderSide(color: borderColor, width: 0.5)),
-    );
-
-    if (!glass) {
-      return Container(decoration: decoration, child: body);
-    }
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: Container(decoration: decoration, child: body),
       ),
     );
   }

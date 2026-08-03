@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -7,17 +5,21 @@ import 'package:flutter/services.dart';
 
 import '../config/app_theme.dart' as tokens;
 import '../services/mail_service.dart' show MailFolder;
+import '../services/page_actions.dart';
 import '../services/service_locator.dart';
 import '../services/theme_service.dart';
 import '../theme/tokens.dart';
+import '../widgets/morphing_glass_header.dart';
 import 'compose_screen.dart';
 import 'email_detail_screen.dart';
-import 'settings_screen.dart';
 
 enum _MailFilter { all, unread, drafts, sent, trash }
 
 class MailScreen extends StatefulWidget {
-  const MailScreen({super.key});
+  const MailScreen({super.key, required this.actions, required this.header});
+
+  final PageActionController actions;
+  final PageHeaderHandle header;
 
   @override
   State<MailScreen> createState() => _MailScreenState();
@@ -39,6 +41,7 @@ class _MailScreenState extends State<MailScreen>
   @override
   void initState() {
     super.initState();
+    widget.actions.handler = _onReload;
     mailService.addListener(_onUpdate);
     if (!mailService.isConnected && !mailService.isConnecting) {
       WidgetsBinding.instance.addPostFrameCallback(
@@ -55,7 +58,19 @@ class _MailScreenState extends State<MailScreen>
   }
 
   void _onUpdate() {
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {});
+      _syncActionPhase();
+    }
+  }
+
+  // Mirrors the reload button's busy/done state into the bottom bar's slot.
+  void _syncActionPhase() {
+    widget.actions.phase.value = mailService.isFetching
+        ? ActionPhase.busy
+        : _reloadDone
+            ? ActionPhase.done
+            : ActionPhase.idle;
   }
 
   void _onReload() {
@@ -63,8 +78,11 @@ class _MailScreenState extends State<MailScreen>
     mailService.reloadInbox().then((_) {
       if (!mounted) return;
       setState(() => _reloadDone = true);
+      _syncActionPhase();
       Future.delayed(const Duration(seconds: 1), () {
-        if (mounted) setState(() => _reloadDone = false);
+        if (!mounted) return;
+        setState(() => _reloadDone = false);
+        _syncActionPhase();
       });
     });
   }
@@ -151,11 +169,11 @@ class _MailScreenState extends State<MailScreen>
 
     final view = View.of(context);
     final statusH = view.viewPadding.top / view.devicePixelRatio;
+    const topGapH = 6.0;
     const filterH = 110.0;
-    final headerH = statusH + kToolbarHeight + filterH;
+    final headerH = statusH + topGapH + filterH;
 
-    final glass   = ThemeService.instance.glassEnabled.value;
-    final glassBg = s.glassHeaderTint;
+    final glass = ThemeService.instance.glassEnabled.value;
     final searchBorder = BorderSide(
       color: glass
           ? Colors.white.withValues(alpha: AppGlass.borderAlpha)
@@ -163,73 +181,13 @@ class _MailScreenState extends State<MailScreen>
       width: 0.5,
     );
 
-    final headerBody = Container(
-      padding: const EdgeInsets.only(bottom: 12),
-      decoration: glass
-          ? BoxDecoration(
-              color: glassBg,
-              border: const Border(
-                bottom: BorderSide(color: AppGlass.dividerColor, width: 0.5),
-              ),
-            )
-          : BoxDecoration(color: tokens.AppThemeTokens.backgroundColor),
+    final header = MorphingGlassHeader(
+      handle: widget.header,
+      height: headerH,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(height: statusH),
-          // ── Title row ──────────────────────────────────────────────────────
-          SizedBox(
-            height: kToolbarHeight,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: mailService.isFetching
-                        ? SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: tokens.AppThemeTokens.navBarIcon,
-                            ),
-                          )
-                        : _reloadDone
-                            ? Icon(Icons.check, color: s.success)
-                            : Icon(
-                                CupertinoIcons.arrow_clockwise,
-                                color: tokens.AppThemeTokens.navBarIcon,
-                              ),
-                    onPressed: mailService.isFetching ? null : _onReload,
-                  ),
-                  Expanded(
-                    child: Center(
-                      child: Text(
-                        'Mail',
-                        style: AppTextStyles.navTitle(
-                            color: tokens.AppThemeTokens.titleColor),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    icon: Icon(Icons.edit_outlined,
-                        color: tokens.AppThemeTokens.navBarIcon),
-                    onPressed: openCompose,
-                  ),
-                  IconButton(
-                    icon: Icon(CupertinoIcons.settings,
-                        color: tokens.AppThemeTokens.navBarIcon),
-                    onPressed: () => Navigator.push<void>(
-                      context,
-                      CupertinoPageRoute(
-                          builder: (_) => const SettingsScreen()),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
+          SizedBox(height: statusH + topGapH),
           // ── Search + filter chips ─────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -351,19 +309,10 @@ class _MailScreenState extends State<MailScreen>
               ],
             ),
           ),
+          const SizedBox(height: 12),
         ],
       ),
     );
-
-    final header = glass
-        ? ClipRect(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(
-                  sigmaX: AppGlass.headerBlur, sigmaY: AppGlass.headerBlur),
-              child: headerBody,
-            ),
-          )
-        : headerBody;
 
     return Stack(
       children: [
@@ -448,6 +397,44 @@ class _MailScreenState extends State<MailScreen>
           ),
         ),
         Positioned(top: 0, left: 0, right: 0, child: header),
+
+        // ── Compose FAB ───────────────────────────────────────────────────
+        Positioned(
+          right: 16,
+          bottom: 24,
+          child: GestureDetector(
+            onTap: openCompose,
+            child: glass
+                ? tokens.AppThemeTokens.glassContainer(
+                    borderRadius: BorderRadius.circular(AppRadius.pill),
+                    tintColor: s.accent,
+                    opacity: 0.44,
+                    child: const SizedBox(
+                      width: 52,
+                      height: 52,
+                      child: Icon(Icons.edit_outlined,
+                          color: Colors.white, size: 24),
+                    ),
+                  )
+                : Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: s.accent,
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.25),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(Icons.edit_outlined,
+                        color: Colors.white, size: 24),
+                  ),
+          ),
+        ),
       ],
     );
   }

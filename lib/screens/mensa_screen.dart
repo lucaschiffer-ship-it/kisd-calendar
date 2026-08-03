@@ -1,18 +1,20 @@
-import 'dart:ui';
-
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../config/app_theme.dart' as tokens;
 import '../services/mensa_service.dart';
+import '../services/page_actions.dart';
 import '../services/theme_service.dart';
 import '../services/translation_service.dart';
 import '../theme/tokens.dart';
-import 'settings_screen.dart';
+import '../widgets/morphing_glass_header.dart';
 
 class MensaScreen extends StatefulWidget {
-  const MensaScreen({super.key});
+  const MensaScreen({super.key, required this.actions, required this.header});
+
+  final PageActionController actions;
+  final PageHeaderHandle header;
 
   @override
   State<MensaScreen> createState() => _MensaScreenState();
@@ -46,6 +48,7 @@ class _MensaScreenState extends State<MensaScreen>
     super.initState();
     _baseDate = DateTime.now();
     _pageController = PageController(initialPage: _initialPage);
+    widget.actions.handler = _toggleTranslate;
   }
 
   @override
@@ -80,7 +83,10 @@ class _MensaScreenState extends State<MensaScreen>
       ));
       return;
     }
-    if (mounted) setState(() => _translate = !_translate);
+    if (mounted) {
+      setState(() => _translate = !_translate);
+      widget.actions.toggleActive.value = _translate;
+    }
   }
 
   @override
@@ -98,64 +104,17 @@ class _MensaScreenState extends State<MensaScreen>
   Widget _buildContent(AppColorScheme s) {
     final view    = View.of(context);
     final statusH = view.viewPadding.top / view.devicePixelRatio;
+    const topGapH  = 6.0;
     const dateNavH = 52.0;
-    final headerH  = statusH + kToolbarHeight + dateNavH;
+    final headerH  = statusH + topGapH + dateNavH;
 
-    final glass   = ThemeService.instance.glassEnabled.value;
-    final glassBg = s.glassHeaderTint;
-
-    final headerBody = Container(
-      decoration: glass
-          ? BoxDecoration(
-              color: glassBg,
-              border: const Border(
-                bottom: BorderSide(color: AppGlass.dividerColor, width: 0.5),
-              ),
-            )
-          : BoxDecoration(color: tokens.AppThemeTokens.backgroundColor),
+    final header = MorphingGlassHeader(
+      handle: widget.header,
+      height: headerH,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(height: statusH),
-          // Title row
-          SizedBox(
-            height: kToolbarHeight,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: Icon(
-                      Icons.translate,
-                      color: _translate
-                          ? s.accent
-                          : tokens.AppThemeTokens.navBarIcon,
-                    ),
-                    tooltip: 'Auf Englisch übersetzen',
-                    onPressed: _toggleTranslate,
-                  ),
-                  Expanded(
-                    child: Center(
-                      child: Text(
-                        'Mensa',
-                        style: AppTextStyles.navTitle(
-                            color: tokens.AppThemeTokens.titleColor),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    icon: Icon(CupertinoIcons.settings,
-                        color: tokens.AppThemeTokens.navBarIcon),
-                    onPressed: () => Navigator.push<void>(
-                      context,
-                      CupertinoPageRoute(
-                          builder: (_) => const SettingsScreen()),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          SizedBox(height: statusH + topGapH),
           // Date navigation row
           SizedBox(
             height: dateNavH,
@@ -190,16 +149,6 @@ class _MensaScreenState extends State<MensaScreen>
         ],
       ),
     );
-
-    final header = glass
-        ? ClipRect(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(
-                  sigmaX: AppGlass.headerBlur, sigmaY: AppGlass.headerBlur),
-              child: headerBody,
-            ),
-          )
-        : headerBody;
 
     final pageView = PageView.builder(
       controller: _pageController,

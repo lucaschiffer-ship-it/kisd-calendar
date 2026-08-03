@@ -10,12 +10,13 @@ import '../config/app_theme.dart' as tokens;
 import '../models/course_shell.dart';
 import '../services/cache_service.dart';
 import '../services/calendar_service.dart';
+import '../services/page_actions.dart';
 import '../services/service_locator.dart';
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/course_shell_card.dart';
+import '../widgets/morphing_glass_header.dart';
 import 'course_shell_edit_screen.dart';
-import 'settings_screen.dart';
 
 // ── Abbreviations ─────────────────────────────────────────────────────────────
 const _kWeekdays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
@@ -23,7 +24,7 @@ const _kMonths   = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
                     'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 
 // ── Layout constants ──────────────────────────────────────────────────────────
-const double _kTitleRowH  = 56.0;  // "List" + gear
+const double _kTitleRowH  = 6.0;   // gap below the status bar (title row moved to the bottom bar)
 const double _kDateRowH   = 52.0;  // date/time row + vertical padding
 // Tab text is 18px; below it sit 6px gap + 2px underline + 8px padding = 16px
 // to the header bottom. Top padding matches that 16px so the tabs look evenly
@@ -80,7 +81,10 @@ const _kFilterOrder = [
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 class ListScreen extends StatefulWidget {
-  const ListScreen({super.key});
+  const ListScreen({super.key, required this.actions, required this.header});
+
+  final PageActionController actions;
+  final PageHeaderHandle header;
 
   @override
   State<ListScreen> createState() => _ListScreenState();
@@ -156,6 +160,7 @@ class _ListScreenState extends State<ListScreen>
   @override
   void initState() {
     super.initState();
+    widget.actions.handler = _onReload;
     _clock = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       final now = DateTime.now();
@@ -382,6 +387,19 @@ class _ListScreenState extends State<ListScreen>
     super.dispose();
   }
 
+  // _loading/_reloadDone flip inside several setState sites in _scrape;
+  // mirroring after every state change keeps the bottom bar's reload slot in
+  // sync with all of them (the notifier dedupes unchanged values).
+  @override
+  void setState(VoidCallback fn) {
+    super.setState(fn);
+    widget.actions.phase.value = _loading
+        ? ActionPhase.busy
+        : _reloadDone
+            ? ActionPhase.done
+            : ActionPhase.idle;
+  }
+
   void _onReload() {
     if (_loading) return;
     _scrape().then((_) {
@@ -391,13 +409,6 @@ class _ListScreenState extends State<ListScreen>
         if (mounted) setState(() => _reloadDone = false);
       });
     });
-  }
-
-  void _openSettings() {
-    Navigator.push(
-      context,
-      CupertinoPageRoute(builder: (_) => const SettingsScreen()),
-    );
   }
 
   void _openEdit(CourseShell shell) {
@@ -543,19 +554,12 @@ class _ListScreenState extends State<ListScreen>
     required double eventsH,
     required double reveal,
     required double statusH,
-    required bool glass,
-    required String colorKey,
-    required Color glassBg,
     required Widget topSection,
     required Widget? eventsContent,
     required Widget searchBar,
     required Widget filterBar,
   }) {
     final topH = statusH + _kTitleRowH + _kDateRowH;
-
-    final borderColor = colorKey == 'dark'
-        ? const Color(0x1AFFFFFF)
-        : tokens.AppThemeTokens.cardBorder;
 
     final body = SizedBox(
       height: currentH,
@@ -623,20 +627,10 @@ class _ListScreenState extends State<ListScreen>
       ),
     );
 
-    // Wrap in glass or solid background
-    final decoration = BoxDecoration(
-      color: glass ? glassBg : tokens.AppThemeTokens.backgroundColor,
-      border: Border(bottom: BorderSide(color: borderColor, width: 0.5)),
-    );
-
-    if (!glass) {
-      return Container(decoration: decoration, child: body);
-    }
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: Container(decoration: decoration, child: body),
-      ),
+    return MorphingGlassHeader(
+      handle: widget.header,
+      height: currentH,
+      child: body,
     );
   }
 
@@ -647,62 +641,7 @@ class _ListScreenState extends State<ListScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(height: statusH),
-        // "List" title + settings gear
-        SizedBox(
-          height: _kTitleRowH,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                GestureDetector(
-                  onTap: _loading ? null : _onReload,
-                  behavior: HitTestBehavior.opaque,
-                  child: Padding(
-                    padding: const EdgeInsets.all(11),
-                    child: _loading
-                        ? SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: Center(
-                              child: SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: secondaryColor,
-                                ),
-                              ),
-                            ),
-                          )
-                        : _reloadDone
-                            ? const Icon(Icons.check,
-                                color: AppColors.success, size: 22)
-                            : Icon(CupertinoIcons.arrow_clockwise,
-                                color: secondaryColor, size: 22),
-                  ),
-                ),
-                Expanded(
-                  child: Center(
-                    child: Text('List',
-                        style: AppTextStyle.navTitle
-                            .copyWith(color: titleColor)),
-                  ),
-                ),
-                GestureDetector(
-                  onTap: _openSettings,
-                  behavior: HitTestBehavior.opaque,
-                  child: Padding(
-                    padding: const EdgeInsets.all(11),
-                    child: Icon(CupertinoIcons.settings,
-                        color: secondaryColor, size: 22),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        SizedBox(height: statusH + _kTitleRowH),
         // Date + clock — scoped to the notifier so the minute tick only
         // repaints this row, not the whole screen.
         Expanded(
@@ -928,11 +867,6 @@ class _ListScreenState extends State<ListScreen>
         ThemeService.instance.glassEnabled,
       ]),
       builder: (context, _) {
-        final glass    = ThemeService.instance.glassEnabled.value;
-        final colorKey = ThemeService.instance.currentColor.value;
-        final glassBg  = colorKey == 'dark'
-            ? Colors.white.withValues(alpha: 0.06)
-            : Colors.white.withValues(alpha: 0.40);
         final titleColor    = tokens.AppThemeTokens.titleColor;
         final secondaryColor = tokens.AppThemeTokens.secondaryTextColor;
 
@@ -994,9 +928,6 @@ class _ListScreenState extends State<ListScreen>
                     eventsH: eventsH,
                     reveal: reveal,
                     statusH: statusH,
-                    glass: glass,
-                    colorKey: colorKey,
-                    glassBg: glassBg,
                     topSection: topSection,
                     eventsContent: eventsContent,
                     searchBar: searchBar,

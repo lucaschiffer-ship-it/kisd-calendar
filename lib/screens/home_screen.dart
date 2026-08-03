@@ -6,7 +6,9 @@ import 'list_screen.dart';
 import 'mail_screen.dart';
 import 'mensa_screen.dart';
 import 'browser_screen.dart';
+import 'settings_screen.dart';
 import '../config/app_theme.dart' as tokens;
+import '../services/page_actions.dart';
 import '../services/service_locator.dart';
 import '../services/spaces_browser.dart';
 import '../services/theme_service.dart';
@@ -25,7 +27,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // Page order: Mensa=0, Mail=1, List=2, Calendar=3
   static const int _initialPage = 2;
 
-  late final PageController _pageController;
+  // Continuous pager position shared with the bottom bar's title carousel:
+  // page i is centered when the value is i (mod 4). Driving the content from
+  // the same value keeps it perfectly in sync with the bar, live during drags.
+  final _pagePos = ValueNotifier<double>(_initialPage.toDouble());
   late final AnimationController _sheetAnim;
   late final AnimationController _snapBackCtrl;
   late Animation<double> _snapBackAnim;
@@ -59,17 +64,30 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _canGoForward = false;
   String _currentUrl = 'https://spaces.kisd.de';
 
-  static const List<Widget> _pages = [
-    MensaScreen(),
-    MailScreen(),
-    ListScreen(),
-    CalendarScreen(),
+  // One action controller per page: the bottom bar's fixed left slot renders
+  // and triggers the current page's reload (translate on Mensa).
+  final List<PageActionController> _pageActions =
+      List.generate(4, (_) => PageActionController());
+
+  // Shares the live pager position and per-page header heights with each
+  // page's MorphingGlassHeader (pinned, height-morphing header surface).
+  late final HeaderPagerController _headerPager =
+      HeaderPagerController(pagePos: _pagePos);
+
+  late final List<Widget> _pages = [
+    MensaScreen(
+        actions: _pageActions[0], header: PageHeaderHandle(0, _headerPager)),
+    MailScreen(
+        actions: _pageActions[1], header: PageHeaderHandle(1, _headerPager)),
+    ListScreen(
+        actions: _pageActions[2], header: PageHeaderHandle(2, _headerPager)),
+    CalendarScreen(
+        actions: _pageActions[3], header: PageHeaderHandle(3, _headerPager)),
   ];
 
   @override
   void initState() {
     super.initState();
-    _pageController = PageController(initialPage: _initialPage);
     _sheetAnim = AnimationController(vsync: this, lowerBound: 0, upperBound: 1);
     _snapBackCtrl = AnimationController(
       vsync: this,
@@ -97,7 +115,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _snapBackCtrl.removeListener(_onSnapBackTick);
     _snapBackCtrl.dispose();
     _sheetAnim.dispose();
-    _pageController.dispose();
+    _pagePos.dispose();
+    for (final a in _pageActions) {
+      a.dispose();
+    }
     loginService.removeListener(_onLoginChanged);
     mailService.removeListener(_rebuild);
     ThemeService.instance.currentColor.removeListener(_rebuild);
@@ -272,18 +293,46 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         .then((_) => SpacesBrowser.fireOnClose());
   }
 
-  void _onTabTapped(int index) {
-    _pageController.animateToPage(index,
-        duration: const Duration(milliseconds: 300), curve: Curves.easeInOut);
+  // The bar owns the position; the settled page index is only mirrored here
+  // (badge, bar prop). Content follows _pagePos continuously.
+  void _onPageSettled(int index) {
+    setState(() => _currentPage = index);
+  }
+
+  void _onBarPosition(double pos) {
+    _pagePos.value = pos;
+  }
+
+  // Circular pager slot: page i sits at its signed shortest circular distance
+  // from the continuous position, so Calendar and Mensa are adjacent across
+  // the wrap seam. Off-screen pages stay mounted (Offstage) so their state —
+  // and their registered bar actions — survive.
+  Widget _buildPageSlot(int i, double pos, double width) {
+    var d = (i - pos) % _pages.length.toDouble();
+    if (d > _pages.length / 2) d -= _pages.length;
+    final visible = d > -1 && d < 1;
+    return Positioned(
+      // Keyed so reordering slots (owner painted last) moves elements instead
+      // of rebuilding page state into different slots.
+      key: ValueKey(i),
+      left: d * width,
+      top: 0,
+      bottom: 0,
+      width: width,
+      child: Offstage(
+        offstage: !visible,
+        child: RepaintBoundary(child: _pages[i]),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final screenHeight = MediaQuery.of(context).size.height;
     final bottomPadding =
-        (MediaQuery.of(context).padding.bottom - _IosTabBar.bottomTuck)
+        (MediaQuery.of(context).padding.bottom - _BottomBar.bottomTuck)
             .clamp(0.0, double.infinity);
-    const tabRowHeight = 50.0;
+    const tabRowHeight = 60.0;
     final navBarHeight = tabRowHeight + bottomPadding;
     final s = AppColorScheme.current;
 
@@ -300,15 +349,29 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             surfaceTintColor: Colors.transparent,
             forceMaterialTransparency: true,
           ),
-          body: PageView(
-            controller: _pageController,
-            physics: const NeverScrollableScrollPhysics(),
-            onPageChanged: (index) => setState(() => _currentPage = index),
-            children: _pages,
+          body: ValueListenableBuilder<double>(
+            valueListenable: _pagePos,
+            builder: (context, pos, _) => LayoutBuilder(
+              builder: (context, constraints) {
+                // The owner page paints last so its pinned header surface
+                // sits above (and blurs) both sliding bodies mid-transition.
+                final owner = pos.round() % _pages.length;
+                return Stack(
+                  children: [
+                    for (var i = 0; i < _pages.length; i++)
+                      if (i != owner)
+                        _buildPageSlot(i, pos, constraints.maxWidth),
+                    _buildPageSlot(owner, pos, constraints.maxWidth),
+                  ],
+                );
+              },
+            ),
           ),
-          bottomNavigationBar: _IosTabBar(
+          bottomNavigationBar: _BottomBar(
             currentPage: _currentPage,
-            onTap: _onTabTapped,
+            onPageSelected: _onPageSettled,
+            onPositionChanged: _onBarPosition,
+            actions: _pageActions,
             mailUnread: mailService.unreadCount,
           ),
         ),
@@ -720,121 +783,338 @@ class _NavBtn extends StatelessWidget {
 
 // ── iOS tab bar ──────────────────────────────────────────────────────────────
 
-class _IosTabBar extends StatelessWidget {
-  const _IosTabBar({
+class _BottomBar extends StatefulWidget {
+  const _BottomBar({
     required this.currentPage,
-    required this.onTap,
+    required this.onPageSelected,
+    required this.onPositionChanged,
+    required this.actions,
     this.mailUnread = 0,
   });
 
   final int currentPage;
-  final void Function(int) onTap;
+  final void Function(int) onPageSelected;
+
+  /// Reports every change of the continuous carousel position so the page
+  /// content can track the bar live (during drags and snap animations).
+  final void Function(double) onPositionChanged;
+  final List<PageActionController> actions;
   final int mailUnread;
 
   /// How much of the bottom safe-area inset the tab bar reclaims.
   static const double bottomTuck = 14.0;
 
-  static const _tabs = [
-    (icon: Icons.restaurant_menu, label: 'Mensa'),
-    (icon: CupertinoIcons.mail, label: 'Mail'),
-    (icon: CupertinoIcons.list_bullet, label: 'List'),
-    (icon: CupertinoIcons.calendar, label: 'Calendar'),
-  ];
+  @override
+  State<_BottomBar> createState() => _BottomBarState();
+}
+
+class _BottomBarState extends State<_BottomBar>
+    with SingleTickerProviderStateMixin {
+  static const _titles = ['Mensa', 'Mail', 'List', 'Calendar'];
+  static const int _n = 4;
+  static const int _mailIndex = 1;
+
+  /// Width reserved on each side for the fixed action/settings slots.
+  static const double _slotW = 56.0;
+
+  late final AnimationController _snapCtrl;
+  Animation<double>? _snapAnim;
+
+  /// Continuous carousel position: page i is centered when `_pos == i`
+  /// (mod 4). Unbounded during a gesture, normalized back to 0..3 on settle.
+  double _pos = 0;
+
+  /// The page the carousel last settled on — drives the action slot.
+  int _settled = 0;
+
+  double? _dragStartPos;
+
+  /// px-per-carousel-step conversion, updated from the latest layout pass.
+  double _spacing = 120;
+
+  @override
+  void initState() {
+    super.initState();
+    _pos = widget.currentPage.toDouble();
+    _settled = widget.currentPage;
+    _snapCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 250),
+    );
+    _snapCtrl.addListener(() {
+      setState(() => _pos = _snapAnim!.value);
+      widget.onPositionChanged(_pos);
+    });
+  }
+
+  @override
+  void dispose() {
+    _snapCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onDragStart(DragStartDetails details) {
+    _snapCtrl.stop();
+    _dragStartPos = _pos;
+  }
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    final start = _dragStartPos;
+    if (start == null) return;
+    // One page per swipe: keep the position within ±1 of the gesture start.
+    final next = (_pos - details.delta.dx / _spacing)
+        .clamp(start.roundToDouble() - 1, start.roundToDouble() + 1)
+        .toDouble();
+    setState(() => _pos = next);
+    widget.onPositionChanged(_pos);
+  }
+
+  void _onDragEnd(DragEndDetails details) {
+    final start = _dragStartPos;
+    if (start == null) return;
+    _dragStartPos = null;
+    final v = details.velocity.pixelsPerSecond.dx;
+    double target;
+    if (v < -250) {
+      target = _pos.floorToDouble() + 1; // fling left → next page
+    } else if (v > 250) {
+      target = _pos.ceilToDouble() - 1; // fling right → previous page
+    } else {
+      target = _pos.roundToDouble();
+    }
+    target = target
+        .clamp(start.roundToDouble() - 1, start.roundToDouble() + 1)
+        .toDouble();
+    _animateTo(target);
+  }
+
+  void _step(int dir) {
+    if (_dragStartPos != null) return;
+    _snapCtrl.stop();
+    _animateTo(_pos.roundToDouble() + dir);
+  }
+
+  void _animateTo(double target) {
+    if ((target - _pos).abs() < 0.001) {
+      _settle(target);
+      return;
+    }
+    _snapAnim = Tween<double>(begin: _pos, end: target).animate(
+        CurvedAnimation(parent: _snapCtrl, curve: Curves.easeOutCubic));
+    _snapCtrl.forward(from: 0).whenComplete(() => _settle(target));
+  }
+
+  void _settle(double target) {
+    final page = target.round() % _n;
+    setState(() {
+      _pos = page.toDouble();
+      _settled = page;
+    });
+    widget.onPositionChanged(_pos);
+    if (page != widget.currentPage) widget.onPageSelected(page);
+  }
+
+  // ── Slots ──────────────────────────────────────────────────────────────────
+
+  Widget _buildActionSlot(AppColorScheme s) {
+    final ctrl = widget.actions[_settled];
+    final Widget inner;
+    if (_settled == 0) {
+      // Mensa has no reload; the slot hosts its translate toggle instead.
+      inner = ValueListenableBuilder<bool>(
+        valueListenable: ctrl.toggleActive,
+        builder: (_, active, __) => Icon(
+          Icons.translate,
+          color: active ? s.accent : tokens.AppThemeTokens.navBarIcon,
+          size: 22,
+        ),
+      );
+    } else {
+      inner = ValueListenableBuilder<ActionPhase>(
+        valueListenable: ctrl.phase,
+        builder: (_, phase, __) => switch (phase) {
+          ActionPhase.busy => SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: tokens.AppThemeTokens.navBarIcon,
+              ),
+            ),
+          ActionPhase.done => Icon(Icons.check, color: s.success, size: 22),
+          ActionPhase.idle => Icon(CupertinoIcons.arrow_clockwise,
+              color: tokens.AppThemeTokens.navBarIcon, size: 22),
+        },
+      );
+    }
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => widget.actions[_settled].trigger(),
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 150),
+        child: KeyedSubtree(
+          key: ValueKey(_settled == 0 ? 'translate' : 'reload'),
+          child: Center(child: inner),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSettingsSlot() {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => Navigator.push<void>(
+        context,
+        CupertinoPageRoute(builder: (_) => const SettingsScreen()),
+      ),
+      child: Center(
+        child: Icon(CupertinoIcons.settings,
+            color: tokens.AppThemeTokens.navBarIcon, size: 22),
+      ),
+    );
+  }
+
+  // ── Title carousel ─────────────────────────────────────────────────────────
+
+  Widget _buildStrip(
+      double stripW, AppColorScheme s, Color activeColor, Color inactiveColor) {
+    final children = <Widget>[];
+    for (var i = 0; i < _n; i++) {
+      // Signed shortest circular distance from the center slot, in (-2, 2].
+      var d = (i - _pos) % _n.toDouble();
+      if (d > _n / 2) d -= _n;
+      if (d.abs() >= 1.5) continue;
+
+      final t = d.abs().clamp(0.0, 1.0).toDouble();
+      final color = Color.lerp(activeColor, inactiveColor, t)!;
+
+      Widget title = Text(
+        _titles[i],
+        style: AppTextStyle.label.copyWith(
+          color: color,
+          fontSize: 17,
+          fontWeight: t < 0.5 ? FontWeight.w600 : FontWeight.w500,
+        ),
+      );
+      if (i == _mailIndex && widget.mailUnread > 0) {
+        title = Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            title,
+            const SizedBox(width: 4),
+            Container(
+              width: 6,
+              height: 6,
+              decoration:
+                  BoxDecoration(color: s.danger, shape: BoxShape.circle),
+            ),
+          ],
+        );
+      }
+
+      children.add(Transform.translate(
+        offset: Offset(d * _spacing, 0),
+        child: Transform.scale(
+          scale: 1.0 - t * 0.15,
+          child: Opacity(
+            opacity: (1.0 - t * 0.65).clamp(0.35, 1.0).toDouble(),
+            child: title,
+          ),
+        ),
+      ));
+    }
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapUp: (details) {
+        final x = details.localPosition.dx;
+        if (x < stripW / 3) {
+          _step(-1);
+        } else if (x > stripW * 2 / 3) {
+          _step(1);
+        }
+      },
+      child: ClipRect(
+        child: Stack(alignment: Alignment.center, children: children),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final s = AppColorScheme.current;
 
-    final bgColor      = tokens.AppThemeTokens.navBarBg;
-    final dividerColor = tokens.AppThemeTokens.dividerColor;
-    final activeColor  = tokens.AppThemeTokens.eventAccent;
+    final bgColor       = tokens.AppThemeTokens.navBarBg;
+    final dividerColor  = tokens.AppThemeTokens.dividerColor;
+    final activeColor   = tokens.AppThemeTokens.eventAccent;
     final inactiveColor = tokens.AppThemeTokens.locationColor;
 
     return ValueListenableBuilder<bool>(
       valueListenable: ThemeService.instance.glassEnabled,
       builder: (context, glass, _) {
-        final tabRow = Row(
-          children: List.generate(_tabs.length, (i) {
-            final isActive = i == currentPage;
-            final color = isActive ? activeColor : inactiveColor;
-            Widget iconWidget = Icon(_tabs[i].icon, color: color, size: 22);
-
-            if (i == 1 && mailUnread > 0) {
-              iconWidget = Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  iconWidget,
-                  Positioned(
-                    right: -6,
-                    top: -4,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 4, vertical: 1),
-                      decoration: BoxDecoration(
-                        color: s.danger,
-                        borderRadius: BorderRadius.circular(AppRadius.tag),
-                      ),
-                      constraints:
-                          const BoxConstraints(minWidth: 16, minHeight: 14),
-                      child: Text(
-                        mailUnread > 99 ? '99+' : '$mailUnread',
-                        style: AppTextStyles.badge(color: Colors.white),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ),
-                ],
-              );
-            }
-
-            return Expanded(
-              child: GestureDetector(
-                onTap: () => onTap(i),
-                behavior: HitTestBehavior.opaque,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    iconWidget,
-                    const SizedBox(height: 3),
-                    Text(
-                      _tabs[i].label,
-                      style: AppTextStyle.label.copyWith(
-                        color: color,
-                        fontSize: 10,
-                        fontWeight:
-                            isActive ? FontWeight.w600 : FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }),
-        );
+        final barRow = LayoutBuilder(builder: (context, constraints) {
+          final stripW = constraints.maxWidth - 2 * _slotW;
+          _spacing = stripW * 0.38;
+          return Stack(children: [
+            Positioned(
+              left: _slotW,
+              right: _slotW,
+              top: 0,
+              bottom: 0,
+              child: _buildStrip(stripW, s, activeColor, inactiveColor),
+            ),
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: _slotW,
+              child: _buildActionSlot(s),
+            ),
+            Positioned(
+              right: 0,
+              top: 0,
+              bottom: 0,
+              width: _slotW,
+              child: _buildSettingsSlot(),
+            ),
+          ]);
+        });
 
         // Tuck the bar toward the screen edge: the full safe-area inset wastes
         // vertical space, so only a slim cushion above the home indicator stays.
-        final bottomPad = (MediaQuery.of(context).padding.bottom - bottomTuck)
-            .clamp(0.0, double.infinity);
+        final bottomPad =
+            (MediaQuery.of(context).padding.bottom - _BottomBar.bottomTuck)
+                .clamp(0.0, double.infinity);
         final navContent = Padding(
           padding: EdgeInsets.only(bottom: bottomPad),
-          child: SizedBox(height: 50, child: tabRow),
+          child: SizedBox(height: 60, child: barRow),
         );
 
-        if (glass) {
-          return ClipRect(
-            child: tokens.AppThemeTokens.glassContainer(
-              borderRadius: BorderRadius.zero,
-              child: navContent,
-            ),
-          );
-        }
-        return Container(
-          decoration: BoxDecoration(
-            color: bgColor,
-            border: Border(top: BorderSide(color: dividerColor, width: 0.5)),
-          ),
-          child: navContent,
+        final bar = glass
+            ? ClipRect(
+                child: tokens.AppThemeTokens.glassContainer(
+                  borderRadius: BorderRadius.zero,
+                  child: navContent,
+                ),
+              )
+            : Container(
+                decoration: BoxDecoration(
+                  color: bgColor,
+                  border:
+                      Border(top: BorderSide(color: dividerColor, width: 0.5)),
+                ),
+                child: navContent,
+              );
+
+        // The whole bar is the swipe surface: horizontal drags anywhere —
+        // including over the fixed slots — drive the carousel, while plain
+        // taps still resolve to the slot buttons via the gesture arena.
+        return GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onHorizontalDragStart: _onDragStart,
+          onHorizontalDragUpdate: _onDragUpdate,
+          onHorizontalDragEnd: _onDragEnd,
+          child: bar,
         );
       },
     );

@@ -218,8 +218,8 @@ class _DayColumnState extends State<DayColumn> {
   }
 
   /// Grid, plus (when interactive) a 400 ms long-press on empty space that
-  /// starts a create draft. Event cards sit above the grid in the stack, so
-  /// this only fires on empty slots.
+  /// spawns a create draft and keeps dragging it until release. Event cards
+  /// sit above the grid in the stack, so this only fires on empty slots.
   Widget _buildCreateAwareGrid() {
     final ctrl = widget.editController;
     if (ctrl == null) return _buildGrid();
@@ -230,8 +230,14 @@ class _DayColumnState extends State<DayColumn> {
             GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
           () => LongPressGestureRecognizer(
               duration: const Duration(milliseconds: 400)),
-          (g) => g.onLongPressStart =
-              (d) => ctrl.requestCreate(widget.day, d.localPosition.dy),
+          (g) {
+            g.onLongPressStart =
+                (d) => ctrl.requestCreate(widget.day, d.globalPosition);
+            g.onLongPressMoveUpdate =
+                (d) => ctrl.pickupMove(d.globalPosition);
+            g.onLongPressEnd = (_) => ctrl.pickupEnd();
+            g.onLongPressCancel = ctrl.pickupCancel;
+          },
         ),
       },
       child: _buildGrid(),
@@ -291,9 +297,11 @@ class _DayColumnState extends State<DayColumn> {
       return _EvtItem(event: e, startMin: startMin, endMin: endMin);
     });
 
-    // App-store occurrences; the one held by the edit layer is hidden.
+    // App-store occurrences; the one held by the edit layer renders invisibly
+    // (it must stay in the tree — removing it would dispose its long-press
+    // recognizer mid-gesture and kill the drag).
     final activeKey = widget.editController?.activeKey;
-    final occItems = _occs.where((o) => o.key != activeKey).map((o) {
+    final occItems = _occs.map((o) {
       final startMin = o.start.hour * 60 + o.start.minute;
       final endMin =
           (o.end.hour * 60 + o.end.minute).clamp(startMin + 15, 24 * 60);
@@ -389,13 +397,22 @@ class _DayColumnState extends State<DayColumn> {
           .clamp(20.0, DayColumn.hourHeight * 24);
 
       final occ = item.occ;
+      final hidden = occ != null && occ.key == activeKey;
       widgets.add(Positioned(
+        key: occ != null ? ValueKey('occ-${occ.key}') : null,
         top: top,
         left: left,
         width: laneWidth,
         height: height,
         child: occ != null
-            ? _StoreEventCard(occ: occ, controller: widget.editController)
+            ? Opacity(
+                opacity: hidden ? 0 : 1,
+                child: IgnorePointer(
+                  ignoring: hidden,
+                  child: _StoreEventCard(
+                      occ: occ, controller: widget.editController),
+                ),
+              )
             : _EventCard(
                 event: item.event!,
                 onTap: widget.onEventTap != null
@@ -539,12 +556,12 @@ class _StoreEventCard extends StatelessWidget {
 
     if (ctrl == null) {
       return GestureDetector(
-        onTap: () => showStoreEventDetail(context, occ),
+        onTap: () => showStoreEventSheet(context, occ),
         child: card,
       );
     }
 
-    // Tap → detail sheet; 400 ms long-press → pick up. The recognizer keeps
+    // Tap → event sheet; 400 ms long-press → pick up. The recognizer keeps
     // ownership of the pointer, so the drag may cross day columns freely.
     return RawGestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -552,7 +569,7 @@ class _StoreEventCard extends StatelessWidget {
         TapGestureRecognizer:
             GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
           () => TapGestureRecognizer(),
-          (g) => g.onTap = () => showStoreEventDetail(context, occ),
+          (g) => g.onTap = () => showStoreEventSheet(context, occ),
         ),
         LongPressGestureRecognizer:
             GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(

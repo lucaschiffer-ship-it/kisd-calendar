@@ -15,6 +15,7 @@ class EventCollection {
     required this.kind, // 'events' | 'course'
     this.courseId,
     required this.colorHex,
+    this.spacesUrl,
     this.visibleInApp = true,
     this.mirrorToIos = true,
   });
@@ -24,6 +25,9 @@ class EventCollection {
   final String kind;
   final String? courseId;
   String colorHex; // 'FFEB5A01'
+
+  /// Course's Spaces page — events in this collection link here.
+  String? spacesUrl;
   bool visibleInApp;
   bool mirrorToIos;
 
@@ -35,6 +39,7 @@ class EventCollection {
         'kind': kind,
         'courseId': courseId,
         'colorHex': colorHex,
+        'spacesUrl': spacesUrl,
         'visibleInApp': visibleInApp,
         'mirrorToIos': mirrorToIos,
       };
@@ -45,6 +50,7 @@ class EventCollection {
         kind: j['kind'] as String,
         courseId: j['courseId'] as String?,
         colorHex: j['colorHex'] as String,
+        spacesUrl: j['spacesUrl'] as String?,
         visibleInApp: j['visibleInApp'] as bool? ?? true,
         mirrorToIos: j['mirrorToIos'] as bool? ?? true,
       );

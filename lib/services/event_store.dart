@@ -77,10 +77,62 @@ class EventStore {
       }
     }
     _seedEventsCollection();
+    await _syncCourseCollectionsFromCache();
     _loaded = true;
     _log('store loaded: ${collections.length} collections, '
         '${events.length} events, ${overrides.length} overrides');
     revision.value++;
+  }
+
+  /// Ensures every hearted course from the cached scrape has its collection —
+  /// covers hearts set before a collection-affecting app update, without
+  /// waiting for the next scrape or heart toggle. Add/update only, no pruning.
+  Future<void> _syncCourseCollectionsFromCache() async {
+    try {
+      final cached = await CacheService().loadCourses();
+      final shells = cached
+          .map(_shellFromCacheJson)
+          .whereType<CourseShell>()
+          .where((s) => s.isFavourite);
+      var changed = false;
+      for (final shell in shells) {
+        if (_ensureCourseCollection(shell)) changed = true;
+      }
+      if (changed) {
+        _log('collection sync from cache: added/updated course collections');
+        await _persist();
+      }
+    } catch (e) {
+      _log('collection sync from cache failed: $e');
+    }
+  }
+
+  /// Creates or updates the collection for [shell]. Returns true if anything
+  /// changed.
+  bool _ensureCourseCollection(CourseShell shell) {
+    final url = shell.links.isNotEmpty ? shell.links.first.url : null;
+    final existing = collections
+        .where((c) => c.kind == 'course' && c.courseId == shell.id)
+        .firstOrNull;
+    if (existing != null) {
+      if (existing.name == shell.title && existing.spacesUrl == url) {
+        return false;
+      }
+      existing.name = shell.title;
+      existing.spacesUrl = url;
+      return true;
+    }
+    collections.add(EventCollection(
+      id: 'course-${shell.id}',
+      name: shell.title,
+      kind: 'course',
+      courseId: shell.id,
+      colorHex: palette[
+          (collections.where((c) => c.kind == 'course').length + 1) %
+              palette.length],
+      spacesUrl: url,
+    ));
+    return true;
   }
 
   void _seedEventsCollection() {
@@ -353,6 +405,16 @@ class EventStore {
     _mutated(userEdit: true);
   }
 
+  /// Move an event into another collection (calendar).
+  void setEventCollection(AppEvent evt, String collectionId) {
+    if (evt.collectionId == collectionId) return;
+    if (collectionById(collectionId) == null) return;
+    evt.collectionId = collectionId;
+    evt.userModified = true;
+    _log('move "${evt.title}" to collection "$collectionId"');
+    _mutated(userEdit: true);
+  }
+
   void deleteEvent(AppEvent evt) {
     events.remove(evt);
     overrides.removeWhere((o) => o.eventId == evt.id);
@@ -394,24 +456,10 @@ class EventStore {
     final active = shells.where((s) => s.isFavourite).toList();
 
     // Ensure one collection per active course, preserving existing settings.
-    for (var i = 0; i < active.length; i++) {
-      final shell = active[i];
-      final existing = collections
-          .where((c) => c.kind == 'course' && c.courseId == shell.id)
-          .firstOrNull;
-      if (existing != null) {
-        existing.name = shell.title;
-      } else {
-        collections.add(EventCollection(
-          id: 'course-${shell.id}',
-          name: shell.title,
-          kind: 'course',
-          courseId: shell.id,
-          colorHex: palette[
-              (collections.where((c) => c.kind == 'course').length + 1) %
-                  palette.length],
-        ));
-      }
+    // Every hearted course gets one — even without scrapeable meeting times —
+    // so events can always be added to it manually.
+    for (final shell in active) {
+      _ensureCourseCollection(shell);
     }
 
     // Desired scrape-derived events keyed by scrapeKey.
@@ -497,9 +545,14 @@ class EventStore {
       deleted++;
     }
 
-    // Remove course collections that no longer hold any events.
+    // Remove course collections only when the course is no longer hearted AND
+    // the collection holds no events (manual events keep it alive so they
+    // don't become orphans).
+    final activeIds = active.map((s) => s.id).toSet();
     collections.removeWhere((c) =>
-        c.kind == 'course' && !events.any((e) => e.collectionId == c.id));
+        c.kind == 'course' &&
+        !activeIds.contains(c.courseId) &&
+        !events.any((e) => e.collectionId == c.id));
 
     _log('import: ${desired.length} scraped events → $inserted new, '
         '$overwritten overwritten, $kept kept (user-modified), $deleted deleted');

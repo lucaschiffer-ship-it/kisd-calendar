@@ -932,8 +932,9 @@ class _CalendarScreenState extends State<CalendarScreen>
   Widget _buildMonthLayer(String colorKey) {
     final v = _monthCurved.value;
     // Same base tint as the day view so the glass header blends identically.
+    // Dark uses full black to match the app-wide background.
     final Color baseColor = switch (colorKey) {
-      'dark'   => const Color(0xFF141414),
+      'dark'   => const Color(0xFF000000),
       'pastel' => tokens.AppThemeTokens.backgroundColor,
       _        => const Color(0xFFF7F4F1),
     };
@@ -1405,8 +1406,9 @@ class _CalendarScreenState extends State<CalendarScreen>
     final glass    = ThemeService.instance.glassEnabled.value;
 
     // Unified base tint — the transparent DayColumn grid shows this.
+    // Dark uses full black to match the app-wide background.
     final Color baseColor = switch (colorKey) {
-      'dark'   => const Color(0xFF141414),
+      'dark'   => const Color(0xFF000000),
       'pastel' => tokens.AppThemeTokens.backgroundColor,
       _        => const Color(0xFFF7F4F1),
     };

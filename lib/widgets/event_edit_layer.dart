@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../config/app_theme.dart';
 import '../models/app_event.dart';
+import '../screens/store_event_sheets.dart';
 import '../services/event_store.dart';
 import 'day_column.dart';
 
@@ -33,8 +34,8 @@ class EventEditController extends ChangeNotifier {
   void pickupMove(Offset globalPos) => delegate?.pickupMove(globalPos);
   void pickupEnd() => delegate?.pickupEnd();
   void pickupCancel() => delegate?.pickupCancel();
-  void requestCreate(DateTime day, double dy) =>
-      delegate?.requestCreate(day, dy);
+  void requestCreate(DateTime day, Offset globalPos) =>
+      delegate?.requestCreate(day, globalPos);
 }
 
 abstract class EventEditLayerDelegate {
@@ -42,12 +43,12 @@ abstract class EventEditLayerDelegate {
   void pickupMove(Offset globalPos);
   void pickupEnd();
   void pickupCancel();
-  void requestCreate(DateTime day, double dy);
+  void requestCreate(DateTime day, Offset globalPos);
 }
 
 // ─── Layer ────────────────────────────────────────────────────────────────────
 
-enum _Phase { idle, held, moving, resizingTop, resizingBottom, creating }
+enum _Phase { idle, held, moving, resizingTop, resizingBottom, createDragging }
 
 /// Sits inside the timeline stack (same coordinate space as the five DayColumn
 /// slots). Ignores pointers while idle so all existing gestures pass through.
@@ -93,10 +94,16 @@ class _EventEditLayerState extends State<EventEditLayer>
   Offset? _lastGlobal;
   bool _movedInGesture = false;
 
-  // Create mode
-  DateTime? _createStart, _createEnd;
-  final _createTitleCtrl = TextEditingController();
-  final _createFocus = FocusNode();
+  // Continuous (unsnapped) pixel positions while a drag is live — the block
+  // follows the finger fluidly, while _draftStart/_draftEnd hold the snapped
+  // times used for the labels and the commit. Cleared on release so the block
+  // settles onto the 15-min grid with a short animation.
+  double? _liveTopPx;
+  double? _liveEdgePx;
+
+  /// True during the short post-release settle animation, so the handles
+  /// don't flash before the draft is swapped for the real card.
+  bool _settling = false;
 
   late final Ticker _ticker;
 
@@ -122,8 +129,6 @@ class _EventEditLayerState extends State<EventEditLayer>
   void dispose() {
     if (widget.controller.delegate == this) widget.controller.delegate = null;
     _ticker.dispose();
-    _createTitleCtrl.dispose();
-    _createFocus.dispose();
     super.dispose();
   }
 
@@ -153,7 +158,7 @@ class _EventEditLayerState extends State<EventEditLayer>
 
   @override
   void pickup(StoreOccurrence occ, Offset globalPos) {
-    if (_phase == _Phase.creating) _commitCreate();
+    if (_phase == _Phase.createDragging) return;
     final local = _toLocal(globalPos);
     if (local == null) return;
     HapticFeedback.mediumImpact();
@@ -166,6 +171,7 @@ class _EventEditLayerState extends State<EventEditLayer>
       _origEnd = occ.end;
       _grabDy = local.dy - _minutesOf(occ.start) / 60.0 * DayColumn.hourHeight;
       _movedInGesture = false;
+      _settling = false;
       _lastGlobal = globalPos;
     });
     widget.controller.setActiveKey(occ.key);
@@ -175,7 +181,7 @@ class _EventEditLayerState extends State<EventEditLayer>
 
   @override
   void pickupMove(Offset globalPos) {
-    if (_editing == null) return;
+    if (_editing == null && _phase != _Phase.createDragging) return;
     _lastGlobal = globalPos;
     if (_phase == _Phase.held) setState(() => _phase = _Phase.moving);
     _updateMoveFromGlobal();
@@ -184,12 +190,20 @@ class _EventEditLayerState extends State<EventEditLayer>
 
   @override
   void pickupEnd() {
+    if (_phase == _Phase.createDragging) {
+      _ticker.stop();
+      _commitCreateDrop();
+      return;
+    }
     if (_editing == null) return;
     _ticker.stop();
     if (!_movedInGesture) {
       // Long-press released in place: stay in edit mode so the resize handles
       // are usable. Tap elsewhere exits.
-      setState(() => _phase = _Phase.held);
+      setState(() {
+        _phase = _Phase.held;
+        _liveTopPx = _liveEdgePx = null;
+      });
       return;
     }
     _commitDrop();
@@ -197,36 +211,53 @@ class _EventEditLayerState extends State<EventEditLayer>
 
   @override
   void pickupCancel() {
+    if (_phase == _Phase.createDragging) {
+      // Gesture lost (arena / system interruption) — discard, no event.
+      _ticker.stop();
+      setState(() {
+        _phase = _Phase.idle;
+        _draftStart = _draftEnd = null;
+        _liveTopPx = _liveEdgePx = null;
+      });
+      return;
+    }
     if (_editing == null) return;
     _ticker.stop();
     setState(() {
       _draftStart = _origStart;
       _draftEnd = _origEnd;
       _phase = _Phase.held;
+      _liveTopPx = _liveEdgePx = null;
     });
   }
 
   void _updateMoveFromGlobal() {
     final g = _lastGlobal;
-    final editing = _editing;
-    if (g == null || editing == null) return;
+    if (g == null || _draftStart == null) return;
     final local = _toLocal(g);
     if (local == null) return;
 
     final durationMin = _draftEnd!.difference(_draftStart!).inMinutes;
+    final heightPx = durationMin / 60.0 * DayColumn.hourHeight;
     final day = widget.days[_dayIndexForX(local.dx)];
-    final rawTopMin = (local.dy - _grabDy) / DayColumn.hourHeight * 60.0;
-    final startMin =
-        _snap15(rawTopMin).clamp(0, 24 * 60 - durationMin);
+    final rawTopPx = (local.dy - _grabDy)
+        .clamp(0.0, DayColumn.hourHeight * 24 - heightPx);
+    final startMin = _snap15(rawTopPx / DayColumn.hourHeight * 60.0)
+        .clamp(0, 24 * 60 - durationMin);
 
     final newStart = _dayAt(day, startMin);
-    if (newStart != _draftStart) {
-      setState(() {
+    setState(() {
+      _liveTopPx = rawTopPx;
+      if (newStart != _draftStart) {
+        // Tick per 15-min step, like Apple Calendar.
+        HapticFeedback.selectionClick();
         _draftStart = newStart;
         _draftEnd = newStart.add(Duration(minutes: durationMin));
-        if (newStart != _origStart) _movedInGesture = true;
-      });
-    }
+        if (_origStart != null && newStart != _origStart) {
+          _movedInGesture = true;
+        }
+      }
+    });
   }
 
   // ── Resize ──────────────────────────────────────────────────────────────────
@@ -235,16 +266,33 @@ class _EventEditLayerState extends State<EventEditLayer>
     final local = _toLocal(globalPos);
     if (local == null || _draftStart == null || _draftEnd == null) return;
     _lastGlobal = globalPos;
+    final minPx = _kMinDurationMin / 60.0 * DayColumn.hourHeight;
     final min = _snap15(local.dy / DayColumn.hourHeight * 60.0);
     setState(() {
       if (top) {
         final endMin = _minutesOf(_draftEnd!);
-        final clamped = min.clamp(0, endMin - _kMinDurationMin);
-        _draftStart = _dayAt(_draftStart!, clamped);
+        final endPx = _minutesOf(_draftStart!) / 60.0 * DayColumn.hourHeight +
+            _draftEnd!.difference(_draftStart!).inMinutes /
+                60.0 *
+                DayColumn.hourHeight;
+        _liveEdgePx = local.dy.clamp(0.0, endPx - minPx);
+        final snapped = _dayAt(_draftStart!,
+            min.clamp(0, endMin - _kMinDurationMin));
+        if (snapped != _draftStart) {
+          HapticFeedback.selectionClick();
+          _draftStart = snapped;
+        }
       } else {
         final startMin = _minutesOf(_draftStart!);
-        final clamped = min.clamp(startMin + _kMinDurationMin, 24 * 60);
-        _draftEnd = _dayAt(_draftStart!, clamped);
+        final startPx = startMin / 60.0 * DayColumn.hourHeight;
+        _liveEdgePx =
+            local.dy.clamp(startPx + minPx, DayColumn.hourHeight * 24);
+        final snapped = _dayAt(_draftStart!,
+            min.clamp(startMin + _kMinDurationMin, 24 * 60));
+        if (snapped != _draftEnd) {
+          HapticFeedback.selectionClick();
+          _draftEnd = snapped;
+        }
       }
       if (_draftStart != _origStart || _draftEnd != _origEnd) {
         _movedInGesture = true;
@@ -257,7 +305,10 @@ class _EventEditLayerState extends State<EventEditLayer>
     _ticker.stop();
     if (_editing == null) return;
     if (_draftStart == _origStart && _draftEnd == _origEnd) {
-      setState(() => _phase = _Phase.held);
+      setState(() {
+        _phase = _Phase.held;
+        _liveTopPx = _liveEdgePx = null;
+      });
       return;
     }
     _movedInGesture = true;
@@ -276,12 +327,26 @@ class _EventEditLayerState extends State<EventEditLayer>
         '${newStart.toIso8601String()}–${_fmt(newEnd)}');
 
     if (!occ.event.isRecurring) {
+      // Let the block settle onto the snapped slot before it is swapped for
+      // the real card.
+      setState(() {
+        _phase = _Phase.held;
+        _settling = true;
+        _liveTopPx = _liveEdgePx = null;
+      });
+      await Future.delayed(const Duration(milliseconds: 200));
+      if (!mounted) return;
+      _settling = false;
       EventStore.instance.moveSingle(occ.event, newStart, newEnd);
-      _exitEditMode();
+      // Only exit if nothing else grabbed the layer during the settle.
+      if (identical(_editing, occ)) _exitEditMode();
       return;
     }
 
-    setState(() => _phase = _Phase.held);
+    setState(() {
+      _phase = _Phase.held;
+      _liveTopPx = _liveEdgePx = null;
+    });
     final choice = await showCupertinoModalPopup<String>(
       context: context,
       builder: (ctx) => CupertinoActionSheet(
@@ -332,7 +397,9 @@ class _EventEditLayerState extends State<EventEditLayer>
       _phase = _Phase.idle;
       _editing = null;
       _draftStart = _draftEnd = _origStart = _origEnd = null;
+      _liveTopPx = _liveEdgePx = null;
       _movedInGesture = false;
+      _settling = false;
     });
     widget.controller.setActiveKey(null);
   }
@@ -340,41 +407,64 @@ class _EventEditLayerState extends State<EventEditLayer>
   // ── Create ──────────────────────────────────────────────────────────────────
 
   @override
-  void requestCreate(DateTime day, double dy) {
-    if (_phase == _Phase.creating) {
-      _commitCreate();
-      return;
-    }
+  void requestCreate(DateTime day, Offset globalPos) {
+    if (_phase == _Phase.createDragging) return;
     if (_editing != null) {
       _exitEditMode();
       return;
     }
-    HapticFeedback.lightImpact();
-    final startMin =
-        _snap15(dy / DayColumn.hourHeight * 60.0).clamp(0, 24 * 60 - 60);
+    final local = _toLocal(globalPos);
+    if (local == null) return;
+    HapticFeedback.mediumImpact();
+    final startMin = _snap15(local.dy / DayColumn.hourHeight * 60.0)
+        .clamp(0, 24 * 60 - 60);
     setState(() {
-      _phase = _Phase.creating;
-      _createStart = _dayAt(day, startMin);
-      _createEnd = _dayAt(day, startMin + 60);
-      _createTitleCtrl.clear();
+      _phase = _Phase.createDragging;
+      _draftStart = _dayAt(day, startMin);
+      _draftEnd = _dayAt(day, startMin + 60);
+      _origStart = _origEnd = null;
+      _grabDy = local.dy - startMin / 60.0 * DayColumn.hourHeight;
+      _movedInGesture = false;
+      _lastGlobal = globalPos;
     });
-    _log('create draft at ${_createStart!.toIso8601String()}');
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _createFocus.requestFocus());
+    _log('create draft at ${_draftStart!.toIso8601String()}');
   }
 
-  void _commitCreate() {
-    final title = _createTitleCtrl.text.trim();
-    final start = _createStart;
-    final end = _createEnd;
-    setState(() {
-      _phase = _Phase.idle;
-      _createStart = _createEnd = null;
-    });
-    _createFocus.unfocus();
-    if (title.isEmpty || start == null || end == null) return; // discard silently
+  Future<void> _commitCreateDrop() async {
+    final start = _draftStart!;
+    final end = _draftEnd!;
     HapticFeedback.lightImpact();
-    EventStore.instance.addManualEvent(title: title, start: start, end: end);
+    _log('create drop ${start.toIso8601String()} – ${_fmt(end)}');
+    // Settle onto the snapped slot before the real card + sheet appear.
+    setState(() {
+      _phase = _Phase.held;
+      _liveTopPx = _liveEdgePx = null;
+    });
+    await Future.delayed(const Duration(milliseconds: 200));
+    if (!mounted) return;
+    final evt = EventStore.instance
+        .addManualEvent(title: 'New Event', start: start, end: end);
+    // Only clear the draft if nothing else grabbed the layer during the settle.
+    if (_phase == _Phase.held && _editing == null) {
+      setState(() {
+        _phase = _Phase.idle;
+        _draftStart = _draftEnd = null;
+        _movedInGesture = false;
+      });
+    }
+    final col = EventStore.instance.collectionById(evt.collectionId);
+    if (col == null) return;
+    await showStoreEventSheet(
+      context,
+      StoreOccurrence(
+        event: evt,
+        collection: col,
+        occurrenceDate: DateTime(start.year, start.month, start.day),
+        start: start,
+        end: end,
+      ),
+      isNew: true,
+    );
   }
 
   // ── Auto-scroll near viewport edges ────────────────────────────────────────
@@ -402,6 +492,7 @@ class _EventEditLayerState extends State<EventEditLayer>
 
   void _onAutoScrollTick(Duration _) {
     if (_phase != _Phase.moving &&
+        _phase != _Phase.createDragging &&
         _phase != _Phase.resizingTop &&
         _phase != _Phase.resizingBottom) {
       _ticker.stop();
@@ -415,7 +506,7 @@ class _EventEditLayerState extends State<EventEditLayer>
     if (target == pos.pixels) return;
     widget.scrollController.jumpTo(target);
     // Content moved under the stationary finger — recompute the draft.
-    if (_phase == _Phase.moving) {
+    if (_phase == _Phase.moving || _phase == _Phase.createDragging) {
       _updateMoveFromGlobal();
     } else if (_lastGlobal != null) {
       _onResizeUpdate(_phase == _Phase.resizingTop, _lastGlobal!);
@@ -435,23 +526,17 @@ class _EventEditLayerState extends State<EventEditLayer>
           clipBehavior: Clip.none,
           children: [
             if (!idle)
-              // Tap-away catcher: exits edit mode / commits or discards the
-              // create draft. Tap-only so scrolling and day swipes pass through.
+              // Tap-away catcher: exits edit mode. Tap-only so scrolling and
+              // day swipes pass through.
               Positioned.fill(
                 child: GestureDetector(
                   behavior: HitTestBehavior.translucent,
                   onTap: () {
-                    if (_phase == _Phase.creating) {
-                      _commitCreate();
-                    } else if (_phase == _Phase.held) {
-                      _exitEditMode();
-                    }
+                    if (_phase == _Phase.held) _exitEditMode();
                   },
                 ),
               ),
-            if (_editing != null && _draftStart != null) _buildDraftBlock(),
-            if (_phase == _Phase.creating && _createStart != null)
-              _buildCreateBlock(),
+            if (_draftStart != null) _buildDraftBlock(),
           ],
         ),
       ),
@@ -459,21 +544,53 @@ class _EventEditLayerState extends State<EventEditLayer>
   }
 
   Widget _buildDraftBlock() {
-    final occ = _editing!;
-    final color = occ.collection.color;
+    final occ = _editing;
+    final color = occ?.collection.color ??
+        EventStore.instance
+            .collectionById(EventStore.kEventsCollectionId)
+            ?.color ??
+        const Color(0xFFEB5A01);
     final dayIdx = widget.days.indexWhere((d) =>
         d.year == _draftStart!.year &&
         d.month == _draftStart!.month &&
         d.day == _draftStart!.day);
     if (dayIdx < 0) return const SizedBox.shrink();
 
-    final top = _minutesOf(_draftStart!) / 60.0 * DayColumn.hourHeight;
-    final height = (_draftEnd!.difference(_draftStart!).inMinutes / 60.0 *
+    final snapTop = _minutesOf(_draftStart!) / 60.0 * DayColumn.hourHeight;
+    final snapHeight = (_draftEnd!.difference(_draftStart!).inMinutes / 60.0 *
             DayColumn.hourHeight)
         .clamp(20.0, DayColumn.hourHeight * 24);
     final dragging = _phase == _Phase.moving ||
+        _phase == _Phase.createDragging ||
         _phase == _Phase.resizingTop ||
         _phase == _Phase.resizingBottom;
+
+    // While a drag is live the block follows the finger continuously; the
+    // snapped position is only rendered once the finger lifts (settle).
+    double top = snapTop;
+    double height = snapHeight;
+    if ((_phase == _Phase.moving || _phase == _Phase.createDragging) &&
+        _liveTopPx != null) {
+      top = _liveTopPx!;
+    } else if (_phase == _Phase.resizingTop && _liveEdgePx != null) {
+      final bottomPx = snapTop + snapHeight;
+      top = _liveEdgePx!;
+      height = (bottomPx - top).clamp(12.0, DayColumn.hourHeight * 24);
+    } else if (_phase == _Phase.resizingBottom && _liveEdgePx != null) {
+      height = (_liveEdgePx! - snapTop).clamp(12.0, DayColumn.hourHeight * 24);
+    }
+
+    final showStartChip = _phase == _Phase.moving ||
+        _phase == _Phase.createDragging ||
+        _phase == _Phase.resizingTop;
+    final showEndChip = _phase == _Phase.moving ||
+        _phase == _Phase.createDragging ||
+        _phase == _Phase.resizingBottom;
+    final showHandles = occ != null &&
+        !_settling &&
+        (_phase == _Phase.held ||
+            _phase == _Phase.resizingTop ||
+            _phase == _Phase.resizingBottom);
 
     return AnimatedPositioned(
       duration: Duration(milliseconds: dragging ? 0 : 180),
@@ -509,15 +626,51 @@ class _EventEditLayerState extends State<EventEditLayer>
                   onPanEnd: (_) => pickupEnd(),
                   child: _blockChrome(
                     color: color,
-                    title: occ.event.title,
+                    title: occ?.event.title ?? 'New Event',
                     timeLabel: '${_fmt(_draftStart!)} – ${_fmt(_draftEnd!)}',
                   ),
                 ),
               ),
-              _buildHandle(top: true, color: color),
-              _buildHandle(top: false, color: color),
+              if (showHandles) ...[
+                _buildHandle(top: true, color: color),
+                _buildHandle(top: false, color: color),
+              ],
+              // Live minute read-outs riding the block edges while dragging.
+              if (showStartChip)
+                Positioned(
+                  top: -22,
+                  left: 0,
+                  child: _timeChip(_fmt(_draftStart!), color),
+                ),
+              if (showEndChip)
+                Positioned(
+                  bottom: -22,
+                  right: 0,
+                  child: _timeChip(_fmt(_draftEnd!), color),
+                ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _timeChip(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(4),
+        boxShadow: const [
+          BoxShadow(color: Color(0x33000000), blurRadius: 4),
+        ],
+      ),
+      child: Text(
+        text,
+        style: GoogleFonts.inter(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: Colors.white,
         ),
       ),
     );
@@ -563,7 +716,6 @@ class _EventEditLayerState extends State<EventEditLayer>
     required Color color,
     required String title,
     required String timeLabel,
-    Widget? titleWidget,
   }) {
     final radius = BorderRadius.circular(AppThemeTokens.cardBorderRadius);
     return Container(
@@ -592,17 +744,16 @@ class _EventEditLayerState extends State<EventEditLayer>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  titleWidget ??
-                      Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.inter(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: AppThemeTokens.titleColor,
-                        ),
-                      ),
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.inter(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppThemeTokens.titleColor,
+                    ),
+                  ),
                   Text(
                     timeLabel,
                     maxLines: 1,
@@ -617,58 +768,6 @@ class _EventEditLayerState extends State<EventEditLayer>
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildCreateBlock() {
-    final dayIdx = widget.days.indexWhere((d) =>
-        d.year == _createStart!.year &&
-        d.month == _createStart!.month &&
-        d.day == _createStart!.day);
-    if (dayIdx < 0) return const SizedBox.shrink();
-    const color = Color(0xFFEB5A01);
-
-    final top = _minutesOf(_createStart!) / 60.0 * DayColumn.hourHeight;
-    final height =
-        _createEnd!.difference(_createStart!).inMinutes / 60.0 *
-            DayColumn.hourHeight;
-
-    return Positioned(
-      left: widget.slotLefts[dayIdx] + 2,
-      width: widget.slotWidth - 4,
-      top: top,
-      height: height,
-      child: _blockChrome(
-        color: color,
-        title: '',
-        timeLabel: '${_fmt(_createStart!)} – ${_fmt(_createEnd!)}',
-        titleWidget: TextField(
-          controller: _createTitleCtrl,
-          focusNode: _createFocus,
-          autofocus: true,
-          maxLines: 1,
-          textInputAction: TextInputAction.done,
-          onSubmitted: (_) => _commitCreate(),
-          style: GoogleFonts.inter(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: AppThemeTokens.titleColor,
-          ),
-          decoration: InputDecoration(
-            isDense: true,
-            border: InputBorder.none,
-            enabledBorder: InputBorder.none,
-            focusedBorder: InputBorder.none,
-            contentPadding: EdgeInsets.zero,
-            hintText: 'New event',
-            hintStyle: GoogleFonts.inter(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: AppThemeTokens.secondaryTextColor,
-            ),
-          ),
-        ),
       ),
     );
   }

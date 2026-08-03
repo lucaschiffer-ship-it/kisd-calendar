@@ -280,7 +280,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final screenHeight = MediaQuery.of(context).size.height;
-    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final bottomPadding =
+        (MediaQuery.of(context).padding.bottom - _IosTabBar.bottomTuck)
+            .clamp(0.0, double.infinity);
     const tabRowHeight = 50.0;
     final navBarHeight = tabRowHeight + bottomPadding;
     final s = AppColorScheme.current;
@@ -729,6 +731,9 @@ class _IosTabBar extends StatelessWidget {
   final void Function(int) onTap;
   final int mailUnread;
 
+  /// How much of the bottom safe-area inset the tab bar reclaims.
+  static const double bottomTuck = 14.0;
+
   static const _tabs = [
     (icon: Icons.restaurant_menu, label: 'Mensa'),
     (icon: CupertinoIcons.mail, label: 'Mail'),
@@ -807,8 +812,14 @@ class _IosTabBar extends StatelessWidget {
           }),
         );
 
-        final navContent =
-            SafeArea(top: false, child: SizedBox(height: 50, child: tabRow));
+        // Tuck the bar toward the screen edge: the full safe-area inset wastes
+        // vertical space, so only a slim cushion above the home indicator stays.
+        final bottomPad = (MediaQuery.of(context).padding.bottom - bottomTuck)
+            .clamp(0.0, double.infinity);
+        final navContent = Padding(
+          padding: EdgeInsets.only(bottom: bottomPad),
+          child: SizedBox(height: 50, child: tabRow),
+        );
 
         if (glass) {
           return ClipRect(

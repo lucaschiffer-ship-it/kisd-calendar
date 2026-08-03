@@ -106,7 +106,7 @@ class _ListScreenState extends State<ListScreen>
   final _searchCtrl  = TextEditingController();
   String _searchQuery = '';
 
-  DateTime _now = DateTime.now();
+  final _now = ValueNotifier<DateTime>(DateTime.now());
   late final Timer _clock;
   Timer? _calendarWriteTimer;
 
@@ -159,8 +159,16 @@ class _ListScreenState extends State<ListScreen>
     _clock = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       final now = DateTime.now();
-      final dayChanged = now.day != _now.day;
-      setState(() => _now = now);
+      final prev = _now.value;
+      // Only HH:MM and the date are displayed — skip the update (and the
+      // rebuild it triggers) until the shown minute actually changes.
+      if (now.minute == prev.minute &&
+          now.hour == prev.hour &&
+          now.day == prev.day) {
+        return;
+      }
+      final dayChanged = now.day != prev.day;
+      _now.value = now;
       if (dayChanged) _loadTodayEvents();
     });
     CalendarService.instance.writeRevision.addListener(_loadTodayEvents);
@@ -362,6 +370,7 @@ class _ListScreenState extends State<ListScreen>
     CalendarService.instance.writeRevision.removeListener(_loadTodayEvents);
     _revealSnap.dispose();
     _searchReveal.dispose();
+    _now.dispose();
     _clock.cancel();
     _calendarWriteTimer?.cancel();
     _searchCtrl.dispose();
@@ -479,8 +488,21 @@ class _ListScreenState extends State<ListScreen>
     return list;
   }
 
+  // Memo for the last fuzzy search — building the Fuzzy index is O(n) over
+  // all courses and _listFor runs on every rebuild, so repeat lookups with an
+  // unchanged list + query must not re-index. The filtered lists are recreated
+  // whenever the data changes, so the identical() check invalidates correctly.
+  List<CourseShell>? _searchMemoSource;
+  String? _searchMemoQuery;
+  List<CourseShell>? _searchMemoResult;
+
   /// Typo-tolerant search over title and lecturer, best matches first.
   List<CourseShell> _fuzzySearch(List<CourseShell> list, String query) {
+    if (_searchMemoResult != null &&
+        identical(_searchMemoSource, list) &&
+        _searchMemoQuery == query) {
+      return _searchMemoResult!;
+    }
     final fuse = Fuzzy<CourseShell>(
       list,
       options: FuzzyOptions(
@@ -495,7 +517,11 @@ class _ListScreenState extends State<ListScreen>
         findAllMatches: true,
       ),
     );
-    return fuse.search(query).map((r) => r.item).toList();
+    final result = fuse.search(query).map((r) => r.item).toList();
+    _searchMemoSource = list;
+    _searchMemoQuery = query;
+    _searchMemoResult = result;
+    return result;
   }
 
   void _onShellUpdated(CourseShell updated) {
@@ -508,6 +534,10 @@ class _ListScreenState extends State<ListScreen>
 
   // ── Glass overlay ─────────────────────────────────────────────────────────
 
+  // Rebuilt on every scroll frame — the expensive subtrees (title/date rows,
+  // events list, search field, filter tabs) are built once per setState in
+  // build() and passed in as the same widget instances, so Flutter skips
+  // rebuilding them here and only the cheap sizing wrappers are recreated.
   Widget _buildGlassOverlay({
     required double currentH,
     required double eventsH,
@@ -516,12 +546,12 @@ class _ListScreenState extends State<ListScreen>
     required bool glass,
     required String colorKey,
     required Color glassBg,
-    required Color titleColor,
-    required Color secondaryColor,
+    required Widget topSection,
+    required Widget? eventsContent,
+    required Widget searchBar,
+    required Widget filterBar,
   }) {
     final topH = statusH + _kTitleRowH + _kDateRowH;
-
-    final hasEvents = _todayEvents.isNotEmpty;
 
     final borderColor = colorKey == 'dark'
         ? const Color(0x1AFFFFFF)
@@ -536,102 +566,7 @@ class _ListScreenState extends State<ListScreen>
           // ── Top section: status bar + title + date/time (always visible) ──
           Positioned(
             top: 0, left: 0, right: 0, height: topH,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(height: statusH),
-                // "List" title + settings gear
-                SizedBox(
-                  height: _kTitleRowH,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        GestureDetector(
-                          onTap: _loading ? null : _onReload,
-                          behavior: HitTestBehavior.opaque,
-                          child: Padding(
-                            padding: const EdgeInsets.all(11),
-                            child: _loading
-                                ? SizedBox(
-                                    width: 22,
-                                    height: 22,
-                                    child: Center(
-                                      child: SizedBox(
-                                        width: 18,
-                                        height: 18,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: secondaryColor,
-                                        ),
-                                      ),
-                                    ),
-                                  )
-                                : _reloadDone
-                                    ? const Icon(Icons.check,
-                                        color: AppColors.success, size: 22)
-                                    : Icon(CupertinoIcons.arrow_clockwise,
-                                        color: secondaryColor, size: 22),
-                          ),
-                        ),
-                        Expanded(
-                          child: Center(
-                            child: Text('List',
-                                style: AppTextStyle.navTitle
-                                    .copyWith(color: titleColor)),
-                          ),
-                        ),
-                        GestureDetector(
-                          onTap: _openSettings,
-                          behavior: HitTestBehavior.opaque,
-                          child: Padding(
-                            padding: const EdgeInsets.all(11),
-                            child: Icon(CupertinoIcons.settings,
-                                color: secondaryColor, size: 22),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                // Date + clock
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      crossAxisAlignment: CrossAxisAlignment.baseline,
-                      textBaseline: TextBaseline.alphabetic,
-                      children: [
-                        RichText(
-                          text: TextSpan(
-                            style: AppTextStyle.cardTitle
-                                .copyWith(fontSize: 32, color: titleColor),
-                            children: [
-                              TextSpan(
-                                text: _kWeekdays[_now.weekday - 1],
-                                style:
-                                    const TextStyle(color: AppColors.accent),
-                              ),
-                              TextSpan(
-                                  text:
-                                      ', ${_kMonths[_now.month - 1]} ${_now.day}'),
-                            ],
-                          ),
-                        ),
-                        Text(
-                          '${_now.hour.toString().padLeft(2, '0')}:'
-                          '${_now.minute.toString().padLeft(2, '0')}',
-                          style: AppTextStyle.cardTitle
-                              .copyWith(fontSize: 32, color: titleColor),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
+            child: topSection,
           ),
 
           // ── Middle: collapsible events + search ───────────────────────────
@@ -646,7 +581,7 @@ class _ListScreenState extends State<ListScreen>
             right: 20,
             child: Column(
               children: [
-                if (hasEvents)
+                if (eventsContent != null)
                   SizedBox(
                     height: eventsH,
                     width: double.infinity,
@@ -656,64 +591,7 @@ class _ListScreenState extends State<ListScreen>
                         Positioned(
                           bottom: _kEventsGapH, left: 0, right: 0,
                           height: _eventsContentH(_todayEvents.length),
-                          child: AnimatedBuilder(
-                            animation: _eventsScrollCtrl,
-                            builder: (context, child) {
-                              // Per-edge fade strength: 1 when rows are cut
-                              // off there, ramping over _kEventFadeH px of
-                              // scroll so the fade eases in/out at the ends.
-                              final pos = _eventsScrollCtrl.hasClients &&
-                                      _eventsScrollCtrl
-                                          .position.hasContentDimensions
-                                  ? _eventsScrollCtrl.position
-                                  : null;
-                              final overflows =
-                                  _todayEvents.length * _kEventRowH >
-                                      _eventsContentH(_todayEvents.length);
-                              final topT = pos == null
-                                  ? 0.0
-                                  : (pos.pixels / _kEventFadeH)
-                                      .clamp(0.0, 1.0);
-                              final bottomT = pos == null
-                                  ? (overflows ? 1.0 : 0.0)
-                                  : ((pos.maxScrollExtent - pos.pixels) /
-                                          _kEventFadeH)
-                                      .clamp(0.0, 1.0);
-                              if (topT == 0.0 && bottomT == 0.0) {
-                                return child!;
-                              }
-                              return ShaderMask(
-                                shaderCallback: (rect) {
-                                  final f = _kEventFadeH / rect.height;
-                                  return LinearGradient(
-                                    begin: Alignment.topCenter,
-                                    end: Alignment.bottomCenter,
-                                    colors: [
-                                      Colors.white
-                                          .withValues(alpha: 1.0 - topT),
-                                      Colors.white,
-                                      Colors.white,
-                                      Colors.white
-                                          .withValues(alpha: 1.0 - bottomT),
-                                    ],
-                                    stops: [0.0, f, 1.0 - f, 1.0],
-                                  ).createShader(rect);
-                                },
-                                blendMode: BlendMode.dstIn,
-                                child: child,
-                              );
-                            },
-                            child: ListView(
-                              controller: _eventsScrollCtrl,
-                              padding: EdgeInsets.zero,
-                              keyboardDismissBehavior:
-                                  ScrollViewKeyboardDismissBehavior.onDrag,
-                              children: [
-                                for (final e in _todayEvents)
-                                  _TodayEventRow(event: e),
-                              ],
-                            ),
-                          ),
+                          child: eventsContent,
                         ),
                       ],
                     ),
@@ -727,7 +605,7 @@ class _ListScreenState extends State<ListScreen>
                       Positioned(
                         bottom: 0, left: 0, right: 0,
                         height: _kSearchH,
-                        child: _buildSearchBar(titleColor, secondaryColor),
+                        child: searchBar,
                       ),
                     ],
                   ),
@@ -739,27 +617,7 @@ class _ListScreenState extends State<ListScreen>
           // ── Bottom: filter chips + count (always visible) ─────────────────
           Positioned(
             bottom: 0, left: 20, right: 20, height: _kFilterBarH,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _buildFilterTab(_FilterMode.favourites,
-                        icon: CupertinoIcons.heart_fill),
-                    const SizedBox(width: 28),
-                    _buildFilterTab(_FilterMode.all, label: 'All'),
-                    const SizedBox(width: 28),
-                    _buildFilterTab(_FilterMode.myCourses,
-                        label: 'My Courses'),
-                    const SizedBox(width: 28),
-                    _buildFilterTab(_FilterMode.custom, label: 'Custom'),
-                  ],
-                ),
-              ],
-            ),
+            child: filterBar,
           ),
         ],
       ),
@@ -779,6 +637,186 @@ class _ListScreenState extends State<ListScreen>
         filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
         child: Container(decoration: decoration, child: body),
       ),
+    );
+  }
+
+  // ── Header subtrees — built once per setState, reused across scroll frames ─
+
+  Widget _buildTopSection(
+      double statusH, Color titleColor, Color secondaryColor) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(height: statusH),
+        // "List" title + settings gear
+        SizedBox(
+          height: _kTitleRowH,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                GestureDetector(
+                  onTap: _loading ? null : _onReload,
+                  behavior: HitTestBehavior.opaque,
+                  child: Padding(
+                    padding: const EdgeInsets.all(11),
+                    child: _loading
+                        ? SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: Center(
+                              child: SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: secondaryColor,
+                                ),
+                              ),
+                            ),
+                          )
+                        : _reloadDone
+                            ? const Icon(Icons.check,
+                                color: AppColors.success, size: 22)
+                            : Icon(CupertinoIcons.arrow_clockwise,
+                                color: secondaryColor, size: 22),
+                  ),
+                ),
+                Expanded(
+                  child: Center(
+                    child: Text('List',
+                        style: AppTextStyle.navTitle
+                            .copyWith(color: titleColor)),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: _openSettings,
+                  behavior: HitTestBehavior.opaque,
+                  child: Padding(
+                    padding: const EdgeInsets.all(11),
+                    child: Icon(CupertinoIcons.settings,
+                        color: secondaryColor, size: 22),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        // Date + clock — scoped to the notifier so the minute tick only
+        // repaints this row, not the whole screen.
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+            child: ValueListenableBuilder<DateTime>(
+              valueListenable: _now,
+              builder: (context, now, _) => Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  RichText(
+                    text: TextSpan(
+                      style: AppTextStyle.cardTitle
+                          .copyWith(fontSize: 32, color: titleColor),
+                      children: [
+                        TextSpan(
+                          text: _kWeekdays[now.weekday - 1],
+                          style: const TextStyle(color: AppColors.accent),
+                        ),
+                        TextSpan(
+                            text:
+                                ', ${_kMonths[now.month - 1]} ${now.day}'),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    '${now.hour.toString().padLeft(2, '0')}:'
+                    '${now.minute.toString().padLeft(2, '0')}',
+                    style: AppTextStyle.cardTitle
+                        .copyWith(fontSize: 32, color: titleColor),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEventsContent() {
+    return AnimatedBuilder(
+      animation: _eventsScrollCtrl,
+      builder: (context, child) {
+        // Per-edge fade strength: 1 when rows are cut
+        // off there, ramping over _kEventFadeH px of
+        // scroll so the fade eases in/out at the ends.
+        final pos = _eventsScrollCtrl.hasClients &&
+                _eventsScrollCtrl.position.hasContentDimensions
+            ? _eventsScrollCtrl.position
+            : null;
+        final overflows = _todayEvents.length * _kEventRowH >
+            _eventsContentH(_todayEvents.length);
+        final topT =
+            pos == null ? 0.0 : (pos.pixels / _kEventFadeH).clamp(0.0, 1.0);
+        final bottomT = pos == null
+            ? (overflows ? 1.0 : 0.0)
+            : ((pos.maxScrollExtent - pos.pixels) / _kEventFadeH)
+                .clamp(0.0, 1.0);
+        if (topT == 0.0 && bottomT == 0.0) {
+          return child!;
+        }
+        return ShaderMask(
+          shaderCallback: (rect) {
+            final f = _kEventFadeH / rect.height;
+            return LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.white.withValues(alpha: 1.0 - topT),
+                Colors.white,
+                Colors.white,
+                Colors.white.withValues(alpha: 1.0 - bottomT),
+              ],
+              stops: [0.0, f, 1.0 - f, 1.0],
+            ).createShader(rect);
+          },
+          blendMode: BlendMode.dstIn,
+          child: child,
+        );
+      },
+      child: ListView(
+        controller: _eventsScrollCtrl,
+        padding: EdgeInsets.zero,
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        children: [
+          for (final e in _todayEvents) _TodayEventRow(event: e),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterBar() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(height: 16),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _buildFilterTab(_FilterMode.favourites,
+                icon: CupertinoIcons.heart_fill),
+            const SizedBox(width: 28),
+            _buildFilterTab(_FilterMode.all, label: 'All'),
+            const SizedBox(width: 28),
+            _buildFilterTab(_FilterMode.myCourses, label: 'My Courses'),
+            const SizedBox(width: 28),
+            _buildFilterTab(_FilterMode.custom, label: 'Custom'),
+          ],
+        ),
+      ],
     );
   }
 
@@ -906,6 +944,16 @@ class _ListScreenState extends State<ListScreen>
         final range = _collapseRange(_todayEvents.length);
         final maxH  = minH + range;
 
+        // Built once per setState/theme change; the scroll-driven overlay
+        // rebuild below reuses these exact instances, so their subtrees are
+        // skipped on every scroll frame.
+        final topSection =
+            _buildTopSection(statusH, titleColor, secondaryColor);
+        final eventsContent =
+            _todayEvents.isEmpty ? null : _buildEventsContent();
+        final searchBar = _buildSearchBar(titleColor, secondaryColor);
+        final filterBar = _buildFilterBar();
+
         return Stack(
           children: [
             // ── Layer 1: swipeable filter pages with course cards ──────────────
@@ -949,8 +997,10 @@ class _ListScreenState extends State<ListScreen>
                     glass: glass,
                     colorKey: colorKey,
                     glassBg: glassBg,
-                    titleColor: titleColor,
-                    secondaryColor: secondaryColor,
+                    topSection: topSection,
+                    eventsContent: eventsContent,
+                    searchBar: searchBar,
+                    filterBar: filterBar,
                   );
                 },
               ),

@@ -404,9 +404,17 @@ class CalendarService {
         rawTotal += r.data!.length;
         for (final e in r.data!) {
           if (e.start == null || e.end == null || (e.title ?? '').isEmpty) continue;
+          // Events spanning midnight: drop ones that end exactly at this
+          // day's midnight (they belong entirely to the previous day) and
+          // clip starts from an earlier day to 00:00 so the continuation
+          // part renders from the top of this day.
+          if (!e.end!.isAfter(start)) continue;
+          final startedEarlier = e.start!.isBefore(start);
           events.add(DeviceCalendarEvent(
             title: e.title!,
-            start: TimeOfDay(hour: e.start!.hour, minute: e.start!.minute),
+            start: startedEarlier
+                ? const TimeOfDay(hour: 0, minute: 0)
+                : TimeOfDay(hour: e.start!.hour, minute: e.start!.minute),
             end:   TimeOfDay(hour: e.end!.hour,   minute: e.end!.minute),
             location: e.location?.isEmpty == true ? null : e.location,
             calendarColor: cal.color != null ? Color(cal.color as int) : _kisdColor,

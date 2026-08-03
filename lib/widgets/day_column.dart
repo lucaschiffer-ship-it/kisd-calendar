@@ -293,7 +293,11 @@ class _DayColumnState extends State<DayColumn> {
         .where((e) => !e.allDay && e.calendarName != 'KISD')
         .map((e) {
       final startMin = e.start.hour * 60 + e.start.minute;
-      final endMin = (e.end.hour * 60 + e.end.minute).clamp(startMin + 15, 24 * 60);
+      // An end before the start means the event crosses midnight
+      // (e.g. 16:30 – 00:00) — render it to the end of this day.
+      var rawEnd = e.end.hour * 60 + e.end.minute;
+      if (rawEnd < startMin) rawEnd = 24 * 60;
+      final endMin = rawEnd.clamp(startMin + 15, 24 * 60);
       return _EvtItem(event: e, startMin: startMin, endMin: endMin);
     });
 
@@ -303,8 +307,10 @@ class _DayColumnState extends State<DayColumn> {
     final activeKey = widget.editController?.activeKey;
     final occItems = _occs.map((o) {
       final startMin = o.start.hour * 60 + o.start.minute;
-      final endMin =
-          (o.end.hour * 60 + o.end.minute).clamp(startMin + 15, 24 * 60);
+      // Same midnight-crossing handling as device events above.
+      var rawEnd = o.end.hour * 60 + o.end.minute;
+      if (rawEnd < startMin) rawEnd = 24 * 60;
+      final endMin = rawEnd.clamp(startMin + 15, 24 * 60);
       return _EvtItem(occ: o, startMin: startMin, endMin: endMin);
     });
 

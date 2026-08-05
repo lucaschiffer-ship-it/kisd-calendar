@@ -7,12 +7,15 @@ class ThemeService {
 
   static const _colorKey         = 'kisd_color';
   static const _glassKey         = 'kisd_glass';
+  static const _roundedBarsKey   = 'kisd_rounded_bars';
   static const _showKisdEventsKey = 'show_kisd_events_v2';
 
   // Accepts 'light' or 'dark' only.
   // A persisted 'pastel' value migrates to 'dark' on first read.
   final ValueNotifier<String> currentColor   = ValueNotifier<String>('dark');
   final ValueNotifier<bool>   glassEnabled   = ValueNotifier<bool>(true);
+  // Fully-rounded bottom cluster: the nav pills and the Spaces mini bar.
+  final ValueNotifier<bool>   roundedBars    = ValueNotifier<bool>(true);
   final ValueNotifier<bool>   showKisdEvents = ValueNotifier<bool>(true);
 
   Future<void> init() async {
@@ -21,6 +24,7 @@ class ThemeService {
     // Migrate pastel → dark
     currentColor.value   = stored == 'pastel' ? 'dark' : stored;
     glassEnabled.value   = prefs.getBool(_glassKey) ?? true;
+    roundedBars.value    = prefs.getBool(_roundedBarsKey) ?? true;
     showKisdEvents.value = prefs.getBool(_showKisdEventsKey) ?? true;
   }
 
@@ -36,6 +40,12 @@ class ThemeService {
     glassEnabled.value = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_glassKey, value);
+  }
+
+  Future<void> setRoundedBars(bool value) async {
+    roundedBars.value = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_roundedBarsKey, value);
   }
 
   Future<void> setShowKisdEvents(bool value) async {

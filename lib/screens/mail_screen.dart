@@ -9,7 +9,9 @@ import '../services/page_actions.dart';
 import '../services/service_locator.dart';
 import '../services/theme_service.dart';
 import '../theme/tokens.dart';
+import '../widgets/glass_pill.dart';
 import '../widgets/morphing_glass_header.dart';
+import '../widgets/page_floating_actions.dart';
 import 'compose_screen.dart';
 import 'email_detail_screen.dart';
 
@@ -352,7 +354,10 @@ class _MailScreenState extends State<MailScreen>
                 )
               else
                 SliverPadding(
-                  padding: const EdgeInsets.only(bottom: 48),
+                  // 48 of breathing room, plus clearance for the floating
+                  // bottom cluster the list now scrolls behind.
+                  padding: EdgeInsets.only(
+                      bottom: 48 + bottomClusterHeight(context)),
                   sliver: SliverList.separated(
                     itemCount: filtered.length,
                     separatorBuilder: (context, index) =>
@@ -398,42 +403,27 @@ class _MailScreenState extends State<MailScreen>
         ),
         Positioned(top: 0, left: 0, right: 0, child: header),
 
-        // ── Compose FAB ───────────────────────────────────────────────────
-        Positioned(
-          right: 16,
-          bottom: 24,
-          child: GestureDetector(
-            onTap: openCompose,
-            child: glass
-                ? tokens.AppThemeTokens.glassContainer(
-                    borderRadius: BorderRadius.circular(AppRadius.pill),
-                    tintColor: s.accent,
-                    opacity: 0.44,
-                    child: const SizedBox(
-                      width: 52,
-                      height: 52,
-                      child: Icon(Icons.edit_outlined,
-                          color: Colors.white, size: 24),
-                    ),
-                  )
-                : Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      color: s.accent,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.25),
-                          blurRadius: 12,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: const Icon(Icons.edit_outlined,
-                        color: Colors.white, size: 24),
+        // ── Compose button ────────────────────────────────────────────────
+        // Same material, size and baseline as the Spaces mini bar's square,
+        // mirrored to the right-hand side.
+        PageFloatingActions(
+          handle: widget.header,
+          children: [
+            GestureDetector(
+              onTap: openCompose,
+              child: GlassPill(
+                child: SizedBox(
+                  width: kFloatingButtonSize,
+                  height: kFloatingButtonSize,
+                  child: Icon(
+                    Icons.edit_outlined,
+                    color: tokens.AppThemeTokens.navBarIcon,
+                    size: 24,
                   ),
-          ),
+                ),
+              ),
+            ),
+          ],
         ),
       ],
     );

@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../config/app_theme.dart';
 import '../services/theme_service.dart';
 import 'mini_month.dart';
+import 'page_floating_actions.dart' show bottomClusterHeight;
 
 // ─── Layout constants ─────────────────────────────────────────────────────────
 
@@ -86,6 +87,10 @@ class _YearViewState extends State<YearView> {
       ]),
       builder: (context, _) => ListView.builder(
         controller: _scrollController,
+        // Below the content, so saved scroll offsets keep their meaning; it
+        // only extends the range far enough for the last row to clear the
+        // floating bottom cluster this now scrolls behind.
+        padding: EdgeInsets.only(bottom: bottomClusterHeight(context)),
         itemCount: _totalYears,
         itemBuilder: (context, index) => _YearSection(
           year: _startYear + index,

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -8,7 +10,9 @@ import '../services/page_actions.dart';
 import '../services/theme_service.dart';
 import '../services/translation_service.dart';
 import '../theme/tokens.dart';
+import '../widgets/glass_pill.dart';
 import '../widgets/morphing_glass_header.dart';
+import '../widgets/page_floating_actions.dart';
 
 class MensaScreen extends StatefulWidget {
   const MensaScreen({super.key, required this.actions, required this.header});
@@ -43,12 +47,17 @@ class _MensaScreenState extends State<MensaScreen>
   DateTime _selectedDate = DateTime.now();
   bool _translate = false;
 
+  /// Bumped by [_onReload] to force the visible day page to remount and refetch
+  /// — the parent has no other handle on [_MensaDayPage]'s state.
+  int _reloadToken = 0;
+  bool _reloadDone = false;
+
   @override
   void initState() {
     super.initState();
     _baseDate = DateTime.now();
     _pageController = PageController(initialPage: _initialPage);
-    widget.actions.handler = _toggleTranslate;
+    widget.actions.handler = _onReload;
   }
 
   @override
@@ -59,6 +68,18 @@ class _MensaScreenState extends State<MensaScreen>
 
   DateTime _dateForPage(int page) =>
       _baseDate.add(Duration(days: page - _initialPage));
+
+  /// The page showing *today*, which is only [_initialPage] until the app lives
+  /// past midnight — [_baseDate] is captured once, in initState.
+  ///
+  /// Diffed through UTC so a DST boundary between the two dates can't shift the
+  /// day count by one.
+  int get _todayPage {
+    final now = DateTime.now();
+    final today = DateTime.utc(now.year, now.month, now.day);
+    final base = DateTime.utc(_baseDate.year, _baseDate.month, _baseDate.day);
+    return _initialPage + today.difference(base).inDays;
+  }
 
   void _changeDay(int delta) {
     final current = _pageController.page?.round() ?? _initialPage;
@@ -75,6 +96,63 @@ class _MensaScreenState extends State<MensaScreen>
     return '$weekday, ${d.day}. $month';
   }
 
+  // Mirrors the reload button's busy/done state into the bottom bar's slot.
+  void _syncActionPhase({required bool busy}) {
+    widget.actions.phase.value = busy
+        ? ActionPhase.busy
+        : _reloadDone
+            ? ActionPhase.done
+            : ActionPhase.idle;
+  }
+
+  /// Bottom-bar action: refresh today's menu and travel back to today.
+  ///
+  /// Order matters for how quick this feels. The pager starts moving straight
+  /// away and keeps showing the cached menu; only once the fresh data has
+  /// landed in the service cache do we remount the day page, so it reads a warm
+  /// cache and swaps content in without ever flashing a spinner. Fetching here
+  /// rather than letting the remounted child do it is also what keeps this to a
+  /// single HTTP request.
+  Future<void> _onReload() async {
+    // The pager is only laid out while this page is on screen, and the
+    // bottom-bar slot could in principle be tapped a frame before that. Bail on
+    // the whole reload rather than just the animation: _selectedDate only
+    // advances via onPageChanged, so a refresh without the travel would leave
+    // the header and the visible day disagreeing.
+    if (!_pageController.hasClients) return;
+
+    final target = _todayPage;
+    final today = _dateForPage(target);
+
+    _syncActionPhase(busy: true);
+    unawaited(_pageController.animateToPage(
+      target,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    ));
+
+    mensaService.clearCacheForDate(today);
+    try {
+      await mensaService.fetchMeals(today);
+    } catch (_) {
+      // Leave the stale content up; the day page keeps its own retry path.
+      if (mounted) _syncActionPhase(busy: false);
+      return;
+    }
+    if (!mounted) return;
+
+    setState(() {
+      _reloadToken++;
+      _reloadDone = true;
+    });
+    _syncActionPhase(busy: false);
+    Future.delayed(const Duration(seconds: 1), () {
+      if (!mounted) return;
+      _reloadDone = false;
+      _syncActionPhase(busy: false);
+    });
+  }
+
   Future<void> _toggleTranslate() async {
     if (!_translate && !await translationService.isSupported()) {
       if (!mounted) return;
@@ -83,10 +161,7 @@ class _MensaScreenState extends State<MensaScreen>
       ));
       return;
     }
-    if (mounted) {
-      setState(() => _translate = !_translate);
-      widget.actions.toggleActive.value = _translate;
-    }
+    if (mounted) setState(() => _translate = !_translate);
   }
 
   @override
@@ -157,7 +232,10 @@ class _MensaScreenState extends State<MensaScreen>
       itemBuilder: (context, page) {
         final date = _dateForPage(page);
         return _MensaDayPage(
-          key: ValueKey('${date.year}-${date.month}-${date.day}'),
+          // _reloadToken in the key is what makes the bottom-bar reload
+          // actually refetch: it remounts the page so initState runs again.
+          key: ValueKey(
+              '$_reloadToken-${date.year}-${date.month}-${date.day}'),
           date: date,
           headerHeight: headerH,
           translate: _translate,
@@ -169,6 +247,30 @@ class _MensaScreenState extends State<MensaScreen>
       children: [
         pageView,
         Positioned(top: 0, left: 0, right: 0, child: header),
+        // Translate toggle, level with the Spaces mini bar on the right.
+        PageFloatingActions(
+          handle: widget.header,
+          children: [
+            GestureDetector(
+              onTap: _toggleTranslate,
+              child: GlassPill(
+                child: SizedBox(
+                  width: kFloatingButtonSize,
+                  height: kFloatingButtonSize,
+                  child: Icon(
+                    Icons.translate,
+                    // 24, not the bottom bar's 22: these buttons are a 50px
+                    // family now, and the compose glyph is 24.
+                    color: _translate
+                        ? s.accent
+                        : tokens.AppThemeTokens.navBarIcon,
+                    size: 24,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ],
     );
   }
@@ -314,7 +416,11 @@ class _MensaDayPageState extends State<_MensaDayPage> {
               itemBuilder: (_, i) => _MealRow(meal: entry.value[i]),
             ),
           ],
-          const SliverPadding(padding: EdgeInsets.only(bottom: 48)),
+          // 48 of breathing room, plus clearance for the floating bottom
+          // cluster the list now scrolls behind.
+          SliverPadding(
+              padding: EdgeInsets.only(
+                  bottom: 48 + bottomClusterHeight(context))),
         ],
       ),
     );

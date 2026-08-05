@@ -322,11 +322,15 @@ class _CourseShellCardState extends State<CourseShellCard>
                 ),
               ],
             );
+            final dark = ThemeService.instance.currentColor.value == 'dark';
             if (glass) {
-              final dark = ThemeService.instance.currentColor.value == 'dark';
               return tokens.AppThemeTokens.glassContainer(
-                opacity: dark ? 0.03 : 0.08,
-                borderAlpha: dark ? 0.05 : 0.20,
+                opacity: dark
+                    ? AppGlass.shellFillAlphaDark
+                    : AppGlass.shellFillAlphaLight,
+                borderAlpha: dark
+                    ? AppGlass.shellBorderAlphaDark
+                    : AppGlass.shellBorderAlphaLight,
                 blur: 15,
                 borderRadius: BorderRadius.circular(radius),
                 child: Padding(
@@ -336,8 +340,12 @@ class _CourseShellCardState extends State<CourseShellCard>
               );
             }
             return AppCard(
-              color: tokens.AppThemeTokens.cardBackground,
-              borderColor: tokens.AppThemeTokens.cardBorder,
+              color: dark
+                  ? AppGlass.shellFillDark
+                  : tokens.AppThemeTokens.cardBackground,
+              borderColor: dark
+                  ? AppGlass.shellBorderDark
+                  : tokens.AppThemeTokens.cardBorder,
               borderRadius: radius,
               padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
               child: body,
@@ -441,11 +449,15 @@ class _NewCourseCardState extends State<NewCourseCard> {
                   ),
                 ),
               );
+              final dark = ThemeService.instance.currentColor.value == 'dark';
               if (glass) {
-                final dark = ThemeService.instance.currentColor.value == 'dark';
                 return tokens.AppThemeTokens.glassContainer(
-                  opacity: dark ? 0.03 : 0.08,
-                  borderAlpha: dark ? 0.05 : 0.20,
+                  opacity: dark
+                      ? AppGlass.shellFillAlphaDark
+                      : AppGlass.shellFillAlphaLight,
+                  borderAlpha: dark
+                      ? AppGlass.shellBorderAlphaDark
+                      : AppGlass.shellBorderAlphaLight,
                   blur: 15,
                   borderRadius: BorderRadius.circular(radius),
                   child: Padding(
@@ -456,8 +468,12 @@ class _NewCourseCardState extends State<NewCourseCard> {
                 );
               }
               return AppCard(
-                color: tokens.AppThemeTokens.cardBackground,
-                borderColor: tokens.AppThemeTokens.cardBorder,
+                color: dark
+                    ? AppGlass.shellFillDark
+                    : tokens.AppThemeTokens.cardBackground,
+                borderColor: dark
+                    ? AppGlass.shellBorderDark
+                    : tokens.AppThemeTokens.cardBorder,
                 borderRadius: radius,
                 padding:
                     const EdgeInsets.symmetric(horizontal: 28, vertical: 14),

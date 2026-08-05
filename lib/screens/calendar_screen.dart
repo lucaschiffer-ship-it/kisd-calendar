@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
@@ -15,9 +16,11 @@ import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/day_column.dart';
 import '../widgets/event_edit_layer.dart';
+import '../widgets/glass_pill.dart';
 import '../widgets/month_grid.dart';
 import '../widgets/month_view.dart';
 import '../widgets/morphing_glass_header.dart';
+import '../widgets/page_floating_actions.dart';
 import '../widgets/year_view.dart';
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
@@ -116,6 +119,27 @@ class _CalendarScreenState extends State<CalendarScreen>
   late AnimationController _dayBarAnim;
   late CurvedAnimation _dayBarCurved;
 
+  // ── All-day band ──────────────────────────────────────────────────────────
+  // Owned here rather than inside _AllDayBand because the band is part of the
+  // pinned header now: _headerHeight has to know how tall it is *before* the
+  // band builds, so the morphing glass surface can be sized to include it.
+  List<AllDayEvent> _allDaySorted = const [];
+  List<int> _allDayRowOf = const [];
+  int _allDayRows = 0;
+  // The focused day the current all-day data was loaded for; null = never.
+  DateTime? _allDayLoadedFor;
+
+  // Height animation, replacing the AnimatedSize the band used to own — the
+  // header surface and the band content have to grow in lockstep now.
+  late AnimationController _allDayAnim;
+  late CurvedAnimation _allDayCurved;
+  double _allDayFromH = 0.0;
+  double _allDayToH = 0.0;
+
+  /// Current height of the all-day rows (0 when the day has none).
+  double get _allDayH =>
+      lerpDouble(_allDayFromH, _allDayToH, _allDayCurved.value)!;
+
   // Three persistent DayColumn slots: [prev, center, next]
   late List<GlobalKey> _slotKeys;
 
@@ -166,9 +190,22 @@ class _CalendarScreenState extends State<CalendarScreen>
   // Exact at every frame (no AnimatedSize smoothing): the strip's real height
   // is (_kDayBarH - 42·mv) scaled by the day-bar visibility, so the pinned
   // MorphingGlassHeader surface can be sized to it directly.
+  //
+  // The column-label bar and the all-day rows are part of the header too, so
+  // the page-switch morph travels all the way down to the bottom of the all-day
+  // bar instead of stopping under the week strip. They ride the same day-bar
+  // factor (gone in list mode and above day level) and collapse into the month
+  // morph, which is why _monthTopInset below stays the week-strip-only height.
   double _headerHeight(double statusH) =>
       statusH + _kTitleRowH +
-      (_kDayBarH - 42.0 * _monthCurved.value) * _dayBarCurved.value;
+      (_kDayBarH - 42.0 * _monthCurved.value) * _dayBarCurved.value +
+      _bandBlockH;
+
+  /// Column-label bar + all-day rows, as the header currently renders them.
+  double get _bandBlockH =>
+      (_kColLabelH + _allDayH) *
+      (1.0 - _monthCurved.value) *
+      _dayBarCurved.value;
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -194,6 +231,13 @@ class _CalendarScreenState extends State<CalendarScreen>
       value: 1.0,
     );
     _dayBarCurved = CurvedAnimation(parent: _dayBarAnim, curve: Curves.easeOut);
+    _allDayAnim = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+      value: 1.0,
+    );
+    _allDayCurved = CurvedAnimation(parent: _allDayAnim, curve: Curves.easeOut);
+    CalendarService.instance.writeRevision.addListener(_onAllDayRevisionChanged);
     _swipeSnapAnim = AnimationController(vsync: this);
     _weekStripSnapAnim = AnimationController(vsync: this);
     _monthAnim = AnimationController(
@@ -213,6 +257,10 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   @override
   void dispose() {
+    CalendarService.instance.writeRevision
+        .removeListener(_onAllDayRevisionChanged);
+    _allDayCurved.dispose();
+    _allDayAnim.dispose();
     _editController.dispose();
     _monthScrollCtrl?.dispose();
     _monthCurved.dispose();
@@ -225,6 +273,76 @@ class _CalendarScreenState extends State<CalendarScreen>
     _stretchCurved.dispose();
     _stretchAnim.dispose();
     super.dispose();
+  }
+
+  // ── All-day data ───────────────────────────────────────────────────────────
+
+  // No synchronous setState: writeRevision can fire from anywhere, including
+  // inside a build. _loadAllDay only calls setState after an await.
+  void _onAllDayRevisionChanged() {
+    final day = _dayForMultiDayPage(_focusedMultiDayPage);
+    _allDayLoadedFor = day;
+    unawaited(_loadAllDay(day));
+  }
+
+  /// Kicks off a reload when the focused day has moved. Called from build:
+  /// _focusedMultiDayPage is written from a dozen places (drags, drills, Today,
+  /// week-strip taps) and this keeps them all honest without touching each one.
+  /// Safe from build — the setState only ever happens after an await.
+  void _syncAllDayForFocusedDay() {
+    final day = _dayForMultiDayPage(_focusedMultiDayPage);
+    if (_allDayLoadedFor == day) return;
+    _allDayLoadedFor = day;
+    // The outgoing day's events are deliberately kept until the load lands.
+    // Capsule offsets are recomputed from focusedDay every build, so held-over
+    // events slide to the correct column on their own — at worst an event on
+    // the newly-revealed edge day is missing for a frame. Clearing them instead
+    // would blink the whole band out on every day swipe.
+    unawaited(_loadAllDay(day));
+  }
+
+  Future<void> _loadAllDay(DateTime day) async {
+    final events = await CalendarService.instance.getAllDayEventsForRange(
+      day.subtract(const Duration(days: 1)),
+      day.add(const Duration(days: 1)),
+    );
+    // A faster swipe may have moved on while this was in flight.
+    if (!mounted || _allDayLoadedFor != day) return;
+
+    // ── Greedy row-packing (interval graph coloring) ─────────────────────────
+    final sorted = [...events]..sort((a, b) => a.startDate.compareTo(b.startDate));
+    final rowMaxEnd = <DateTime>[];
+    final rowOf = <int>[];
+    for (final evt in sorted) {
+      var row = -1;
+      for (var r = 0; r < rowMaxEnd.length; r++) {
+        if (rowMaxEnd[r].isBefore(evt.startDate)) { row = r; break; }
+      }
+      if (row == -1) {
+        row = rowMaxEnd.length;
+        rowMaxEnd.add(evt.endDate);
+      } else {
+        if (evt.endDate.isAfter(rowMaxEnd[row])) rowMaxEnd[row] = evt.endDate;
+      }
+      rowOf.add(row);
+    }
+
+    final rows = rowMaxEnd.length;
+    final target =
+        _AllDayBand.contentH(rows).clamp(0.0, _AllDayBand.maxH).toDouble();
+
+    setState(() {
+      _allDaySorted = sorted;
+      _allDayRowOf = rowOf;
+      _allDayRows = rows;
+      if (target != _allDayToH) {
+        // Animate from wherever the band currently stands, so a change landing
+        // mid-animation doesn't snap. The header surface follows the same value.
+        _allDayFromH = _allDayH;
+        _allDayToH = target;
+        _allDayAnim.forward(from: 0.0);
+      }
+    });
   }
 
   // ── Navigation ─────────────────────────────────────────────────────────────
@@ -836,9 +954,12 @@ class _CalendarScreenState extends State<CalendarScreen>
         _stretchAnim,
         _dayBarAnim,
         _monthAnim,
+        _allDayAnim,
       ]),
       builder: (context, _) {
         final colorKey = ThemeService.instance.currentColor.value;
+
+        _syncAllDayForFocusedDay();
 
         final view    = View.of(context);
         final statusH = view.viewPadding.top / view.devicePixelRatio;
@@ -901,24 +1022,35 @@ class _CalendarScreenState extends State<CalendarScreen>
                 ),
               ),
             ),
-            // Month/Week toggle: left side, mirrors the Today button.
-            if (_navLevel == _NavLevel.day)
-              Positioned(
-                bottom: 66,
-                left: 16,
-                child: _MonthButton(
-                  label: _monthActive
-                      ? 'Week'
-                      : _kMonthNames[
-                          _dayForMultiDayPage(_focusedMultiDayPage).month - 1],
-                  onTap: _onMonthButtonTap,
+            // Today + month/Week, in a row on the right opposite the Spaces
+            // mini bar. Today holds the right-hand corner and never moves; the
+            // month pill only exists in day/week view and comes and goes to its
+            // left.
+            //
+            // Must stay last in this Stack: the _viewMenuOpen dismiss overlay
+            // above is Positioned.fill + opaque, and would swallow taps meant
+            // for anything declared before it.
+            PageFloatingActions(
+              handle: widget.header,
+              axis: Axis.horizontal,
+              children: [
+                // Keyed so the month pill vanishing doesn't hand its State to
+                // the Today pill by index.
+                if (_navLevel == _NavLevel.day)
+                  _CalendarPill(
+                    key: const ValueKey('month'),
+                    label: _monthActive
+                        ? 'Week'
+                        : _kMonthNames[
+                            _dayForMultiDayPage(_focusedMultiDayPage).month - 1],
+                    onTap: _onMonthButtonTap,
+                  ),
+                _CalendarPill(
+                  key: const ValueKey('today'),
+                  label: 'Today',
+                  onTap: _goToToday,
                 ),
-              ),
-            // Today button: right side, always visible above the Spaces mini bar.
-            Positioned(
-              bottom: 66,
-              right: 16,
-              child: _TodayButton(onTap: _goToToday),
+              ],
             ),
           ],
         );
@@ -983,16 +1115,53 @@ class _CalendarScreenState extends State<CalendarScreen>
 
           // ── Week strip (animates in/out when toggling list mode and when
           // leaving day level; stays mounted until fully collapsed) ─────────
-          if (_navLevel == _NavLevel.day || !_dayBarAnim.isDismissed)
+          if (_navLevel == _NavLevel.day || !_dayBarAnim.isDismissed) ...[
             SizeTransition(
               sizeFactor: _dayBarCurved,
               axisAlignment: -1.0,
               child: _buildWeekStrip(),
             ),
+            // ── Column labels + all-day rows ───────────────────────────────
+            // Part of the header so the page-switch morph runs all the way to
+            // the bottom of the all-day bar, and so this block pins on screen
+            // instead of sliding away with the body. No material of its own:
+            // the header's glass is the one continuous surface, and the
+            // header's own bottom border is the divider under it.
+            SizeTransition(
+              sizeFactor: _dayBarCurved,
+              axisAlignment: -1.0,
+              // Collapses from the bottom as the month morph runs, matching the
+              // (1 - monthCurved) factor in _bandBlockH exactly.
+              child: ClipRect(
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  heightFactor: (1.0 - _monthCurved.value).clamp(0.0, 1.0),
+                  child: _buildBandBlock(),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
+
+  /// Column label bar + all-day rows, at their natural height.
+  Widget _buildBandBlock() => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildColumnLabelBar(),
+          _AllDayBand(
+            focusedDay: _dayForMultiDayPage(_focusedMultiDayPage),
+            swipeFraction: _swipeFraction,
+            stretchValue: _stretchCurved.value,
+            sorted: _allDaySorted,
+            rowOf: _allDayRowOf,
+            totalRows: _allDayRows,
+            height: _allDayH,
+          ),
+        ],
+      );
 
   // ── Week strip: full Mon–Sun, horizontally swipeable to adjacent weeks ──────
 
@@ -1322,7 +1491,6 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   Widget _buildDayView(BuildContext context, double topOffset) {
     final colorKey = ThemeService.instance.currentColor.value;
-    final glass    = ThemeService.instance.glassEnabled.value;
 
     // Unified base tint — the transparent DayColumn grid shows this.
     // Dark uses full black to match the app-wide background.
@@ -1332,45 +1500,10 @@ class _CalendarScreenState extends State<CalendarScreen>
       _        => const Color(0xFFF7F4F1),
     };
 
-    // Column label bar + all-day band content (shared by both glass paths).
-    final bandContent = Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _buildColumnLabelBar(),
-        _AllDayBand(
-          focusedDay: _dayForMultiDayPage(_focusedMultiDayPage),
-          swipeFraction: _swipeFraction,
-          stretchValue: _stretchCurved.value,
-        ),
-      ],
-    );
-
-    // Glass path: blur samples scrolling timeline beneath the band.
-    // Non-glass path: solid base color so the band blends into the body.
-    final Widget band = glass
-        ? ClipRect(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: colorKey == 'dark'
-                      ? Colors.white.withValues(alpha: 0.08)
-                      : Colors.white.withValues(alpha: 0.50),
-                  border: Border(bottom: BorderSide(
-                      color: tokens.AppThemeTokens.dividerColor, width: 0.5)),
-                ),
-                child: bandContent,
-              ),
-            ),
-          )
-        : Container(
-            decoration: BoxDecoration(
-              color: baseColor,
-              border: Border(bottom: BorderSide(
-                  color: tokens.AppThemeTokens.dividerColor, width: 0.5)),
-            ),
-            child: bandContent,
-          );
+    // The column label bar and all-day rows used to be pinned here with their
+    // own glass. They now live in the MorphingGlassHeader (see _buildBandBlock)
+    // so they pin and morph with it; topOffset already accounts for their
+    // height via _bandBlockH.
 
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 200),
@@ -1387,13 +1520,6 @@ class _CalendarScreenState extends State<CalendarScreen>
                 // Base layer — gives the transparent timeline cells a unified tint.
                 Positioned.fill(child: ColoredBox(color: baseColor)),
                 _buildUnifiedTimeline(topOffset),
-                // Day-header + all-day band pinned above the scrolling timeline.
-                Positioned(
-                  top: topOffset,
-                  left: 0,
-                  right: 0,
-                  child: band,
-                ),
               ],
             ),
     );
@@ -1426,6 +1552,11 @@ class _CalendarScreenState extends State<CalendarScreen>
 
       return SingleChildScrollView(
         controller: _timelineScrollController,
+        // Below the content, so scroll offset → hour stays exactly as it was
+        // (EventEditLayer and _scrollToDefaultTime both rely on that mapping);
+        // it only extends the scroll range far enough for the last hour to
+        // clear the floating pills.
+        padding: EdgeInsets.only(bottom: bottomClusterHeight(context)),
         child: SizedBox(
           height: DayColumn.hourHeight * 24,
           child: Row(
@@ -1467,7 +1598,11 @@ class _CalendarScreenState extends State<CalendarScreen>
                           slotLefts: slotLefts,
                           slotWidth: slotW,
                           scrollController: _timelineScrollController,
-                          headerInset: topOffset + _kColLabelH,
+                          // topOffset is the full header now — week strip,
+                          // column labels and all-day rows. It used to stop at
+                          // the week strip, hence the extra _kColLabelH here
+                          // (which silently ignored the all-day rows' height).
+                          headerInset: topOffset,
                         ),
                       ],
                     ),
@@ -1624,115 +1759,61 @@ class _IconChip extends StatelessWidget {
 
 // ─── All-day event band ───────────────────────────────────────────────────────
 
-class _AllDayBand extends StatefulWidget {
+/// The all-day rows, rendered from data and a height the calendar state owns.
+///
+/// Was stateful and self-loading, with an AnimatedSize for its height. Both
+/// moved up to _CalendarScreenState when this became part of the pinned header:
+/// _headerHeight has to know how tall the band is in the same frame it sizes
+/// the glass surface, which a child that measures itself can't provide.
+class _AllDayBand extends StatelessWidget {
   const _AllDayBand({
     required this.focusedDay,
     required this.swipeFraction,
     required this.stretchValue,
+    required this.sorted,
+    required this.rowOf,
+    required this.totalRows,
+    required this.height,
   });
 
   final DateTime focusedDay;
   final double   swipeFraction;
   final double   stretchValue;
 
+  /// Events sorted by start date, and the packed row index of each.
+  final List<AllDayEvent> sorted;
+  final List<int> rowOf;
+  final int totalRows;
+
+  /// Animated height, driven by _CalendarScreenState so the header surface and
+  /// these rows grow in lockstep.
+  final double height;
+
   static const double _rowH   = 24.0;
   static const double _rowGap = 2.0;
   static const double _padV   = 4.0;
   static const int    _maxVis = 3;
-  static const double _maxH   =
+  static const double maxH    =
       _padV + _maxVis * _rowH + (_maxVis - 1) * _rowGap + _padV; // 84
 
-  static double _contentH(int rows) =>
+  static double contentH(int rows) =>
       rows == 0 ? 0 : _padV + rows * _rowH + (rows - 1) * _rowGap + _padV;
 
   @override
-  State<_AllDayBand> createState() => _AllDayBandState();
-}
-
-class _AllDayBandState extends State<_AllDayBand> {
-  List<AllDayEvent> _events = const [];
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-    CalendarService.instance.writeRevision.addListener(_onWriteRevisionChanged);
-  }
-
-  @override
-  void dispose() {
-    CalendarService.instance.writeRevision.removeListener(_onWriteRevisionChanged);
-    super.dispose();
-  }
-
-  @override
-  void didUpdateWidget(_AllDayBand old) {
-    super.didUpdateWidget(old);
-    // Reload only when the date window shifts — not on every swipe frame.
-    if (old.focusedDay != widget.focusedDay) _load();
-  }
-
-  void _onWriteRevisionChanged() => _load();
-
-  Future<void> _load() async {
-    final day = widget.focusedDay;
-    final events = await CalendarService.instance.getAllDayEventsForRange(
-      day.subtract(const Duration(days: 1)),
-      day.add(const Duration(days: 1)),
-    );
-    if (mounted && widget.focusedDay == day) {
-      setState(() => _events = events);
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: Listenable.merge([
-        ThemeService.instance.currentColor,
-      ]),
-      builder: (context, _) => _buildBand(),
-    );
-  }
+    final cHeight = contentH(totalRows);
 
-  Widget _buildBand() {
-    // ── Greedy row-packing (interval graph coloring) ────────────────────────
-    final sorted = [..._events]..sort((a, b) => a.startDate.compareTo(b.startDate));
-    final rowMaxEnd = <DateTime>[];
-    final rowOf     = <int>[];
-
-    for (final evt in sorted) {
-      var row = -1;
-      for (var r = 0; r < rowMaxEnd.length; r++) {
-        if (rowMaxEnd[r].isBefore(evt.startDate)) { row = r; break; }
-      }
-      if (row == -1) {
-        row = rowMaxEnd.length;
-        rowMaxEnd.add(evt.endDate);
-      } else {
-        if (evt.endDate.isAfter(rowMaxEnd[row])) rowMaxEnd[row] = evt.endDate;
-      }
-      rowOf.add(row);
-    }
-
-    final totalRows = rowMaxEnd.length;
-    final cHeight   = _AllDayBand._contentH(totalRows);
-    final bandH     = cHeight.clamp(0.0, _AllDayBand._maxH);
-
-    return AnimatedSize(
-      duration: const Duration(milliseconds: 200),
-      curve: Curves.easeOut,
-      alignment: Alignment.topCenter,
-      child: totalRows == 0
-          ? const SizedBox.shrink()
-          : SizedBox(
-              height: bandH,
+    return SizedBox(
+      height: height,
+      child: height <= 0 || totalRows == 0
+          ? null
+          : ClipRect(
               child: LayoutBuilder(builder: (ctx, box) {
                 // Mirror the column label bar's 5-slot geometry exactly.
                 final contentW    = box.maxWidth - DayColumn.labelWidth;
                 final colW        = contentW / 3.0;
-                final t           = widget.stretchValue;
-                final s           = widget.swipeFraction;
+                final t           = stretchValue;
+                final s           = swipeFraction;
                 final effectiveStep = lerpDouble(colW, contentW, t)!;
                 final centerPos   = (1.0 - t) * colW;
                 final slotLefts   = List.generate(5, (i) =>
@@ -1745,21 +1826,20 @@ class _AllDayBandState extends State<_AllDayBand> {
                   final evt = sorted[i];
                   final row = rowOf[i];
                   final startOffset =
-                      evt.startDate.difference(widget.focusedDay).inDays;
+                      evt.startDate.difference(focusedDay).inDays;
                   final endOffset =
-                      evt.endDate.difference(widget.focusedDay).inDays;
+                      evt.endDate.difference(focusedDay).inDays;
                   final capLeft  = centerPos +
                       startOffset * effectiveStep + s * effectiveStep + 2;
                   final capWidth =
                       (endOffset - startOffset + 1) * effectiveStep - 4;
-                  final capTop   = _AllDayBand._padV +
-                      row * (_AllDayBand._rowH + _AllDayBand._rowGap);
+                  final capTop   = _padV + row * (_rowH + _rowGap);
 
                   capsules.add(Positioned(
                     left:   capLeft,
                     width:  capWidth,
                     top:    capTop,
-                    height: _AllDayBand._rowH,
+                    height: _rowH,
                     child: Container(
                       decoration: BoxDecoration(
                         color: evt.calendarColor.withValues(alpha: 0.25),
@@ -1833,7 +1913,7 @@ class _AllDayBandState extends State<_AllDayBand> {
                   ),
                 );
 
-                return totalRows > _AllDayBand._maxVis
+                return totalRows > _maxVis
                     ? SingleChildScrollView(
                         physics: const ClampingScrollPhysics(),
                         child: fullContent,
@@ -1952,7 +2032,9 @@ class _EventListViewState extends State<_EventListView> {
       ]);
     }
     return ListView.builder(
-      padding: EdgeInsets.zero,
+      // Clears the floating bottom cluster: with extendBody the list runs to
+      // the screen edge, so without this the last row parks behind the pills.
+      padding: EdgeInsets.only(bottom: bottomClusterHeight(context)),
       itemCount: _items.length + 1,
       itemBuilder: (ctx, i) {
         if (i == 0) return SizedBox(height: widget.topInset);
@@ -2055,167 +2137,58 @@ class _EventListViewState extends State<_EventListView> {
   }
 }
 
-// ─── Today button ──────────────────────────────────────────────────────────────
+// ─── Floating calendar pill ───────────────────────────────────────────────────
+//
+// The "Today" and month/"Week" buttons, which stack on the right-hand side of
+// the page opposite the Spaces mini bar. Was two byte-identical classes; the
+// only thing that ever differed is the label.
+//
+// Wears the bottom cluster's material ([GlassPill]) so it reads as chrome
+// rather than page content: same blur, tint, hairline border, and the shape
+// that follows the "Rounded bars" setting. Height matches the Spaces square.
 
-class _TodayButton extends StatefulWidget {
-  const _TodayButton({required this.onTap});
-  final VoidCallback onTap;
-
-  @override
-  State<_TodayButton> createState() => _TodayButtonState();
-}
-
-class _TodayButtonState extends State<_TodayButton> {
-  bool _pressed = false;
-
-  static const _radius = BorderRadius.all(Radius.circular(18));
-  static const _shadow = BoxShadow(
-    color: Color(0x28000000),
-    blurRadius: 16,
-    offset: Offset(0, 4),
-  );
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: ThemeService.instance.glassEnabled,
-      builder: (context, glass, _) => ValueListenableBuilder<String>(
-        valueListenable: ThemeService.instance.currentColor,
-        builder: (context, colorKey, _) => _buildPill(glass, colorKey),
-      ),
-    );
-  }
-
-  Widget _buildPill(bool glass, String colorKey) {
-    final isDark = colorKey == 'dark';
-    final fillColor = isDark
-        ? Colors.white.withValues(alpha: 0.15)
-        : Colors.white.withValues(alpha: 0.35);
-
-    final label = Text(
-      'Today',
-      style: GoogleFonts.inter(
-        fontSize: 14,
-        fontWeight: FontWeight.w600,
-        color: isDark ? Colors.white : Colors.black,
-      ),
-    );
-
-    final pill = Container(
-      decoration: const BoxDecoration(
-        borderRadius: _radius,
-        boxShadow: [_shadow],
-      ),
-      child: ClipRRect(
-        borderRadius: _radius,
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: Container(
-            height: 35,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            decoration: BoxDecoration(
-              color: fillColor,
-              borderRadius: _radius,
-            ),
-            child: Center(child: label),
-          ),
-        ),
-      ),
-    );
-
-    return GestureDetector(
-      onTap: widget.onTap,
-      onTapDown: (_) => setState(() => _pressed = true),
-      onTapUp: (_) => setState(() => _pressed = false),
-      onTapCancel: () => setState(() => _pressed = false),
-      child: AnimatedScale(
-        scale: _pressed ? 0.96 : 1.0,
-        duration: const Duration(milliseconds: 100),
-        child: IntrinsicWidth(child: pill),
-      ),
-    );
-  }
-}
-
-// ─── Month/Week toggle button ─────────────────────────────────────────────────
-// Same pill styling as _TodayButton; label switches with the active view.
-
-class _MonthButton extends StatefulWidget {
-  const _MonthButton({required this.label, required this.onTap});
+class _CalendarPill extends StatefulWidget {
+  const _CalendarPill({super.key, required this.label, required this.onTap});
   final String label;
   final VoidCallback onTap;
 
   @override
-  State<_MonthButton> createState() => _MonthButtonState();
+  State<_CalendarPill> createState() => _CalendarPillState();
 }
 
-class _MonthButtonState extends State<_MonthButton> {
+class _CalendarPillState extends State<_CalendarPill> {
   bool _pressed = false;
-
-  static const _radius = BorderRadius.all(Radius.circular(18));
-  static const _shadow = BoxShadow(
-    color: Color(0x28000000),
-    blurRadius: 16,
-    offset: Offset(0, 4),
-  );
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: ThemeService.instance.glassEnabled,
-      builder: (context, glass, _) => ValueListenableBuilder<String>(
-        valueListenable: ThemeService.instance.currentColor,
-        builder: (context, colorKey, _) => _buildPill(glass, colorKey),
-      ),
-    );
-  }
-
-  Widget _buildPill(bool glass, String colorKey) {
-    final isDark = colorKey == 'dark';
-    final fillColor = isDark
-        ? Colors.white.withValues(alpha: 0.15)
-        : Colors.white.withValues(alpha: 0.35);
-
-    final label = Text(
-      widget.label,
-      style: GoogleFonts.inter(
-        fontSize: 14,
-        fontWeight: FontWeight.w600,
-        color: isDark ? Colors.white : Colors.black,
-      ),
-    );
-
-    final pill = Container(
-      decoration: const BoxDecoration(
-        borderRadius: _radius,
-        boxShadow: [_shadow],
-      ),
-      child: ClipRRect(
-        borderRadius: _radius,
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: Container(
-            height: 35,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            decoration: BoxDecoration(
-              color: fillColor,
-              borderRadius: _radius,
+    // GlassPill subscribes to the theme notifiers itself; this one is only for
+    // the label colour, which tracks the bottom bar's icon tone.
+    return ValueListenableBuilder<String>(
+      valueListenable: ThemeService.instance.currentColor,
+      builder: (context, _, _) => GestureDetector(
+        onTap: widget.onTap,
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapUp: (_) => setState(() => _pressed = false),
+        onTapCancel: () => setState(() => _pressed = false),
+        child: AnimatedScale(
+          scale: _pressed ? 0.96 : 1.0,
+          duration: const Duration(milliseconds: 100),
+          child: GlassPill(
+            child: Container(
+              height: kFloatingButtonSize,
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              alignment: Alignment.center,
+              child: Text(
+                widget.label,
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: tokens.AppThemeTokens.navBarIcon,
+                ),
+              ),
             ),
-            child: Center(child: label),
           ),
         ),
-      ),
-    );
-
-    return GestureDetector(
-      onTap: widget.onTap,
-      onTapDown: (_) => setState(() => _pressed = true),
-      onTapUp: (_) => setState(() => _pressed = false),
-      onTapCancel: () => setState(() => _pressed = false),
-      child: AnimatedScale(
-        scale: _pressed ? 0.96 : 1.0,
-        duration: const Duration(milliseconds: 100),
-        child: IntrinsicWidth(child: pill),
       ),
     );
   }

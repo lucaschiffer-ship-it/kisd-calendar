@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../config/app_theme.dart';
 import '../services/calendar_service.dart';
 import '../services/theme_service.dart';
+import 'page_floating_actions.dart' show bottomClusterHeight;
 
 // ─── Layout constants — must match widget SizedBox heights exactly ────────────
 
@@ -137,6 +138,10 @@ class _MonthViewState extends State<MonthView> {
       ]),
       builder: (context, _) => ListView.builder(
         controller: _scrollController,
+        // Below the content, so saved scroll offsets keep their meaning; it
+        // only extends the range far enough for the last row to clear the
+        // floating bottom cluster this now scrolls behind.
+        padding: EdgeInsets.only(bottom: bottomClusterHeight(context)),
         itemCount: _totalMonths,
         itemBuilder: (context, index) {
           final month = _monthAt(index);

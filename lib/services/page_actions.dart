@@ -5,12 +5,10 @@ enum ActionPhase { idle, busy, done }
 
 /// Bridge between a page and the bottom bar's fixed action slot.
 ///
-/// Owned by HomeScreen (one per page); each screen registers its action via
-/// [handler] and mirrors its private busy/done state into [phase]. Mensa uses
-/// [toggleActive] to reflect the translate toggle instead of a reload phase.
+/// Owned by HomeScreen (one per page); each screen registers its reload via
+/// [handler] and mirrors its private busy/done state into [phase].
 class PageActionController {
   final ValueNotifier<ActionPhase> phase = ValueNotifier(ActionPhase.idle);
-  final ValueNotifier<bool> toggleActive = ValueNotifier(false);
   VoidCallback? handler;
 
   void trigger() {
@@ -20,7 +18,6 @@ class PageActionController {
 
   void dispose() {
     phase.dispose();
-    toggleActive.dispose();
   }
 }
 

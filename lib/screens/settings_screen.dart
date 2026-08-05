@@ -229,6 +229,35 @@ class SettingsScreen extends StatelessWidget {
               },
             ),
           ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: ValueListenableBuilder<bool>(
+              valueListenable: ThemeService.instance.roundedBars,
+              builder: (context, rounded, _) {
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(AppRadius.input),
+                  child: Container(
+                    color: s.surfaceElevated,
+                    child: SwitchListTile(
+                      title: Text(
+                        'Rounded Bars',
+                        style: AppTextStyles.bodyLarge(color: s.textPrimary)
+                            .copyWith(fontWeight: FontWeight.w500),
+                      ),
+                      subtitle: Text(
+                        'Fully rounded navigation and Spaces bar',
+                        style: AppTextStyles.bodySmall(color: s.textSecondary),
+                      ),
+                      value: rounded,
+                      onChanged: ThemeService.instance.setRoundedBars,
+                      activeThumbColor: s.accent,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
 
           // Apple guideline 5.1.1(i): the privacy policy must be reachable
           // from inside the app, not only from the App Store listing.

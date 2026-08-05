@@ -145,6 +145,21 @@ class AppGlass {
   // Fill alpha for glass inputs (search fields, etc.)
   static const double fillAlpha   = 0.12;
 
+  // Course-shell cards (list screen). These sit *just* above the page
+  // background rather than reading as raised panels — lower alpha = fainter.
+  // Dark is measured against pure black, where even 3 % white (#080808) reads
+  // as a distinct panel, so it runs far below the light values; light's
+  // white-on-#F5F5F5 is already near-invisible at 0.08.
+  static const double shellFillAlphaDark    = 0.014;
+  static const double shellFillAlphaLight   = 0.08;
+  static const double shellBorderAlphaDark  = 0.03;
+  static const double shellBorderAlphaLight = 0.20;
+
+  // Opaque equivalents of the dark alphas above, composited over #000000 —
+  // used by the glass-off branch so both render identically in dark mode.
+  static const Color shellFillDark   = Color(0xFF040404);
+  static const Color shellBorderDark = Color(0xFF080808);
+
   // Shadow used beneath floating glass cards
   static const BoxShadow cardShadow = BoxShadow(
     color:      Color(0x38000000), // black 22 %

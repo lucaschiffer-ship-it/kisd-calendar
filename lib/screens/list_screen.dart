@@ -16,6 +16,7 @@ import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/course_shell_card.dart';
 import '../widgets/morphing_glass_header.dart';
+import '../widgets/page_floating_actions.dart';
 import 'course_shell_edit_screen.dart';
 
 // ── Abbreviations ─────────────────────────────────────────────────────────────
@@ -1021,9 +1022,11 @@ class _ListScreenState extends State<ListScreen>
             )
           else
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(
+              // Bottom: 40 of breathing room, plus clearance for the floating
+              // bottom cluster the list now scrolls behind.
+              padding: EdgeInsets.fromLTRB(
                 AppSpacing.screenPadding, 12,
-                AppSpacing.screenPadding, 40,
+                AppSpacing.screenPadding, 40 + bottomClusterHeight(context),
               ),
               sliver: SliverList.builder(
                 itemCount: displayList.length + (isCustomPage ? 1 : 0),

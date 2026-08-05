@@ -1,3 +1,5 @@
+import 'dart:ui' show lerpDouble;
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -13,6 +15,8 @@ import '../services/service_locator.dart';
 import '../services/spaces_browser.dart';
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/glass_pill.dart';
+import '../widgets/page_floating_actions.dart';
 
 export '../services/spaces_browser.dart' show SpacesBrowser;
 
@@ -101,6 +105,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     mailService.addListener(_rebuild);
     ThemeService.instance.currentColor.addListener(_rebuild);
     ThemeService.instance.glassEnabled.addListener(_rebuild);
+    ThemeService.instance.roundedBars.addListener(_rebuild);
     SpacesBrowser.register((url) {
       // Loads in the content tab; the pinned home tab (and its pre-auth
       // reload guard in _openSheet) is unaffected.
@@ -123,6 +128,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     mailService.removeListener(_rebuild);
     ThemeService.instance.currentColor.removeListener(_rebuild);
     ThemeService.instance.glassEnabled.removeListener(_rebuild);
+    ThemeService.instance.roundedBars.removeListener(_rebuild);
     super.dispose();
   }
 
@@ -329,11 +335,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final screenHeight = MediaQuery.of(context).size.height;
-    final bottomPadding =
-        (MediaQuery.of(context).padding.bottom - _BottomBar.bottomTuck)
-            .clamp(0.0, double.infinity);
-    const tabRowHeight = 60.0;
-    final navBarHeight = tabRowHeight + bottomPadding;
+    // The bar reserves nothing now (extendBody) — this is purely how far up
+    // from the screen bottom the mini Spaces bar has to stack.
+    final navBarHeight = bottomClusterHeight(context);
     final s = AppColorScheme.current;
 
     return Stack(
@@ -342,6 +346,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         Scaffold(
           backgroundColor: tokens.AppThemeTokens.backgroundColor,
           extendBodyBehindAppBar: true,
+          // The bottom bar is a floating pill row with no surface of its own.
+          // Without this the Scaffold reserves its height, and the strip of
+          // background left behind reads as a footer the pills sit inside.
+          extendBody: true,
           appBar: AppBar(
             backgroundColor: Colors.transparent,
             elevation: 0,
@@ -377,25 +385,36 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ),
 
         // ── Persistent mini browser bar ───────────────────────────────────
+        // Full-width on the List page, morphing into a 50×50 square on the
+        // other pages, tracking the pager position live during swipes.
         AnimatedBuilder(
-          animation: _sheetAnim,
-          builder: (context, child) {
+          animation: Listenable.merge([_sheetAnim, _pagePos]),
+          builder: (context, _) {
             final opacity = (1.0 - _sheetAnim.value * 4).clamp(0.0, 1.0);
+            var d = (_pagePos.value - _initialPage) % 4.0;
+            if (d > 2) d -= 4;
+            final t = d.abs().clamp(0.0, 1.0).toDouble();
+            final fullW = MediaQuery.of(context).size.width - 24;
+            final w = lerpDouble(fullW, 50.0, t)!;
             return Positioned(
               bottom: navBarHeight + 8,
               left: 12,
-              right: 12,
+              width: w,
               child: IgnorePointer(
                 ignoring: opacity < 0.05,
-                child: Opacity(opacity: opacity, child: child),
+                child: Opacity(
+                  opacity: opacity,
+                  child: _MiniBrowserBar(
+                    lastTabTitle: _lastTabTitle,
+                    onHomeTap: _openHomeTab,
+                    onLastTabTap: _openLastTab,
+                    morphT: t,
+                    fullWidth: fullW,
+                  ),
+                ),
               ),
             );
           },
-          child: _MiniBrowserBar(
-            lastTabTitle: _lastTabTitle,
-            onHomeTap: _openHomeTab,
-            onLastTabTap: _openLastTab,
-          ),
         ),
 
         // ── Full-screen browser overlay ───────────────────────────────────
@@ -558,6 +577,8 @@ class _MiniBrowserBar extends StatelessWidget {
     required this.lastTabTitle,
     required this.onHomeTap,
     required this.onLastTabTap,
+    required this.morphT,
+    required this.fullWidth,
   });
 
   /// Title of the last opened page, or null if none exists yet (then the
@@ -566,16 +587,31 @@ class _MiniBrowserBar extends StatelessWidget {
   final VoidCallback onHomeTap;
   final VoidCallback onLastTabTap;
 
+  /// 0 = full-width bar (List page), 1 = 50×50 square (other pages).
+  final double morphT;
+
+  /// Width of the fully expanded bar; the full-bar content stays laid out at
+  /// this width while the surface narrows, so nothing reflows mid-morph.
+  final double fullWidth;
+
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<String>(
       valueListenable: ThemeService.instance.currentColor,
-      builder: (context, _, _) => ValueListenableBuilder<bool>(
-        valueListenable: ThemeService.instance.glassEnabled,
-        builder: (context, glass, _) {
+      builder: (context, _, _) => AnimatedBuilder(
+        animation: Listenable.merge([
+          ThemeService.instance.glassEnabled,
+          ThemeService.instance.roundedBars,
+        ]),
+        builder: (context, _) {
+          final glass = ThemeService.instance.glassEnabled.value;
+          final rounded = ThemeService.instance.roundedBars.value;
           final s = AppColorScheme.current;
           final fg = s.onAccent; // text on the orange bar is always on-accent
           final hasTab = lastTabTitle != null;
+          final radius = rounded ? AppRadius.pill : AppRadius.chip;
+          // Rounded caps eat into the ends; give the content more room.
+          final segmentPad = rounded ? 16.0 : 12.0;
 
           final textStyle = AppTextStyles.bodySmall(color: fg).copyWith(
             fontWeight: FontWeight.w500,
@@ -587,30 +623,32 @@ class _MiniBrowserBar extends StatelessWidget {
             child: Icon(Icons.keyboard_arrow_up, color: fg, size: 18),
           );
 
+          final spacesIcon = ClipRRect(
+            borderRadius: BorderRadius.circular(AppRadius.tag),
+            child: Image.asset(
+              'assets/images/spaces_icon.png',
+              width: 24,
+              height: 24,
+              errorBuilder: (_, err, stack) => Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: s.accent,
+                  borderRadius: BorderRadius.circular(AppRadius.tag),
+                ),
+              ),
+            ),
+          );
+
           final homeSegment = GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: onHomeTap,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
+              padding: EdgeInsets.symmetric(horizontal: segmentPad),
               child: Row(
                 mainAxisSize: hasTab ? MainAxisSize.min : MainAxisSize.max,
                 children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(AppRadius.tag),
-                    child: Image.asset(
-                      'assets/images/spaces_icon.png',
-                      width: 24,
-                      height: 24,
-                      errorBuilder: (_, err, stack) => Container(
-                        width: 24,
-                        height: 24,
-                        decoration: BoxDecoration(
-                          color: s.accent,
-                          borderRadius: BorderRadius.circular(AppRadius.tag),
-                        ),
-                      ),
-                    ),
-                  ),
+                  spacesIcon,
                   const SizedBox(width: 8),
                   hasTab
                       ? Text('Home', style: textStyle, maxLines: 1)
@@ -636,7 +674,7 @@ class _MiniBrowserBar extends StatelessWidget {
                         behavior: HitTestBehavior.opaque,
                         onTap: onLastTabTap,
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          padding: EdgeInsets.symmetric(horizontal: segmentPad),
                           child: Row(
                             children: [
                               Expanded(
@@ -658,19 +696,88 @@ class _MiniBrowserBar extends StatelessWidget {
                 )
               : homeSegment;
 
+          // Cross-fade between the full bar's content and the square face
+          // while the surface width morphs. Full content is gone by t=0.5,
+          // the square fades in after — only the bare surface shows at the
+          // midpoint. Both layers always exist so no state churn happens;
+          // IgnorePointer keeps the hidden layer's tap targets dead.
+          final fullOpacity = (1 - 2 * morphT).clamp(0.0, 1.0).toDouble();
+          final squareOpacity = (2 * morphT - 1).clamp(0.0, 1.0).toDouble();
+
+          final squareFace = GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: hasTab ? onLastTabTap : onHomeTap,
+            onLongPress: onHomeTap,
+            child: Center(
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  spacesIcon,
+                  if (hasTab)
+                    Positioned(
+                      top: -2,
+                      right: -2,
+                      child: Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: s.accent,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                              color: fg.withValues(alpha: 0.6), width: 1),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          );
+
+          final morphContent = Stack(
+            fit: StackFit.expand,
+            children: [
+              IgnorePointer(
+                ignoring: morphT >= 0.5,
+                child: Opacity(
+                  opacity: fullOpacity,
+                  // Keep the row laid out at full width while the surface
+                  // narrows: the clip conceals it instead of reflowing it.
+                  child: ClipRect(
+                    child: OverflowBox(
+                      alignment: Alignment.centerLeft,
+                      minWidth: fullWidth,
+                      maxWidth: fullWidth,
+                      child: SizedBox(
+                        width: fullWidth,
+                        height: 50,
+                        child: barContent,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned.fill(
+                child: IgnorePointer(
+                  ignoring: morphT < 0.5,
+                  child: Opacity(opacity: squareOpacity, child: squareFace),
+                ),
+              ),
+            ],
+          );
+
           return SizedBox(
               height: 50,
               child: glass
                   ? tokens.AppThemeTokens.glassContainer(
-                      borderRadius: BorderRadius.circular(AppRadius.chip),
+                      borderRadius: BorderRadius.circular(radius),
                       tintColor: s.accent,
                       opacity: 0.44,
-                      child: barContent,
+                      child: morphContent,
                     )
                   : Container(
                       decoration: BoxDecoration(
                         color: s.accent,
-                        borderRadius: BorderRadius.circular(AppRadius.chip),
+                        borderRadius: BorderRadius.circular(radius),
                         border: Border.all(
                             color: fg.withValues(alpha: 0.15), width: 0.5),
                         boxShadow: [
@@ -681,7 +788,7 @@ class _MiniBrowserBar extends StatelessWidget {
                           ),
                         ],
                       ),
-                      child: barContent,
+                      child: morphContent,
                     ),
           );
         },
@@ -801,8 +908,20 @@ class _BottomBar extends StatefulWidget {
   final List<PageActionController> actions;
   final int mailUnread;
 
-  /// How much of the bottom safe-area inset the tab bar reclaims.
-  static const double bottomTuck = 14.0;
+  /// Height of both pills — matched to the Spaces mini bar that stacks above.
+  static const double pillHeight = kFloatingButtonSize;
+
+  /// Horizontal inset of the pill row, matching the Spaces mini bar's `left: 12`.
+  static const double sidePad = 12.0;
+
+  /// Distance from the screen bottom to the pills' lower edge.
+  ///
+  /// Read from both sides of the Scaffold — HomeScreen.build and
+  /// _BottomBarState.build — as well as from every page's floating buttons,
+  /// which is why the definition lives in one place. If they ever diverged the
+  /// mini Spaces bar would float at the wrong height.
+  static double bottomInset(BuildContext context) =>
+      bottomClusterInset(context);
 
   @override
   State<_BottomBar> createState() => _BottomBarState();
@@ -810,12 +929,29 @@ class _BottomBar extends StatefulWidget {
 
 class _BottomBarState extends State<_BottomBar>
     with SingleTickerProviderStateMixin {
-  static const _titles = ['Mensa', 'Mail', 'List', 'Calendar'];
   static const int _n = 4;
   static const int _mailIndex = 1;
 
-  /// Width reserved on each side for the fixed action/settings slots.
+  /// Page order: Mensa, Mail, List (the app's home), Calendar.
+  static const _icons = [
+    Icons.restaurant,
+    CupertinoIcons.envelope,
+    CupertinoIcons.house,
+    CupertinoIcons.calendar,
+  ];
+
+  /// Historical constant: the side slots of the old full-width title strip.
+  /// It no longer describes any real slot, but it is still part of the
+  /// [_spacing] formula below — deleting it would silently change how fast a
+  /// swipe moves the pager. Keep it.
   static const double _slotW = 56.0;
+
+  /// Width of the action + settings pill: two [_utilSlotW]-wide slots.
+  static const double _utilSlotW = 48.0;
+  static const double _utilPillW = _utilSlotW * 2;
+
+  /// Gap between the utility pill and the nav pill.
+  static const double _pillGap = 10.0;
 
   late final AnimationController _snapCtrl;
   Animation<double>? _snapAnim;
@@ -829,7 +965,8 @@ class _BottomBarState extends State<_BottomBar>
 
   double? _dragStartPos;
 
-  /// px-per-carousel-step conversion, updated from the latest layout pass.
+  /// px-per-carousel-step conversion, recomputed from the screen width in
+  /// [build].
   double _spacing = 120;
 
   @override
@@ -839,7 +976,7 @@ class _BottomBarState extends State<_BottomBar>
     _settled = widget.currentPage;
     _snapCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 250),
+      duration: const Duration(milliseconds: 350),
     );
     _snapCtrl.addListener(() {
       setState(() => _pos = _snapAnim!.value);
@@ -888,10 +1025,20 @@ class _BottomBarState extends State<_BottomBar>
     _animateTo(target);
   }
 
-  void _step(int dir) {
+  /// Tapping an icon goes straight to that page along the shortest circular
+  /// path, so Mensa and Calendar stay one step apart across the wrap seam.
+  ///
+  /// [_pos] is normalized to 0..3 by [_settle] at rest; mid-animation it can be
+  /// fractional, which is why the round is load-bearing. The drag guard mirrors
+  /// what the old `_step` did.
+  void _jumpTo(int index) {
     if (_dragStartPos != null) return;
     _snapCtrl.stop();
-    _animateTo(_pos.roundToDouble() + dir);
+    final cur = _pos.roundToDouble();
+    var d = (index - cur) % _n; // non-negative for a positive divisor: 0..3
+    if (d > _n / 2) d -= _n; //  shortest signed distance: (-2, 2]
+    if (d == 0) return;
+    _animateTo(cur + d);
   }
 
   void _animateTo(double target) {
@@ -916,45 +1063,28 @@ class _BottomBarState extends State<_BottomBar>
 
   // ── Slots ──────────────────────────────────────────────────────────────────
 
+  /// Every page's action is a reload — Mensa's used to be a translate toggle,
+  /// which now lives in that page's floating buttons instead.
   Widget _buildActionSlot(AppColorScheme s) {
-    final ctrl = widget.actions[_settled];
-    final Widget inner;
-    if (_settled == 0) {
-      // Mensa has no reload; the slot hosts its translate toggle instead.
-      inner = ValueListenableBuilder<bool>(
-        valueListenable: ctrl.toggleActive,
-        builder: (_, active, __) => Icon(
-          Icons.translate,
-          color: active ? s.accent : tokens.AppThemeTokens.navBarIcon,
-          size: 22,
-        ),
-      );
-    } else {
-      inner = ValueListenableBuilder<ActionPhase>(
-        valueListenable: ctrl.phase,
-        builder: (_, phase, __) => switch (phase) {
-          ActionPhase.busy => SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: tokens.AppThemeTokens.navBarIcon,
-              ),
-            ),
-          ActionPhase.done => Icon(Icons.check, color: s.success, size: 22),
-          ActionPhase.idle => Icon(CupertinoIcons.arrow_clockwise,
-              color: tokens.AppThemeTokens.navBarIcon, size: 22),
-        },
-      );
-    }
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () => widget.actions[_settled].trigger(),
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 150),
-        child: KeyedSubtree(
-          key: ValueKey(_settled == 0 ? 'translate' : 'reload'),
-          child: Center(child: inner),
+      child: Center(
+        child: ValueListenableBuilder<ActionPhase>(
+          valueListenable: widget.actions[_settled].phase,
+          builder: (_, phase, _) => switch (phase) {
+            ActionPhase.busy => SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: tokens.AppThemeTokens.navBarIcon,
+                ),
+              ),
+            ActionPhase.done => Icon(Icons.check, color: s.success, size: 22),
+            ActionPhase.idle => Icon(CupertinoIcons.arrow_clockwise,
+                color: tokens.AppThemeTokens.navBarIcon, size: 22),
+          },
         ),
       ),
     );
@@ -974,69 +1104,59 @@ class _BottomBarState extends State<_BottomBar>
     );
   }
 
-  // ── Title carousel ─────────────────────────────────────────────────────────
+  // ── Nav pill ───────────────────────────────────────────────────────────────
 
-  Widget _buildStrip(
-      double stripW, AppColorScheme s, Color activeColor, Color inactiveColor) {
+  /// The four page icons at fixed positions. Selection is carried entirely by
+  /// color, lerped from the continuous [_pos] — so the tint cross-fades live
+  /// during a drag, and the Calendar↔Mensa wrap seam is just two icons trading
+  /// tint rather than anything sliding across the pill.
+  Widget _buildIconStrip(
+      AppColorScheme s, Color activeColor, Color inactiveColor) {
     final children = <Widget>[];
     for (var i = 0; i < _n; i++) {
-      // Signed shortest circular distance from the center slot, in (-2, 2].
+      // Signed shortest circular distance from the selected slot, in (-2, 2].
       var d = (i - _pos) % _n.toDouble();
       if (d > _n / 2) d -= _n;
-      if (d.abs() >= 1.5) continue;
-
       final t = d.abs().clamp(0.0, 1.0).toDouble();
-      final color = Color.lerp(activeColor, inactiveColor, t)!;
 
-      Widget title = Text(
-        _titles[i],
-        style: AppTextStyle.label.copyWith(
-          color: color,
-          fontSize: 17,
-          fontWeight: t < 0.5 ? FontWeight.w600 : FontWeight.w500,
-        ),
+      Widget icon = Icon(
+        _icons[i],
+        color: Color.lerp(activeColor, inactiveColor, t),
+        size: 22,
       );
       if (i == _mailIndex && widget.mailUnread > 0) {
-        title = Row(
-          mainAxisSize: MainAxisSize.min,
+        // An alert, not a selection cue — full strength whatever the tint does.
+        icon = Stack(
+          clipBehavior: Clip.none,
           children: [
-            title,
-            const SizedBox(width: 4),
-            Container(
-              width: 6,
-              height: 6,
-              decoration:
-                  BoxDecoration(color: s.danger, shape: BoxShape.circle),
+            icon,
+            Positioned(
+              top: -1,
+              right: -2,
+              child: Container(
+                width: 6,
+                height: 6,
+                decoration:
+                    BoxDecoration(color: s.danger, shape: BoxShape.circle),
+              ),
             ),
           ],
         );
       }
 
-      children.add(Transform.translate(
-        offset: Offset(d * _spacing, 0),
-        child: Transform.scale(
-          scale: 1.0 - t * 0.15,
-          child: Opacity(
-            opacity: (1.0 - t * 0.65).clamp(0.35, 1.0).toDouble(),
-            child: title,
-          ),
+      children.add(Expanded(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => _jumpTo(i),
+          child: Center(child: icon),
         ),
       ));
     }
-
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapUp: (details) {
-        final x = details.localPosition.dx;
-        if (x < stripW / 3) {
-          _step(-1);
-        } else if (x > stripW * 2 / 3) {
-          _step(1);
-        }
-      },
-      child: ClipRect(
-        child: Stack(alignment: Alignment.center, children: children),
-      ),
+    // stretch: each slot fills the pill's full height, so the tap target is the
+    // whole 65×50 cell rather than just the 22 px glyph.
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: children,
     );
   }
 
@@ -1044,77 +1164,70 @@ class _BottomBarState extends State<_BottomBar>
   Widget build(BuildContext context) {
     final s = AppColorScheme.current;
 
-    final bgColor       = tokens.AppThemeTokens.navBarBg;
-    final dividerColor  = tokens.AppThemeTokens.dividerColor;
     final activeColor   = tokens.AppThemeTokens.eventAccent;
-    final inactiveColor = tokens.AppThemeTokens.locationColor;
+    // navBarIcon, not the de-emphasised locationColor: with no footer behind
+    // the pills these need the same weight as every other icon in the cluster
+    // (settings, reload, translate) to hold contrast against page content.
+    final inactiveColor = tokens.AppThemeTokens.navBarIcon;
 
-    return ValueListenableBuilder<bool>(
-      valueListenable: ThemeService.instance.glassEnabled,
-      builder: (context, glass, _) {
-        final barRow = LayoutBuilder(builder: (context, constraints) {
-          final stripW = constraints.maxWidth - 2 * _slotW;
-          _spacing = stripW * 0.38;
-          return Stack(children: [
-            Positioned(
-              left: _slotW,
-              right: _slotW,
-              top: 0,
-              bottom: 0,
-              child: _buildStrip(stripW, s, activeColor, inactiveColor),
-            ),
-            Positioned(
-              left: 0,
-              top: 0,
-              bottom: 0,
-              width: _slotW,
-              child: _buildActionSlot(s),
-            ),
-            Positioned(
-              right: 0,
-              top: 0,
-              bottom: 0,
-              width: _slotW,
-              child: _buildSettingsSlot(),
-            ),
-          ]);
-        });
+    // Pinned to the screen width, not the (narrower) nav pill, so the drag
+    // ratio stays exactly what the old full-width title strip had.
+    _spacing = (MediaQuery.sizeOf(context).width - 2 * _slotW) * 0.38;
 
-        // Tuck the bar toward the screen edge: the full safe-area inset wastes
-        // vertical space, so only a slim cushion above the home indicator stays.
-        final bottomPad =
-            (MediaQuery.of(context).padding.bottom - _BottomBar.bottomTuck)
-                .clamp(0.0, double.infinity);
-        final navContent = Padding(
-          padding: EdgeInsets.only(bottom: bottomPad),
-          child: SizedBox(height: 60, child: barRow),
+    return AnimatedBuilder(
+      animation: Listenable.merge([
+        ThemeService.instance.glassEnabled,
+        ThemeService.instance.roundedBars,
+      ]),
+      builder: (context, _) {
+        // Utility pill: the current page's action, then settings. No drag
+        // recognizer here — it would swallow slightly sloppy taps.
+        final utilPill = SizedBox(
+          width: _utilPillW,
+          child: GlassPill(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(width: _utilSlotW, child: _buildActionSlot(s)),
+                SizedBox(width: _utilSlotW, child: _buildSettingsSlot()),
+              ],
+            ),
+          ),
         );
 
-        final bar = glass
-            ? ClipRect(
-                child: tokens.AppThemeTokens.glassContainer(
-                  borderRadius: BorderRadius.zero,
-                  child: navContent,
-                ),
-              )
-            : Container(
-                decoration: BoxDecoration(
-                  color: bgColor,
-                  border:
-                      Border(top: BorderSide(color: dividerColor, width: 0.5)),
-                ),
-                child: navContent,
-              );
+        // Nav pill: horizontal drags drive the pager, while taps still resolve
+        // to the individual icons via the gesture arena.
+        final navPill = Expanded(
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragStart: _onDragStart,
+            onHorizontalDragUpdate: _onDragUpdate,
+            onHorizontalDragEnd: _onDragEnd,
+            child: GlassPill(
+              child: _buildIconStrip(s, activeColor, inactiveColor),
+            ),
+          ),
+        );
 
-        // The whole bar is the swipe surface: horizontal drags anywhere —
-        // including over the fixed slots — drive the carousel, while plain
-        // taps still resolve to the slot buttons via the gesture arena.
-        return GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onHorizontalDragStart: _onDragStart,
-          onHorizontalDragUpdate: _onDragUpdate,
-          onHorizontalDragEnd: _onDragEnd,
-          child: bar,
+        return Padding(
+          padding: EdgeInsets.only(
+            left: _BottomBar.sidePad,
+            right: _BottomBar.sidePad,
+            bottom: _BottomBar.bottomInset(context),
+          ),
+          child: SizedBox(
+            height: _BottomBar.pillHeight,
+            // stretch: without it the pills would shrink-wrap their icons and
+            // render as short capsules floating in the row's centre.
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                utilPill,
+                const SizedBox(width: _pillGap),
+                navPill,
+              ],
+            ),
+          ),
         );
       },
     );

@@ -17,9 +17,9 @@ const double _kHomeIndicatorZone = 12.0;
 
 /// Gap between the pills and the home indicator glyph.
 ///
-/// Halfway between hugging the glyph (4) and the full safe-area inset iOS
-/// suggests for content, which works out to 26 above the same zone.
-const double _kBottomBreathingRoom = 15.0;
+/// Sits between hugging the glyph (4) and the full safe-area inset iOS suggests
+/// for content, which works out to 26 above the same zone.
+const double _kBottomBreathingRoom = 20.0;
 
 /// Breathing room between the pills and the bottom of the screen.
 ///

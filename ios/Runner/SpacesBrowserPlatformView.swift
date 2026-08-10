@@ -23,24 +23,6 @@ func browserLog(_ message: String) {
   NSLog("[BROWSER] %@", message)
 }
 
-/// Breaks the retain cycle `WKUserContentController` → handler → webview →
-/// controller. `add(_:name:)` retains its handler strongly, so the real handler
-/// has to sit behind a weak box or the whole platform view leaks.
-private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
-  weak var delegate: WKScriptMessageHandler?
-
-  init(_ delegate: WKScriptMessageHandler) {
-    self.delegate = delegate
-    super.init()
-  }
-
-  func userContentController(
-    _ controller: WKUserContentController, didReceive message: WKScriptMessage
-  ) {
-    delegate?.userContentController(controller, didReceive: message)
-  }
-}
-
 /// Plain container that reports layout passes, so the webviews' content insets
 /// can track the safe area and the floating chrome that overlays them.
 private final class SpacesBrowserContainer: UIView {
@@ -180,10 +162,8 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
   deinit {
     for observation in observations { observation.invalidate() }
     for webView in [homeWebView, contentWebView] {
-      let controller = webView?.configuration.userContentController
-      controller?.removeScriptMessageHandler(forName: "onPullDown")
-      controller?.removeScriptMessageHandler(forName: "onPullEnd")
-      controller?.removeAllUserScripts()
+      webView?.configuration.userContentController.removeAllUserScripts()
+      webView?.scrollView.delegate = nil
     }
     channel.setMethodCallHandler(nil)
     browserLog("view deinit")
@@ -206,19 +186,12 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
     configuration.allowsInlineMediaPlayback = true
 
     let controller = WKUserContentController()
-    let weakHandler = WeakScriptMessageHandler(self)
-    controller.add(weakHandler, name: "onPullDown")
-    controller.add(weakHandler, name: "onPullEnd")
     if let themeScript = themeScript {
       controller.addUserScript(
         WKUserScript(
           source: themeScript, injectionTime: .atDocumentStart,
           forMainFrameOnly: true))
     }
-    controller.addUserScript(
-      WKUserScript(
-        source: Self.pullGestureScript, injectionTime: .atDocumentEnd,
-        forMainFrameOnly: true))
     configuration.userContentController = controller
 
     let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -231,60 +204,85 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
     // well as the safe area.
     webView.scrollView.contentInsetAdjustmentBehavior = .never
     webView.scrollView.delegate = self
+    // No rubber-band. There is no pull-to-refresh here, so an over-scroll at
+    // the top would just be a second thing moving while the sheet is already
+    // following the finger — that double motion is what read as a growing
+    // black band and made the dismiss feel broken.
+    webView.scrollView.bounces = false
+
+    let pan = UIPanGestureRecognizer(target: self, action: #selector(onWebPan(_:)))
+    pan.delegate = self
+    webView.scrollView.addGestureRecognizer(pan)
     return webView
   }
 
   /// Keeps page content clear of the status bar, the handle pill and the
   /// toolbar, so the glass always has content behind it but nothing important
   /// is permanently hidden underneath.
+  ///
+  /// Measured against the **window**, never `container.safeAreaInsets`: the
+  /// sheet slides down past the notch during a dismiss, which walks the
+  /// container's own inset from 62 to 0 and would re-inset the page on every
+  /// frame of the drag.
   private func updateContentInsets() {
-    let top = container.safeAreaInsets.top + 44
-    let bottom = chrome.bottomContentInset
+    let safeTop = container.window?.safeAreaInsets.top ?? 0
+    let insets = UIEdgeInsets(
+      top: safeTop + 44, left: 0, bottom: chrome.bottomContentInset, right: 0)
     for webView in [homeWebView, contentWebView] {
       guard let scrollView = webView?.scrollView else { continue }
-      let insets = UIEdgeInsets(top: top, left: 0, bottom: bottom, right: 0)
-      if scrollView.contentInset != insets {
-        scrollView.contentInset = insets
-        scrollView.verticalScrollIndicatorInsets = insets
-      }
+      guard scrollView.contentInset != insets else { continue }
+      scrollView.contentInset = insets
+      scrollView.verticalScrollIndicatorInsets = insets
     }
   }
 
-  /// Reports an over-scroll pull at the top of the page so the Dart side can
-  /// drive the sheet dismissal. Ported verbatim from the script the Dart
-  /// `BrowserSheet` injected on every load, with the bridge call swapped for
-  /// `webkit.messageHandlers`.
+  // MARK: - Pull-to-dismiss
+
+  /// True once a downward drag that began at the top of the page has been
+  /// claimed for the sheet rather than the page.
+  private var sheetDragActive = false
+  private var sheetDragOrigin: CGFloat = 0
+
+  /// Drives the dismiss gesture from the page itself.
   ///
-  /// This is what lets the dismiss gesture work *inside* the webview's bounds
-  /// without Flutter ever seeing the touch — which is why the platform view can
-  /// keep all its touches natively and still be dismissable.
-  private static let pullGestureScript = """
-    (function() {
-      let startY = 0;
-      let tracking = false;
+  /// Replaces the injected-JS touch bridge: that fired a channel message per
+  /// `touchmove`, so the sheet chased the finger a few frames late. This reads
+  /// the same drag natively, and pins the page at its top edge for the
+  /// duration so only the sheet moves.
+  @objc private func onWebPan(_ recognizer: UIPanGestureRecognizer) {
+    guard let scrollView = recognizer.view as? UIScrollView,
+      scrollView === activeWebView.scrollView
+    else { return }
 
-      document.addEventListener('touchstart', function(e) {
-        startY = e.touches[0].clientY;
-        tracking = true;
-      }, { passive: true });
+    let top = -scrollView.contentInset.top
+    let translation = recognizer.translation(in: container)
 
-      document.addEventListener('touchmove', function(e) {
-        if (!tracking) return;
-        const deltaY = e.touches[0].clientY - startY;
-        const scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
-        if (scrollTop <= 0 && deltaY > 0) {
-          window.webkit.messageHandlers.onPullDown.postMessage(deltaY);
-        }
-      }, { passive: true });
-
-      document.addEventListener('touchend', function(e) {
-        if (!tracking) return;
-        tracking = false;
-        const velocityY = e.changedTouches[0].clientY - startY;
-        window.webkit.messageHandlers.onPullEnd.postMessage(velocityY);
-      }, { passive: true });
-    })();
-    """
+    switch recognizer.state {
+    case .began:
+      sheetDragActive = false
+    case .changed:
+      if !sheetDragActive {
+        // Claim the drag the moment the page can go no higher — no dead zone,
+        // since nothing else wants the over-scroll.
+        guard scrollView.contentOffset.y <= top + 0.5,
+          translation.y > 0,
+          abs(translation.y) > abs(translation.x)
+        else { return }
+        sheetDragActive = true
+        sheetDragOrigin = translation.y
+      }
+      scrollView.contentOffset.y = top
+      channel.invokeMethod(
+        "onSheetDrag", arguments: Double(max(0, translation.y - sheetDragOrigin)))
+    case .ended, .cancelled, .failed:
+      guard sheetDragActive else { return }
+      sheetDragActive = false
+      channel.invokeMethod(
+        "onSheetDragEnd", arguments: Double(recognizer.velocity(in: container).y))
+    default:
+      break
+    }
+  }
 
   // MARK: - Observation
 
@@ -452,10 +450,6 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
       controller.addUserScript(
         WKUserScript(
           source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-      controller.addUserScript(
-        WKUserScript(
-          source: Self.pullGestureScript, injectionTime: .atDocumentEnd,
-          forMainFrameOnly: true))
       webView.evaluateJavaScript(source, completionHandler: nil)
     }
   }
@@ -480,11 +474,11 @@ extension SpacesBrowserView: SpacesBrowserChromeDelegate {
   }
 
   func chromeDidDragHandle(_ translation: CGFloat) {
-    channel.invokeMethod("onHandleDrag", arguments: Double(translation))
+    channel.invokeMethod("onSheetDrag", arguments: Double(translation))
   }
 
   func chromeDidEndHandleDrag(_ velocity: CGFloat) {
-    channel.invokeMethod("onHandleDragEnd", arguments: Double(velocity))
+    channel.invokeMethod("onSheetDragEnd", arguments: Double(velocity))
   }
 }
 
@@ -513,21 +507,17 @@ extension SpacesBrowserView: UIScrollViewDelegate {
   }
 }
 
-// MARK: - WKScriptMessageHandler
+// MARK: - UIGestureRecognizerDelegate
 
-extension SpacesBrowserView: WKScriptMessageHandler {
-  func userContentController(
-    _ controller: WKUserContentController, didReceive message: WKScriptMessage
-  ) {
-    guard let value = message.body as? NSNumber else { return }
-    switch message.name {
-    case "onPullDown":
-      channel.invokeMethod("onPullDown", arguments: value.doubleValue)
-    case "onPullEnd":
-      channel.invokeMethod("onPullEnd", arguments: value.doubleValue)
-    default:
-      break
-    }
+extension SpacesBrowserView: UIGestureRecognizerDelegate {
+  /// The dismiss recogniser rides alongside the scroll view's own pan rather
+  /// than replacing it, so scrolling stays completely untouched until the page
+  /// reaches its top edge.
+  func gestureRecognizer(
+    _ recognizer: UIGestureRecognizer,
+    shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+  ) -> Bool {
+    return true
   }
 }
 

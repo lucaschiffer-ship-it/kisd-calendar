@@ -25,10 +25,8 @@ class NativeSpacesBrowser extends StatefulWidget {
     this.onPageTitleChanged,
     this.onNavStateChanged,
     this.onCurrentUrlChanged,
-    this.onPullDown,
-    this.onPullEnd,
-    this.onHandleDrag,
-    this.onHandleDragEnd,
+    this.onSheetDrag,
+    this.onSheetDragEnd,
     this.onDismiss,
     this.onOpenExternally,
     this.onAuthExpired,
@@ -40,16 +38,12 @@ class NativeSpacesBrowser extends StatefulWidget {
   final void Function(bool canBack, bool canForward)? onNavStateChanged;
   final ValueChanged<String>? onCurrentUrlChanged;
 
-  /// In-page over-scroll at the top of the document. The value is a cumulative
-  /// pixel delta, and [onPullEnd] reports a delta too (not a true velocity) —
-  /// that is the contract the injected script has always had.
-  final ValueChanged<double>? onPullDown;
-  final ValueChanged<double>? onPullEnd;
-
-  /// Drag on the native handle pill. [onHandleDragEnd] reports a real
-  /// velocity in points/second, unlike [onPullEnd].
-  final ValueChanged<double>? onHandleDrag;
-  final ValueChanged<double>? onHandleDragEnd;
+  /// The dismiss drag, from either the handle pill or a downward pull once the
+  /// page has reached its top edge. Both are native `UIPanGestureRecognizer`s
+  /// reporting the same thing: a cumulative downward translation in points,
+  /// then a real release velocity in points/second.
+  final ValueChanged<double>? onSheetDrag;
+  final ValueChanged<double>? onSheetDragEnd;
 
   /// The handle was tapped, or the toolbar's collapse button was pressed.
   final VoidCallback? onDismiss;
@@ -130,14 +124,10 @@ class NativeSpacesBrowserState extends State<NativeSpacesBrowser> {
           args['canGoBack'] as bool? ?? false,
           args['canGoForward'] as bool? ?? false,
         );
-      case 'onPullDown':
-        widget.onPullDown?.call((call.arguments as num).toDouble());
-      case 'onPullEnd':
-        widget.onPullEnd?.call((call.arguments as num).toDouble());
-      case 'onHandleDrag':
-        widget.onHandleDrag?.call((call.arguments as num).toDouble());
-      case 'onHandleDragEnd':
-        widget.onHandleDragEnd?.call((call.arguments as num).toDouble());
+      case 'onSheetDrag':
+        widget.onSheetDrag?.call((call.arguments as num).toDouble());
+      case 'onSheetDragEnd':
+        widget.onSheetDragEnd?.call((call.arguments as num).toDouble());
       case 'onCollapseTapped':
         widget.onDismiss?.call();
       case 'onOpenExternally':

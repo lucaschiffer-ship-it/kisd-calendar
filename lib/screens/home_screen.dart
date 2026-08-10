@@ -40,7 +40,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   late Animation<double> _snapBackAnim;
   final _browserKey = GlobalKey<NativeSpacesBrowserState>();
 
-  double _dragOffset = 0;
+  /// How far the dismiss drag has pulled the sheet down, in logical pixels.
+  ///
+  /// A notifier rather than plain state: this changes on every frame of the
+  /// drag, and `setState` here would rebuild all four pager pages behind the
+  /// sheet each time. Only the sheet's `Transform` listens.
+  final _dragOffset = ValueNotifier<double>(0);
 
   int _currentPage = _initialPage;
 
@@ -117,6 +122,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _snapBackCtrl.removeListener(_onSnapBackTick);
     _snapBackCtrl.dispose();
     _sheetAnim.dispose();
+    _dragOffset.dispose();
     _pagePos.dispose();
     for (final a in _pageActions) {
       a.dispose();
@@ -266,13 +272,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  void _onSnapBackTick() {
-    if (mounted) setState(() => _dragOffset = _snapBackAnim.value);
-  }
+  void _onSnapBackTick() => _dragOffset.value = _snapBackAnim.value;
 
   void _snapBack() {
     _snapBackCtrl.stop();
-    _snapBackAnim = Tween<double>(begin: _dragOffset, end: 0.0).animate(
+    _snapBackAnim = Tween<double>(begin: _dragOffset.value, end: 0.0).animate(
       CurvedAnimation(parent: _snapBackCtrl, curve: Curves.easeOutCubic),
     );
     _snapBackCtrl.forward(from: 0.0);
@@ -283,7 +287,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     // reload was missed (ordering edge cases), reload on first open.
     if (_browserLoadedPreAuth && loginService.isLoggedIn) _reloadBrowserHome();
     _snapBackCtrl.stop();
-    setState(() => _dragOffset = 0);
+    _dragOffset.value = 0;
     // The toolbar collapses itself on scroll; every fresh open starts expanded.
     _browserKey.currentState?.setExpanded(true);
     _sheetAnim.animateTo(1.0,
@@ -292,16 +296,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   void _closeSheet() {
     _snapBackCtrl.stop();
-    setState(() {
-      // Fold an in-flight drag into the animation's starting point, so the
-      // sheet carries on from where the finger left it. Without this it would
-      // snap back to fully-open for one frame and only then animate down.
-      if (_dragOffset > 0) {
-        final h = MediaQuery.sizeOf(context).height;
-        _sheetAnim.value = (_sheetAnim.value - _dragOffset / h).clamp(0.0, 1.0);
-        _dragOffset = 0;
-      }
-    });
+    // Fold an in-flight drag into the animation's starting point, so the sheet
+    // carries on from where the finger left it. Without this it would snap
+    // back to fully-open for one frame and only then animate down.
+    if (_dragOffset.value > 0) {
+      final h = MediaQuery.sizeOf(context).height;
+      _sheetAnim.value =
+          (_sheetAnim.value - _dragOffset.value / h).clamp(0.0, 1.0);
+      _dragOffset.value = 0;
+    }
     _sheetAnim
         .animateTo(0.0,
             duration: const Duration(milliseconds: 300),
@@ -429,7 +432,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
         // ── Full-screen browser overlay ───────────────────────────────────
         AnimatedBuilder(
-          animation: _sheetAnim,
+          animation: Listenable.merge([_sheetAnim, _dragOffset]),
           child: ClipRRect(
             borderRadius:
                 BorderRadius.vertical(top: Radius.circular(AppRadius.sheet)),
@@ -453,27 +456,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     onCurrentUrlChanged: (url) {
                       if (url == _pendingBrowserUrl) _pendingBrowserUrl = null;
                     },
-                    // In-page over-scroll: the value is a cumulative delta, and
-                    // so is the "velocity" — hence the 400 threshold.
-                    onPullDown: (deltaY) {
+                    // One drag path for both the handle pill and the pull at
+                    // the top of the page. No clamp and no dead zone: the
+                    // sheet tracks the finger 1:1 the whole way down.
+                    onSheetDrag: (dy) {
                       if (_snapBackCtrl.isAnimating) _snapBackCtrl.stop();
-                      setState(() => _dragOffset = deltaY.clamp(0.0, 600.0));
+                      _dragOffset.value = dy < 0 ? 0 : dy;
                     },
-                    onPullEnd: (velocityY) {
-                      if (_dragOffset > 200 || velocityY > 400) {
-                        _closeSheet();
-                      } else {
-                        _snapBack();
-                      }
-                    },
-                    // Handle pill: a real velocity in points/second, so this
-                    // keeps the 800 threshold the Flutter drag handle used.
-                    onHandleDrag: (dy) {
-                      if (_snapBackCtrl.isAnimating) _snapBackCtrl.stop();
-                      setState(() => _dragOffset = dy.clamp(0.0, 600.0));
-                    },
-                    onHandleDragEnd: (velocityY) {
-                      if (_dragOffset > 200 || velocityY > 800) {
+                    onSheetDragEnd: (velocityY) {
+                      if (_dragOffset.value > 120 || velocityY > 600) {
                         _closeSheet();
                       } else {
                         _snapBack();
@@ -529,7 +520,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             // its height would re-lay-out the native container (webview *and*
             // glass chrome) on every frame of the 300 ms open. Constant frame,
             // paint-time offset, no Auto Layout churn.
-            final dy = (1 - size) * screenHeight + _dragOffset;
+            final dy = (1 - size) * screenHeight + _dragOffset.value;
             return Align(
               alignment: Alignment.bottomCenter,
               child: SizedBox(

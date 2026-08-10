@@ -106,6 +106,13 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
     container.frame = frame
     container.clipsToBounds = true
     container.backgroundColor = theme.background
+    // Rounded natively rather than relying on Flutter's ClipRRect reaching
+    // into the platform view. Invisible at rest — the device already rounds
+    // the screen corners — and only reads once a dismiss slides the sheet
+    // down over the page behind it.
+    container.layer.cornerRadius = 20  // AppRadius.sheet
+    container.layer.cornerCurve = .continuous
+    container.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
 
     homeWebView = makeWebView()
     contentWebView = makeWebView()
@@ -197,8 +204,12 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
     let webView = WKWebView(frame: .zero, configuration: configuration)
     webView.navigationDelegate = self
     webView.allowsBackForwardNavigationGestures = true
-    webView.isOpaque = false
-    webView.backgroundColor = .clear
+    // Opaque on purpose. Left transparent, the strip above the content inset
+    // showed the container's black, which turned into a hard black band the
+    // moment the sheet started sliding down. Opaque, WKWebView paints that
+    // strip with the page's own background colour instead, so it reads as part
+    // of the page.
+    webView.isOpaque = true
     // The page runs full-bleed behind the chrome; insets are applied manually
     // in updateContentInsets() so they can account for the floating pills as
     // well as the safe area.
@@ -225,9 +236,12 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
   /// container's own inset from 62 to 0 and would re-inset the page on every
   /// frame of the drag.
   private func updateContentInsets() {
+    // Just the safe area at the top — no extra room reserved for the handle
+    // pill. The pill is *meant* to float over page content; padding it out
+    // only widened the strip that becomes visible during a dismiss.
     let safeTop = container.window?.safeAreaInsets.top ?? 0
     let insets = UIEdgeInsets(
-      top: safeTop + 44, left: 0, bottom: chrome.bottomContentInset, right: 0)
+      top: safeTop, left: 0, bottom: chrome.bottomContentInset, right: 0)
     for webView in [homeWebView, contentWebView] {
       guard let scrollView = webView?.scrollView else { continue }
       guard scrollView.contentInset != insets else { continue }

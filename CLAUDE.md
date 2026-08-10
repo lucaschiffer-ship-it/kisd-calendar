@@ -28,6 +28,18 @@ Use ~/.claude/skills/gstack/... for gstack file paths (the global path).
 
 ---
 
+## Git & Push Conventions
+
+- This repo has TWO remotes. Every commit must be pushed to BOTH remotes:
+  ```bash
+  git push origin <branch> && git push public <branch>
+  ```
+  (`origin` = `lucaschiffer-ship-it/KISDCalendar`, `public` = `lucaschiffer-ship-it/kisd-calendar`)
+- Default to ONE commit containing all dirty changes unless explicitly asked for multiple commits. Do not over-scope or split commits.
+- Never create a commit that includes credentials, tokens, or `.env` files; check `.gitignore` coverage first.
+
+---
+
 ## Commands
 
 ```bash
@@ -39,6 +51,42 @@ flutter test             # run tests
 ```
 
 There is no separate lint config beyond the default `analysis_options.yaml` (`flutter_lints`).
+
+---
+
+## Flutter / iOS Build Verification
+
+- After any multi-file change, run `flutter analyze` and then a build (`flutter build ios --simulator` or `flutter run`) before declaring done.
+
+### Self-verifying UI loop
+
+Verify visual work yourself — do not ask for a screenshot. Never iterate blind on styling hypotheses; look at the actual result instead.
+
+Set a scratch dir first — `$CLAUDE_JOB_DIR` is only set inside background jobs, and an unset one silently collapses to bare `/tmp`, which parallel jobs clobber:
+
+```bash
+OUT="${CLAUDE_JOB_DIR:-.claude}/tmp"; mkdir -p "$OUT"
+```
+
+1. **Run the app** in the background (verified UDID: `EC80B6FF-246B-44EF-AE0E-A10A3B9772CE` = iPhone 17 Pro):
+   ```bash
+   flutter run -d <sim-udid> --pid-file="$OUT/flutter.pid" > "$OUT/flutter_run.log" 2>&1
+   ```
+2. **Reload after each change, and confirm the reload actually landed** — this is the freshness guard, because `xcrun simctl io booted screenshot` succeeds even with no `flutter run` attached, silently returning the previously installed build. A stale shot is indistinguishable from a successful verification of the *pre-change* UI:
+   ```bash
+   before=$(grep -c "^Reloaded" "$OUT/flutter_run.log")
+   kill -SIGUSR1 $(cat "$OUT/flutter.pid")          # SIGUSR2 = hot restart
+   until [ "$(grep -c '^Reloaded' "$OUT/flutter_run.log")" -gt "$before" ]; do sleep 1; done
+   ```
+   Do **not** use `cmp` on consecutive screenshots for this — the header and iOS status bar both render a live clock, so any two shots differ regardless of whether the reload landed. That guard always passes and is worthless here.
+3. **Screenshot and look:**
+   ```bash
+   xcrun simctl io booted screenshot "$OUT/shot-NN.png"
+   ```
+   Then `Read` the PNG and actually inspect it against what was asked.
+4. **Iterate up to ~4 cycles**, then report with what you actually see — matched, or stuck and why.
+
+**Prerequisite:** `ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme` LaunchAction must be `buildConfiguration = "Debug"`. On `Release` the Runner scheme exposes no simulator destinations at all and `flutter run` fails with *"Unable to find a destination matching the provided destination specifier"*.
 
 ---
 
@@ -109,6 +157,14 @@ IMAP via `enough_mail`. Credentials reused from `LoginService` (TH Köln email).
 
 ---
 
+## Working Style
+
+- Start with a short plan BEFORE exploring with subagents. Don't spend turns on tooling/environment setup (skills, upgrades, stack verification) unless asked.
+- When the request is ambiguous about WHICH screen/component is meant, ask ONE targeted question up front rather than guessing and editing.
+- Prefer the smallest possible change. Do not refactor, rename, or remove existing features (e.g. the 'heart' feature) as part of an unrelated fix.
+
+---
+
 ## Skill routing
 
 When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.
@@ -126,3 +182,10 @@ Key routing rules:
 - Ship/deploy/PR → invoke /ship or /land-and-deploy
 - Save progress → invoke /context-save
 - Resume context → invoke /context-restore
+
+---
+
+## Licensing & Privacy
+
+- Do NOT default to MIT. This project ships under a restrictive source-available license (`LICENSE` — "KISD Calendar Source-Available License") — reuse the existing LICENSE file wording.
+- Campus-ID credentials must be stored in the iOS Keychain / `flutter_secure_storage` only, never in `SharedPreferences` or logs. Any change touching auth requires a note in the privacy/DSGVO doc.

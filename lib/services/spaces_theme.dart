@@ -38,7 +38,11 @@ String spacesThemeJs() {
 /// Inject these into every [InAppWebView] or [HeadlessInAppWebView]
 /// that navigates to spaces.kisd.de. Reads the app theme at call time,
 /// so build it when the WebView is created (and re-add it on theme change
-/// for long-lived views — see BrowserSheet).
+/// for long-lived views).
+///
+/// The Spaces browser itself no longer goes through this list — it is a
+/// native WKWebView, and [spacesThemeJs] is pushed to it over the method
+/// channel instead. The source of truth stays here either way.
 List<UserScript> spacesThemeScripts() => [
       UserScript(
         source: spacesThemeJs(),

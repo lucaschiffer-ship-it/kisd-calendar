@@ -109,18 +109,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _browserKey.currentState?.navigateTo(url);
       _openSheet();
     });
-    // TEMP-QA: auto-open the browser sheet so it can be inspected without UI
-    // automation. Removed before commit.
-    if (const bool.fromEnvironment('QA_OPEN_BROWSER')) {
-      Future.delayed(const Duration(seconds: 8), () {
-        if (mounted) _openSheet();
-      });
-    }
-    if (const bool.fromEnvironment('QA_COLLAPSE')) {
-      Future.delayed(const Duration(seconds: 14), () {
-        if (mounted) _browserKey.currentState?.setExpanded(false);
-      });
-    }
   }
 
   @override

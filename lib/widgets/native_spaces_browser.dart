@@ -4,15 +4,18 @@ import 'package:flutter/services.dart';
 
 import '../services/spaces_theme.dart';
 import '../services/theme_service.dart';
+import '../theme/tokens.dart';
 
 void _log(String msg) => debugPrint('[BROWSER] $msg');
 
 /// Flutter-side handle on the native Spaces browser.
 ///
-/// The webviews and (from Phase 2) the chrome live in one native platform view,
-/// because a `UIVisualEffectView` only samples web content when it is a sibling
-/// of the `WKWebView` in the same UIView hierarchy. Flutter's `BackdropFilter`
-/// cannot do it — the webview composites below everything Flutter draws.
+/// The webviews *and* the chrome live in one native platform view, because a
+/// `UIVisualEffectView` only samples web content when it is a sibling of the
+/// `WKWebView` in the same UIView hierarchy. Flutter's `BackdropFilter` cannot
+/// do it — the webview composites below everything Flutter draws, so a glass
+/// toolbar over it blurs nothing. That is why this screen's chrome is Swift
+/// while every other page keeps its Dart [GlassPill].
 ///
 /// The API deliberately mirrors the `BrowserSheetState` it replaces, so the
 /// call sites in `HomeScreen` did not have to be rewired.
@@ -24,6 +27,10 @@ class NativeSpacesBrowser extends StatefulWidget {
     this.onCurrentUrlChanged,
     this.onPullDown,
     this.onPullEnd,
+    this.onHandleDrag,
+    this.onHandleDragEnd,
+    this.onDismiss,
+    this.onOpenExternally,
     this.onAuthExpired,
   });
 
@@ -32,8 +39,23 @@ class NativeSpacesBrowser extends StatefulWidget {
   final void Function(String title, String? url)? onPageTitleChanged;
   final void Function(bool canBack, bool canForward)? onNavStateChanged;
   final ValueChanged<String>? onCurrentUrlChanged;
+
+  /// In-page over-scroll at the top of the document. The value is a cumulative
+  /// pixel delta, and [onPullEnd] reports a delta too (not a true velocity) —
+  /// that is the contract the injected script has always had.
   final ValueChanged<double>? onPullDown;
   final ValueChanged<double>? onPullEnd;
+
+  /// Drag on the native handle pill. [onHandleDragEnd] reports a real
+  /// velocity in points/second, unlike [onPullEnd].
+  final ValueChanged<double>? onHandleDrag;
+  final ValueChanged<double>? onHandleDragEnd;
+
+  /// The handle was tapped, or the toolbar's collapse button was pressed.
+  final VoidCallback? onDismiss;
+
+  /// The toolbar's Safari button. Dart owns `url_launcher`.
+  final ValueChanged<String>? onOpenExternally;
 
   /// Fired when a page load lands on the TH-Köln IdP / WordPress login instead
   /// of Spaces — i.e. the session expired and Spaces bounced us to re-auth.
@@ -47,25 +69,44 @@ class NativeSpacesBrowserState extends State<NativeSpacesBrowser> {
   static const _viewType = 'kisd/spaces_browser';
 
   MethodChannel? _channel;
-  bool _loading = false;
 
   @override
   void initState() {
     super.initState();
-    ThemeService.instance.currentColor.addListener(_onThemeChanged);
+    for (final n in _themeNotifiers) {
+      n.addListener(_onThemeChanged);
+    }
   }
 
   @override
   void dispose() {
-    ThemeService.instance.currentColor.removeListener(_onThemeChanged);
+    for (final n in _themeNotifiers) {
+      n.removeListener(_onThemeChanged);
+    }
     super.dispose();
   }
 
-  // App theme switched while the browser is alive. Dart owns the script's
-  // content so the theme rules are not duplicated in Swift; native swaps the
-  // document-start script and restyles the live pages.
-  void _onThemeChanged() =>
-      _channel?.invokeMethod('setThemeScript', spacesThemeJs());
+  List<Listenable> get _themeNotifiers => [
+        ThemeService.instance.currentColor,
+        ThemeService.instance.glassEnabled,
+        ThemeService.instance.roundedBars,
+      ];
+
+  /// The chrome mirrors the same three settings every Flutter surface reads,
+  /// so "Glass" and "Rounded bars" keep working on this screen too.
+  Map<String, dynamic> _themeMap() => {
+        'colorMode':
+            AppColorScheme.current == AppColorScheme.light ? 'light' : 'dark',
+        'glassEnabled': ThemeService.instance.glassEnabled.value,
+        'roundedBars': ThemeService.instance.roundedBars.value,
+      };
+
+  void _onThemeChanged() {
+    _channel?.invokeMethod('setTheme', _themeMap());
+    // Dart owns the page-restyling script's content, so the theme rules are
+    // not duplicated in Swift.
+    _channel?.invokeMethod('setThemeScript', spacesThemeJs());
+  }
 
   void _onPlatformViewCreated(int id) {
     _channel = MethodChannel('kisd/spaces_browser_$id')
@@ -89,15 +130,23 @@ class NativeSpacesBrowserState extends State<NativeSpacesBrowser> {
           args['canGoBack'] as bool? ?? false,
           args['canGoForward'] as bool? ?? false,
         );
-      case 'onLoadingChanged':
-        final loading = call.arguments as bool? ?? false;
-        if (mounted && loading != _loading) setState(() => _loading = loading);
       case 'onPullDown':
         widget.onPullDown?.call((call.arguments as num).toDouble());
       case 'onPullEnd':
         widget.onPullEnd?.call((call.arguments as num).toDouble());
+      case 'onHandleDrag':
+        widget.onHandleDrag?.call((call.arguments as num).toDouble());
+      case 'onHandleDragEnd':
+        widget.onHandleDragEnd?.call((call.arguments as num).toDouble());
+      case 'onCollapseTapped':
+        widget.onDismiss?.call();
+      case 'onOpenExternally':
+        final url = call.arguments as String?;
+        if (url != null) widget.onOpenExternally?.call(url);
       case 'onAuthExpired':
         widget.onAuthExpired?.call();
+      case 'onLoadingChanged':
+      case 'onExpandedChanged':
       case 'onTabSwitched':
         break;
       default:
@@ -128,6 +177,14 @@ class NativeSpacesBrowserState extends State<NativeSpacesBrowser> {
   void goForward() => _channel?.invokeMethod('goForward');
   void reload() => _channel?.invokeMethod('reload');
 
+  /// Force the toolbar open. The native side collapses it on scroll by itself;
+  /// this is the override, used when the sheet is (re-)opened.
+  void setExpanded(bool expanded) =>
+      _channel?.invokeMethod('setExpanded', expanded);
+
+  void setPillTitle(String title) =>
+      _channel?.invokeMethod('setPillTitle', title);
+
   /// The URL the **active** webview is on right now, queried live so it can't
   /// go stale when a view is reloaded behind the scenes.
   Future<String?> getCurrentUrl() async =>
@@ -139,27 +196,14 @@ class NativeSpacesBrowserState extends State<NativeSpacesBrowser> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    return Column(
-      children: [
-        if (_loading)
-          LinearProgressIndicator(
-            minHeight: 2,
-            color: cs.primary,
-            backgroundColor: Colors.transparent,
-          ),
-        Expanded(
-          child: UiKitView(
-            viewType: _viewType,
-            creationParams: <String, dynamic>{
-              'themeScript': spacesThemeJs(),
-            },
-            creationParamsCodec: const StandardMessageCodec(),
-            onPlatformViewCreated: _onPlatformViewCreated,
-          ),
-        ),
-      ],
+    return UiKitView(
+      viewType: _viewType,
+      creationParams: <String, dynamic>{
+        'themeScript': spacesThemeJs(),
+        'theme': _themeMap(),
+      },
+      creationParamsCodec: const StandardMessageCodec(),
+      onPlatformViewCreated: _onPlatformViewCreated,
     );
   }
 }

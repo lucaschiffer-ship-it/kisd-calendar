@@ -64,9 +64,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // "Reconnecting…" overlay over the Spaces browser).
   bool _reconnecting = false;
 
-  bool _canGoBack = false;
-  bool _canGoForward = false;
-  String _currentUrl = 'https://spaces.kisd.de';
 
   // One action controller per page: the bottom bar's fixed left slot renders
   // and triggers the current page's reload (translate on Mensa).
@@ -117,6 +114,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (const bool.fromEnvironment('QA_OPEN_BROWSER')) {
       Future.delayed(const Duration(seconds: 8), () {
         if (mounted) _openSheet();
+      });
+    }
+    if (const bool.fromEnvironment('QA_COLLAPSE')) {
+      Future.delayed(const Duration(seconds: 14), () {
+        if (mounted) _browserKey.currentState?.setExpanded(false);
       });
     }
   }
@@ -294,6 +296,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (_browserLoadedPreAuth && loginService.isLoggedIn) _reloadBrowserHome();
     _snapBackCtrl.stop();
     setState(() => _dragOffset = 0);
+    // The toolbar collapses itself on scroll; every fresh open starts expanded.
+    _browserKey.currentState?.setExpanded(true);
     _sheetAnim.animateTo(1.0,
         duration: const Duration(milliseconds: 300), curve: Curves.easeOutCubic);
   }
@@ -444,126 +448,87 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             clipBehavior: Clip.antiAlias,
             child: Material(
               color: Colors.transparent,
-              child: Column(
+              // No Flutter chrome here: the handle pill and the toolbar are
+              // native views inside the platform view, so their glass samples
+              // the page. The webview runs full-bleed behind them.
+              child: Stack(
                 children: [
-                  // Drag handle bar
-                  Builder(builder: (ctx) {
-                    final topPad = MediaQuery.of(ctx).padding.top;
-                    return GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: _closeSheet,
-                      onVerticalDragUpdate: (details) {
-                        if (_snapBackCtrl.isAnimating) _snapBackCtrl.stop();
-                        setState(() => _dragOffset =
-                            (_dragOffset + details.delta.dy).clamp(0.0, 600.0));
-                      },
-                      onVerticalDragEnd: (details) {
-                        final velocityY = details.primaryVelocity ?? 0;
-                        if (_dragOffset > 200 || velocityY > 800) {
-                          // _closeSheet folds the drag into the animation's
-                          // start — zeroing it here would pop the sheet open.
-                          _closeSheet();
-                        } else {
-                          _snapBack();
-                        }
-                      },
-                      child: Container(
-                        width: double.infinity,
-                        height: topPad + 44,
-                        padding: EdgeInsets.only(top: topPad),
-                        color: s.surfaceElevated,
-                        alignment: Alignment.center,
-                        child: _HandlePill(color: s.textTertiary),
-                      ),
-                    );
-                  }),
-                  // WebView
-                  Expanded(
-                    child: Stack(
-                      children: [
-                        NativeSpacesBrowser(
-                      key: _browserKey,
-                      onPageTitleChanged: (title, url) {
-                        if (url == null || !_isTrackablePage(url)) return;
-                        setState(() {
-                          _lastTabTitle = title;
-                          _lastTabUrl = url;
-                        });
-                      },
-                      onNavStateChanged: (back, fwd) => setState(() {
-                        _canGoBack = back;
-                        _canGoForward = fwd;
-                      }),
-                      onCurrentUrlChanged: (url) {
-                        _currentUrl = url;
-                        if (url == _pendingBrowserUrl) _pendingBrowserUrl = null;
-                      },
-                      onPullDown: (deltaY) {
-                        if (_snapBackCtrl.isAnimating) _snapBackCtrl.stop();
-                        setState(
-                            () => _dragOffset = deltaY.clamp(0.0, 600.0));
-                      },
-                      onPullEnd: (velocityY) {
-                        if (_dragOffset > 200 || velocityY > 400) {
-                          _closeSheet();
-                        } else {
-                          _snapBack();
-                        }
-                      },
-                      onAuthExpired: _onBrowserAuthExpired,
-                        ),
-                        if (_reconnecting)
-                          Positioned.fill(
-                            child: Container(
-                              color: s.surfaceElevated,
-                              alignment: Alignment.center,
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  SizedBox(
-                                    width: 28,
-                                    height: 28,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2.5,
-                                      color: s.accent,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    'Reconnecting…',
-                                    style: TextStyle(
-                                      color: s.textSecondary,
-                                      fontSize: 15,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  // Bottom navigation bar for the browser
-                  _BrowserNavBar(
-                    canGoBack: _canGoBack,
-                    canGoForward: _canGoForward,
-                    onBack: () => _browserKey.currentState?.goBack(),
-                    onForward: () => _browserKey.currentState?.goForward(),
-                    onReload: () => _browserKey.currentState?.reload(),
-                    onOpenInBrowser: () async {
-                      // Live URL of whichever tab is visible; the cached
-                      // _currentUrl only tracks the content tab.
-                      final url =
-                          await _browserKey.currentState?.getCurrentUrl() ??
-                              _currentUrl;
+                  NativeSpacesBrowser(
+                    key: _browserKey,
+                    onPageTitleChanged: (title, url) {
+                      if (url == null || !_isTrackablePage(url)) return;
+                      setState(() {
+                        _lastTabTitle = title;
+                        _lastTabUrl = url;
+                      });
+                    },
+                    onCurrentUrlChanged: (url) {
+                      if (url == _pendingBrowserUrl) _pendingBrowserUrl = null;
+                    },
+                    // In-page over-scroll: the value is a cumulative delta, and
+                    // so is the "velocity" — hence the 400 threshold.
+                    onPullDown: (deltaY) {
+                      if (_snapBackCtrl.isAnimating) _snapBackCtrl.stop();
+                      setState(() => _dragOffset = deltaY.clamp(0.0, 600.0));
+                    },
+                    onPullEnd: (velocityY) {
+                      if (_dragOffset > 200 || velocityY > 400) {
+                        _closeSheet();
+                      } else {
+                        _snapBack();
+                      }
+                    },
+                    // Handle pill: a real velocity in points/second, so this
+                    // keeps the 800 threshold the Flutter drag handle used.
+                    onHandleDrag: (dy) {
+                      if (_snapBackCtrl.isAnimating) _snapBackCtrl.stop();
+                      setState(() => _dragOffset = dy.clamp(0.0, 600.0));
+                    },
+                    onHandleDragEnd: (velocityY) {
+                      if (_dragOffset > 200 || velocityY > 800) {
+                        _closeSheet();
+                      } else {
+                        _snapBack();
+                      }
+                    },
+                    onDismiss: _closeSheet,
+                    onOpenExternally: (url) async {
                       final uri = Uri.tryParse(url);
                       if (uri != null) {
                         await launchUrl(uri,
                             mode: LaunchMode.externalApplication);
                       }
                     },
-                    onDismiss: _closeSheet,
+                    onAuthExpired: _onBrowserAuthExpired,
                   ),
+                  if (_reconnecting)
+                    Positioned.fill(
+                      child: Container(
+                        color: s.surfaceElevated,
+                        alignment: Alignment.center,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 28,
+                              height: 28,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.5,
+                                color: s.accent,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'Reconnecting…',
+                              style: TextStyle(
+                                color: s.textSecondary,
+                                fontSize: 15,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -820,97 +785,6 @@ class _MiniBrowserBar extends StatelessWidget {
                     ),
           );
         },
-      ),
-    );
-  }
-}
-
-// ── Browser bottom nav bar ───────────────────────────────────────────────────
-
-class _BrowserNavBar extends StatelessWidget {
-  const _BrowserNavBar({
-    required this.canGoBack,
-    required this.canGoForward,
-    required this.onBack,
-    required this.onForward,
-    required this.onReload,
-    required this.onOpenInBrowser,
-    required this.onDismiss,
-  });
-
-  final bool canGoBack;
-  final bool canGoForward;
-  final VoidCallback onBack;
-  final VoidCallback onForward;
-  final VoidCallback onReload;
-  final VoidCallback onOpenInBrowser;
-  final VoidCallback onDismiss;
-
-  @override
-  Widget build(BuildContext context) {
-    final s = AppColorScheme.current;
-    final row = Row(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: [
-        _NavBtn(icon: Icons.arrow_back_ios_new,  size: 20, enabled: canGoBack,    onTap: onBack),
-        _NavBtn(icon: Icons.arrow_forward_ios,   size: 20, enabled: canGoForward, onTap: onForward),
-        _NavBtn(icon: Icons.refresh,             size: 20, enabled: true,         onTap: onReload),
-        _NavBtn(icon: Icons.open_in_browser,     size: 20, enabled: true,         onTap: onOpenInBrowser),
-        _NavBtn(icon: Icons.keyboard_arrow_down, size: 24, enabled: true,         onTap: onDismiss),
-      ],
-    );
-    return Builder(builder: (ctx) {
-      final bottomPad = MediaQuery.of(ctx).padding.bottom;
-      return Container(
-        height: 52.0 + bottomPad,
-        padding: EdgeInsets.only(bottom: bottomPad),
-        color: s.surfaceElevated,
-        child: row,
-      );
-    });
-  }
-}
-
-class _HandlePill extends StatelessWidget {
-  const _HandlePill({required this.color});
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => Container(
-        width: 36,
-        height: 4,
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(AppRadius.handle),
-        ),
-      );
-}
-
-class _NavBtn extends StatelessWidget {
-  const _NavBtn({
-    required this.icon,
-    required this.size,
-    required this.enabled,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final double size;
-  final bool enabled;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final iconColor = AppColorScheme.current.navBarIcon;
-    return GestureDetector(
-      onTap: enabled ? onTap : null,
-      behavior: HitTestBehavior.opaque,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Opacity(
-          opacity: enabled ? 0.85 : 0.3,
-          child: Icon(icon, color: iconColor, size: size),
-        ),
       ),
     );
   }

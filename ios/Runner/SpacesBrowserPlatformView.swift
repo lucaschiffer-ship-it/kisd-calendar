@@ -41,6 +41,17 @@ private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
   }
 }
 
+/// Plain container that reports layout passes, so the webviews' content insets
+/// can track the safe area and the floating chrome that overlays them.
+private final class SpacesBrowserContainer: UIView {
+  var onLayout: (() -> Void)?
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    onLayout?()
+  }
+}
+
 final class SpacesBrowserViewFactory: NSObject, FlutterPlatformViewFactory {
   static let viewType = "kisd/spaces_browser"
 
@@ -78,7 +89,8 @@ final class SpacesBrowserViewFactory: NSObject, FlutterPlatformViewFactory {
 final class SpacesBrowserView: NSObject, FlutterPlatformView {
   private static let homeURL = URL(string: "https://spaces.kisd.de")!
 
-  private let container = UIView()
+  private let container = SpacesBrowserContainer()
+  private let chrome = SpacesBrowserChrome()
   private let channel: FlutterMethodChannel
 
   private var homeWebView: WKWebView!
@@ -89,6 +101,10 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
 
   private var observations: [NSKeyValueObservation] = []
   private var themeScript: String?
+  private var theme = SpacesBrowserTheme()
+
+  /// Drives the Safari-style auto-collapse.
+  private var lastScrollY: CGFloat = 0
 
   private var activeWebView: WKWebView {
     return activeIndex == 0 ? homeWebView : contentWebView
@@ -103,10 +119,11 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
 
     let params = arguments as? [String: Any]
     themeScript = params?["themeScript"] as? String
+    theme = SpacesBrowserTheme.from(params?["theme"] as? [String: Any])
 
     container.frame = frame
     container.clipsToBounds = true
-    container.backgroundColor = .clear
+    container.backgroundColor = theme.background
 
     homeWebView = makeWebView()
     contentWebView = makeWebView()
@@ -123,6 +140,24 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
       ])
       observe(webView)
     }
+
+    // Above the webviews and inside the same view hierarchy — the arrangement
+    // that lets UIGlassEffect sample the page.
+    chrome.translatesAutoresizingMaskIntoConstraints = false
+    chrome.delegate = self
+    container.addSubview(chrome)
+    NSLayoutConstraint.activate([
+      chrome.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+      chrome.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+      chrome.topAnchor.constraint(equalTo: container.topAnchor),
+      chrome.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+    ])
+    let path = chrome.apply(theme)
+    chrome.setTitle(nil)
+    chrome.setNavState(canGoBack: false, canGoForward: false)
+    browserLog("glass path: \(path.rawValue)")
+
+    container.onLayout = { [weak self] in self?.updateContentInsets() }
 
     channel.setMethodCallHandler { [weak self] call, result in
       self?.handle(call, result: result)
@@ -191,8 +226,28 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
     webView.allowsBackForwardNavigationGestures = true
     webView.isOpaque = false
     webView.backgroundColor = .clear
+    // The page runs full-bleed behind the chrome; insets are applied manually
+    // in updateContentInsets() so they can account for the floating pills as
+    // well as the safe area.
     webView.scrollView.contentInsetAdjustmentBehavior = .never
+    webView.scrollView.delegate = self
     return webView
+  }
+
+  /// Keeps page content clear of the status bar, the handle pill and the
+  /// toolbar, so the glass always has content behind it but nothing important
+  /// is permanently hidden underneath.
+  private func updateContentInsets() {
+    let top = container.safeAreaInsets.top + 44
+    let bottom = chrome.bottomContentInset
+    for webView in [homeWebView, contentWebView] {
+      guard let scrollView = webView?.scrollView else { continue }
+      let insets = UIEdgeInsets(top: top, left: 0, bottom: bottom, right: 0)
+      if scrollView.contentInset != insets {
+        scrollView.contentInset = insets
+        scrollView.verticalScrollIndicatorInsets = insets
+      }
+    }
   }
 
   /// Reports an over-scroll pull at the top of the page so the Dart side can
@@ -236,8 +291,10 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
   private func observe(_ webView: WKWebView) {
     observations.append(
       webView.observe(\.title, options: [.new]) { [weak self] view, _ in
-        guard let self = self, view === self.contentWebView else { return }
+        guard let self = self else { return }
         guard let title = view.title, !title.isEmpty else { return }
+        if view === self.activeWebView { self.chrome.setTitle(title) }
+        guard view === self.contentWebView else { return }
         self.channel.invokeMethod(
           "onTitleChanged",
           arguments: ["title": title, "url": view.url?.absoluteString])
@@ -253,7 +310,14 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
     observations.append(
       webView.observe(\.isLoading, options: [.new]) { [weak self] view, _ in
         guard let self = self, view === self.activeWebView else { return }
+        self.chrome.setLoading(view.isLoading, progress: Float(view.estimatedProgress))
         self.channel.invokeMethod("onLoadingChanged", arguments: view.isLoading)
+      })
+
+    observations.append(
+      webView.observe(\.estimatedProgress, options: [.new]) { [weak self] view, _ in
+        guard let self = self, view === self.activeWebView else { return }
+        self.chrome.setLoading(view.isLoading, progress: Float(view.estimatedProgress))
       })
 
     for keyPath in [\WKWebView.canGoBack, \WKWebView.canGoForward] {
@@ -266,12 +330,14 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
   }
 
   private func emitNavState() {
+    let back = activeWebView.canGoBack
+    let forward = activeWebView.canGoForward
+    // Resolved natively first: the toolbar's own enabled state must not depend
+    // on a round trip through Dart.
+    chrome.setNavState(canGoBack: back, canGoForward: forward)
     channel.invokeMethod(
       "onNavStateChanged",
-      arguments: [
-        "canGoBack": activeWebView.canGoBack,
-        "canGoForward": activeWebView.canGoForward,
-      ])
+      arguments: ["canGoBack": back, "canGoForward": forward])
   }
 
   // MARK: - Tabs
@@ -354,6 +420,21 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
       applyThemeScript(source)
       result(nil)
 
+    case "setTheme":
+      theme = SpacesBrowserTheme.from(call.arguments as? [String: Any])
+      container.backgroundColor = theme.background
+      let path = chrome.apply(theme)
+      browserLog("glass path: \(path.rawValue)")
+      result(nil)
+
+    case "setPillTitle":
+      chrome.setTitle(call.arguments as? String)
+      result(nil)
+
+    case "setExpanded":
+      chrome.setExpanded(call.arguments as? Bool ?? true, notify: false)
+      result(nil)
+
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -376,6 +457,58 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
           source: Self.pullGestureScript, injectionTime: .atDocumentEnd,
           forMainFrameOnly: true))
       webView.evaluateJavaScript(source, completionHandler: nil)
+    }
+  }
+}
+
+// MARK: - Chrome delegate
+
+extension SpacesBrowserView: SpacesBrowserChromeDelegate {
+  func chromeDidTapBack() { activeWebView.goBack() }
+  func chromeDidTapForward() { activeWebView.goForward() }
+  func chromeDidTapReload() { activeWebView.reload() }
+  func chromeDidTapDismiss() { channel.invokeMethod("onCollapseTapped", arguments: nil) }
+
+  func chromeDidTapOpenExternally() {
+    // Dart owns url_launcher, so the URL goes back over the channel rather
+    // than being opened here.
+    channel.invokeMethod("onOpenExternally", arguments: activeWebView.url?.absoluteString)
+  }
+
+  func chromeDidChangeExpanded(_ expanded: Bool) {
+    channel.invokeMethod("onExpandedChanged", arguments: expanded)
+  }
+
+  func chromeDidDragHandle(_ translation: CGFloat) {
+    channel.invokeMethod("onHandleDrag", arguments: Double(translation))
+  }
+
+  func chromeDidEndHandleDrag(_ velocity: CGFloat) {
+    channel.invokeMethod("onHandleDragEnd", arguments: Double(velocity))
+  }
+}
+
+// MARK: - UIScrollViewDelegate
+
+extension SpacesBrowserView: UIScrollViewDelegate {
+  /// Safari-style auto-collapse. Native decides and mirrors the result to
+  /// Dart; `setExpanded` remains available as a Dart-side override.
+  func scrollViewDidScroll(_ scrollView: UIScrollView) {
+    guard scrollView === activeWebView.scrollView, scrollView.isDragging else { return }
+    let y = scrollView.contentOffset.y
+    let delta = y - lastScrollY
+    guard abs(delta) > 6 else { return }
+    lastScrollY = y
+
+    // Near the top the toolbar always comes back, so it can never be stranded
+    // collapsed on a page too short to scroll up from.
+    let top = -scrollView.contentInset.top
+    if y <= top + 40 {
+      chrome.setExpanded(true)
+    } else if delta > 0 {
+      chrome.setExpanded(false)
+    } else {
+      chrome.setExpanded(true)
     }
   }
 }

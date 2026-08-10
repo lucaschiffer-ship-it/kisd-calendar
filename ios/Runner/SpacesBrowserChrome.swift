@@ -169,12 +169,11 @@ protocol SpacesBrowserChromeDelegate: AnyObject {
   func chromeDidTapOpenExternally()
   func chromeDidTapDismiss()
   func chromeDidChangeExpanded(_ expanded: Bool)
-  func chromeDidDragHandle(_ translation: CGFloat)
-  func chromeDidEndHandleDrag(_ velocity: CGFloat)
 }
 
-/// The browser's floating chrome: a drag handle at the top, and a bottom
-/// surface that morphs between the full toolbar and a compact title pill.
+/// The browser's floating chrome: a bottom surface that morphs between the
+/// full toolbar and a compact title pill, plus a scrim that keeps page
+/// content off the status bar.
 ///
 /// Deliberately mirrors the app's chrome language — `GlassPill` geometry, the
 /// bottom cluster's inset and height, `_MiniBrowserBar`'s cross-fade morph — so
@@ -189,7 +188,6 @@ final class SpacesBrowserChrome: UIView {
   /// `bottomClusterInset()` — clears the home-indicator glyph, not the whole
   /// safe-area inset, so the toolbar rides where the nav pills do.
   private static let bottomInset: CGFloat = 32
-  private static let handleSize = CGSize(width: 72, height: 28)
 
   /// Stands in for iOS 26's scroll edge effect, which a WKWebView ignores.
   ///
@@ -201,7 +199,6 @@ final class SpacesBrowserChrome: UIView {
   private let scrimMask = CAGradientLayer()
   private var scrimHeight: NSLayoutConstraint!
 
-  private let handle = GlassSurface()
   private let bottomBar = GlassSurface()
   private let toolbarRow = UIStackView()
   private let collapsedRow = UIStackView()
@@ -227,7 +224,6 @@ final class SpacesBrowserChrome: UIView {
     // Touches land on the pills only — everything else belongs to the webview.
     isUserInteractionEnabled = true
     buildTopScrim()
-    buildHandle()
     buildBottomBar()
     buildProgress()
   }
@@ -243,24 +239,27 @@ final class SpacesBrowserChrome: UIView {
       topScrim.topAnchor.constraint(equalTo: topAnchor),
       scrimHeight,
     ])
-    // Holds full strength across the status bar, then ramps out over the last
-    // third — a hard edge would read as a bar, which is the thing being
-    // avoided.
+    // Starts easing off almost immediately. Holding full strength for most of
+    // the height read as a distinct band hanging below the status bar,
+    // especially mid-dismiss where it sits against the page behind.
     scrimMask.colors = [
       UIColor.black.cgColor,
-      UIColor.black.cgColor,
+      UIColor.black.withAlphaComponent(0.45).cgColor,
       UIColor.black.withAlphaComponent(0).cgColor,
     ]
-    scrimMask.locations = [0, 0.6, 1]
+    scrimMask.locations = [0, 0.5, 1]
     topScrim.layer.mask = scrimMask
+    // Enough to keep the clock legible, not enough to read as a surface.
+    topScrim.alpha = 0.6
   }
 
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
   override func layoutSubviews() {
     super.layoutSubviews()
-    // Deep enough to cover the status bar plus a little ramp below it.
-    scrimHeight.constant = safeAreaInsets.top + 14
+    // The status bar and nothing more — any overhang below it is what starts
+    // reading as a bar rather than a fade.
+    scrimHeight.constant = safeAreaInsets.top
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     scrimMask.frame = topScrim.bounds
@@ -270,7 +269,7 @@ final class SpacesBrowserChrome: UIView {
   /// Only the chrome's own surfaces are tappable; the rest of this view is a
   /// hole so scrolls, links and pinches reach the webview underneath.
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-    for surface in [handle, bottomBar] where !surface.isHidden {
+    for surface in [bottomBar] where !surface.isHidden {
       let local = convert(point, to: surface)
       if surface.point(inside: local, with: event) {
         return super.hitTest(point, with: event)
@@ -280,41 +279,6 @@ final class SpacesBrowserChrome: UIView {
   }
 
   // MARK: Construction
-
-  private func buildHandle() {
-    handle.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(handle)
-    NSLayoutConstraint.activate([
-      handle.centerXAnchor.constraint(equalTo: centerXAnchor),
-      // Below the safe area *and* below a site's own sticky header, which
-      // pins to the viewport top and would otherwise sit right under the
-      // pill — on Spaces that put it straight through the search icon.
-      // Floating over page content is also what gives the glass something
-      // real to sample.
-      handle.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 52),
-      handle.widthAnchor.constraint(equalToConstant: Self.handleSize.width),
-      handle.heightAnchor.constraint(equalToConstant: Self.handleSize.height),
-    ])
-
-    let bar = UIView()
-    bar.translatesAutoresizingMaskIntoConstraints = false
-    bar.layer.cornerRadius = 2  // AppRadius.handle
-    handle.contentView.addSubview(bar)
-    NSLayoutConstraint.activate([
-      bar.centerXAnchor.constraint(equalTo: handle.contentView.centerXAnchor),
-      bar.centerYAnchor.constraint(equalTo: handle.contentView.centerYAnchor),
-      bar.widthAnchor.constraint(equalToConstant: 36),
-      bar.heightAnchor.constraint(equalToConstant: 4),
-    ])
-    handleBar = bar
-
-    handle.addGestureRecognizer(
-      UITapGestureRecognizer(target: self, action: #selector(onHandleTap)))
-    handle.addGestureRecognizer(
-      UIPanGestureRecognizer(target: self, action: #selector(onHandlePan(_:))))
-  }
-
-  private var handleBar: UIView!
 
   private func buildBottomBar() {
     bottomBar.translatesAutoresizingMaskIntoConstraints = false
@@ -433,15 +397,13 @@ final class SpacesBrowserChrome: UIView {
     // own settings, independent of that. Without this the scrim and the pills
     // render as light glass over a dark page whenever the two disagree.
     overrideUserInterfaceStyle = theme.isDark ? .dark : .light
-    let path = handle.apply(theme)
-    bottomBar.apply(theme)
+    let path = bottomBar.apply(theme)
     // Off-glass the app avoids blur entirely, so the scrim falls back to a
     // plain wash of the page background — it still has to stop text running
     // into the status bar.
     topScrim.effect =
       theme.glassEnabled ? UIBlurEffect(style: .systemUltraThinMaterial) : nil
     topScrim.backgroundColor = theme.glassEnabled ? .clear : theme.background
-    handleBar.backgroundColor = theme.textTertiary
     titleLabel.textColor = theme.textPrimary
     collapsedChevron.tintColor = theme.textPrimary
     progressView.progressTintColor = theme.accent
@@ -508,22 +470,9 @@ final class SpacesBrowserChrome: UIView {
   @objc private func onReload() { delegate?.chromeDidTapReload() }
   @objc private func onOpenExternally() { delegate?.chromeDidTapOpenExternally() }
   @objc private func onDismiss() { delegate?.chromeDidTapDismiss() }
-  @objc private func onHandleTap() { delegate?.chromeDidTapDismiss() }
-
   @objc private func onCollapsedTap() {
     guard !isExpanded else { return }
     setExpanded(true)
   }
 
-  @objc private func onHandlePan(_ recognizer: UIPanGestureRecognizer) {
-    let translation = recognizer.translation(in: self).y
-    switch recognizer.state {
-    case .changed:
-      delegate?.chromeDidDragHandle(max(0, translation))
-    case .ended, .cancelled:
-      delegate?.chromeDidEndHandleDrag(recognizer.velocity(in: self).y)
-    default:
-      break
-    }
-  }
 }

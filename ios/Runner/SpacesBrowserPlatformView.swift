@@ -494,13 +494,6 @@ extension SpacesBrowserView: SpacesBrowserChromeDelegate {
     channel.invokeMethod("onExpandedChanged", arguments: expanded)
   }
 
-  func chromeDidDragHandle(_ translation: CGFloat) {
-    channel.invokeMethod("onSheetDrag", arguments: Double(translation))
-  }
-
-  func chromeDidEndHandleDrag(_ velocity: CGFloat) {
-    channel.invokeMethod("onSheetDragEnd", arguments: Double(velocity))
-  }
 }
 
 // MARK: - UIScrollViewDelegate

@@ -82,7 +82,13 @@ class _CourseShellCardState extends State<CourseShellCard>
   @override
   void didUpdateWidget(CourseShellCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.shell.isFavourite != widget.shell.isFavourite) {
+    // Also on an id change, not just a value change: un-hearting on the ♥ tab
+    // shortens the list, so this element is recycled onto a *different* course.
+    // Comparing isFavourite across two unrelated shells reads "unchanged"
+    // whenever both are true, leaving the new course showing the old card's
+    // outline heart.
+    if (oldWidget.shell.id != widget.shell.id ||
+        oldWidget.shell.isFavourite != widget.shell.isFavourite) {
       _liked = widget.shell.isFavourite;
     }
   }

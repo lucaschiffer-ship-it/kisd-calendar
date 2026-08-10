@@ -10,6 +10,7 @@ import '../config/app_theme.dart' as tokens;
 import '../models/course_shell.dart';
 import '../services/cache_service.dart';
 import '../services/calendar_service.dart';
+import '../services/course_updates.dart';
 import '../services/page_actions.dart';
 import '../services/service_locator.dart';
 import '../services/theme_service.dart';
@@ -178,6 +179,7 @@ class _ListScreenState extends State<ListScreen>
       if (dayChanged) _loadTodayEvents();
     });
     CalendarService.instance.writeRevision.addListener(_loadTodayEvents);
+    CourseUpdates.instance.revision.addListener(_reloadFromCache);
     _revealSnap = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 180));
     _revealSnap.addListener(() {
@@ -252,6 +254,23 @@ class _ListScreenState extends State<ListScreen>
         DateTime.now().difference(lastScrape) > const Duration(hours: 24);
     if (stale) _scrapeBackground();
     _maybeScrapeEvents();
+  }
+
+  // Something outside this screen wrote the course cache — today, the Spaces
+  // browser attaching a link or creating a course. Pull the change into
+  // `_shells`, or the next heart tap would rewrite the whole array from a
+  // stale list and silently undo it.
+  Future<void> _reloadFromCache() async {
+    try {
+      final cached = await scraperService.loadCached();
+      if (!mounted || cached.isEmpty) return;
+      setState(() {
+        _shells = cached;
+        _rebuildFilteredLists();
+      });
+    } catch (e) {
+      print('[list] reload after external write: $e');
+    }
   }
 
   Future<void> _maybeScrapeEvents() async {
@@ -374,6 +393,7 @@ class _ListScreenState extends State<ListScreen>
   @override
   void dispose() {
     CalendarService.instance.writeRevision.removeListener(_loadTodayEvents);
+    CourseUpdates.instance.revision.removeListener(_reloadFromCache);
     _revealSnap.dispose();
     _searchReveal.dispose();
     _now.dispose();

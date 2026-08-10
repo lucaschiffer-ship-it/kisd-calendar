@@ -143,6 +143,7 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
     ])
     let path = chrome.apply(theme)
     chrome.setTitle(nil)
+    chrome.setURL(Self.homeURL)
     chrome.setNavState(canGoBack: false, canGoForward: false)
     browserLog("glass path: \(path.rawValue)")
 
@@ -321,7 +322,12 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
 
     observations.append(
       webView.observe(\.url, options: [.new]) { [weak self] view, _ in
-        guard let self = self, view === self.contentWebView else { return }
+        guard let self = self else { return }
+        // The address bar labels whichever tab is showing — a native-only
+        // path. The channel emission below stays content-only on purpose:
+        // home-tab URLs reaching Dart would corrupt `_lastTabUrl` tracking.
+        if view === self.activeWebView { self.chrome.setURL(view.url) }
+        guard view === self.contentWebView else { return }
         guard let url = view.url?.absoluteString else { return }
         self.channel.invokeMethod("onUrlChanged", arguments: url)
       })
@@ -369,6 +375,8 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
     activeIndex = index
     homeWebView.isHidden = index != 0
     contentWebView.isHidden = index != 1
+    chrome.setURL(activeWebView.url)
+    chrome.setTitle(activeWebView.title)
     emitNavState()
     channel.invokeMethod("onTabSwitched", arguments: index)
   }
@@ -450,6 +458,10 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
       chrome.setTitle(call.arguments as? String)
       result(nil)
 
+    case "endEditing":
+      chrome.cancelTransientStates()
+      result(nil)
+
     case "setExpanded":
       chrome.setExpanded(call.arguments as? Bool ?? true, notify: false)
       result(nil)
@@ -490,10 +502,54 @@ extension SpacesBrowserView: SpacesBrowserChromeDelegate {
     channel.invokeMethod("onOpenExternally", arguments: activeWebView.url?.absoluteString)
   }
 
+  /// Dart owns the course cache and the picker UI, so the page identity goes
+  /// over the channel and everything else happens there. The title comes from
+  /// the active webview directly — `onTitleChanged` is content-tab-only, so it
+  /// would be nil for anything the user reached from the home tab.
+  func chromeDidTapAddToCourse() {
+    channel.invokeMethod(
+      "onAddToCourse",
+      arguments: [
+        "url": activeWebView.url?.absoluteString,
+        "title": activeWebView.title,
+      ])
+  }
+
   func chromeDidChangeExpanded(_ expanded: Bool) {
     channel.invokeMethod("onExpandedChanged", arguments: expanded)
   }
 
+  func chromeDidSubmit(_ text: String) {
+    guard let url = Self.resolveQuery(text) else { return }
+    contentWebView.load(URLRequest(url: url))
+    switchTo(1)
+  }
+
+  /// Omnibox resolution. Anything already carrying a scheme is taken as-is; a
+  /// bare token that looks like a host gets https://; everything else is a
+  /// search, which is what makes the bar useful for the wider web and not just
+  /// for Spaces.
+  static func resolveQuery(_ raw: String) -> URL? {
+    let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { return nil }
+
+    if let url = URL(string: text), let scheme = url.scheme, !scheme.isEmpty {
+      return url
+    }
+    let looksLikeHost =
+      !text.contains(" ") && text.contains(".")
+      && !text.hasPrefix(".") && !text.hasSuffix(".")
+    if looksLikeHost, let url = URL(string: "https://\(text)") {
+      return url
+    }
+    var allowed = CharacterSet.alphanumerics
+    allowed.insert(charactersIn: "-._~")
+    let escaped = text.addingPercentEncoding(withAllowedCharacters: allowed) ?? text
+    return URL(string: "\(searchPrefix)\(escaped)")
+  }
+
+  /// Swap this one constant to change search engines.
+  private static let searchPrefix = "https://duckduckgo.com/?q="
 }
 
 // MARK: - UIScrollViewDelegate
@@ -578,7 +634,10 @@ extension SpacesBrowserView: WKNavigationDelegate {
       channel.invokeMethod("onAuthExpired", arguments: nil)
       return
     }
-    if webView === activeWebView { emitNavState() }
+    if webView === activeWebView {
+      chrome.setURL(url)
+      emitNavState()
+    }
   }
 
   func webView(

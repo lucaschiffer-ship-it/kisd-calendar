@@ -29,6 +29,7 @@ class NativeSpacesBrowser extends StatefulWidget {
     this.onSheetDragEnd,
     this.onDismiss,
     this.onOpenExternally,
+    this.onAddToCourse,
     this.onAuthExpired,
   });
 
@@ -50,6 +51,11 @@ class NativeSpacesBrowser extends StatefulWidget {
 
   /// The toolbar's Safari button. Dart owns `url_launcher`.
   final ValueChanged<String>? onOpenExternally;
+
+  /// The menu's `+` button: attach this page to a course. The title comes
+  /// straight from the active webview, so it is present for the home tab too —
+  /// unlike [onPageTitleChanged], which only reports the content tab.
+  final void Function(String url, String? title)? onAddToCourse;
 
   /// Fired when a page load lands on the TH-Köln IdP / WordPress login instead
   /// of Spaces — i.e. the session expired and Spaces bounced us to re-auth.
@@ -133,6 +139,12 @@ class NativeSpacesBrowserState extends State<NativeSpacesBrowser> {
       case 'onOpenExternally':
         final url = call.arguments as String?;
         if (url != null) widget.onOpenExternally?.call(url);
+      case 'onAddToCourse':
+        final args = (call.arguments as Map).cast<String, dynamic>();
+        final url = args['url'] as String?;
+        if (url != null) {
+          widget.onAddToCourse?.call(url, args['title'] as String?);
+        }
       case 'onAuthExpired':
         widget.onAuthExpired?.call();
       case 'onLoadingChanged':
@@ -174,6 +186,10 @@ class NativeSpacesBrowserState extends State<NativeSpacesBrowser> {
 
   void setPillTitle(String title) =>
       _channel?.invokeMethod('setPillTitle', title);
+
+  /// Drop the keyboard and close the ≡ menu. The native side does this itself
+  /// when a dismiss drag starts; this is the path for Dart-initiated closes.
+  void endEditing() => _channel?.invokeMethod('endEditing');
 
   /// The URL the **active** webview is on right now, queried live so it can't
   /// go stale when a view is reloaded behind the scenes.

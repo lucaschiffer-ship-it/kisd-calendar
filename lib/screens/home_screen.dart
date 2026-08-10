@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'calendar_screen.dart';
 import 'list_screen.dart';
@@ -14,6 +16,7 @@ import '../services/service_locator.dart';
 import '../services/spaces_browser.dart';
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/add_to_course_sheet.dart';
 import '../widgets/glass_pill.dart';
 import '../widgets/native_spaces_browser.dart';
 import '../widgets/page_floating_actions.dart';
@@ -69,6 +72,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // "Reconnecting…" overlay over the Spaces browser).
   bool _reconnecting = false;
 
+  // The page the browser's ≡ → + is offering to attach, while the picker is up.
+  String? _addUrl;
+  String? _addTitle;
+
+  // Transient note shown *inside* the browser sheet. A SnackBar cannot be used
+  // here: ScaffoldMessenger renders into the Scaffold, which the full-screen
+  // browser overlay covers completely, so the message would never be seen.
+  String? _browserNote;
+  Timer? _browserNoteTimer;
+
 
   // One action controller per page: the bottom bar's fixed left slot renders
   // and triggers the current page's reload (translate on Mensa).
@@ -119,6 +132,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   void dispose() {
     SpacesBrowser.unregister();
+    _browserNoteTimer?.cancel();
     _snapBackCtrl.removeListener(_onSnapBackTick);
     _snapBackCtrl.dispose();
     _sheetAnim.dispose();
@@ -155,8 +169,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _isHomeUrl(String url) {
     final uri = Uri.tryParse(url);
     if (uri == null) return false;
-    return uri.host == 'spaces.kisd.de' &&
-        (uri.path.isEmpty || uri.path == '/');
+    // `/home/` as well as the bare root: signing in redirects
+    // `spaces.kisd.de` to `spaces.kisd.de/home/`, so the root test alone lets
+    // the logged-in home page through. That went unnoticed while only the
+    // content tab reported titles — the ≡ menu's "add to course" reads the
+    // *active* webview, so the home tab reaches this check for real.
+    if (uri.host != 'spaces.kisd.de') return false;
+    final path = uri.path;
+    return path.isEmpty || path == '/' || path == '/home' || path == '/home/';
   }
 
   // A login page from the (re-)authentication flow: the TH-Köln IdP/MFA hosts
@@ -272,6 +292,36 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
+  // The browser's ≡ → + button. Only pages worth keeping are attachable: the
+  // Spaces home and the IdP/MFA pages would just add noise to a course.
+  void _onAddToCourse(String url, String? title) {
+    if (!_isTrackablePage(url)) {
+      HapticFeedback.selectionClick();
+      _showBrowserNote('Open a course page first');
+      return;
+    }
+    setState(() {
+      _addUrl = url;
+      _addTitle = title;
+    });
+  }
+
+  void _showBrowserNote(String message) {
+    _browserNoteTimer?.cancel();
+    setState(() => _browserNote = message);
+    _browserNoteTimer = Timer(const Duration(milliseconds: 1800), () {
+      if (mounted) setState(() => _browserNote = null);
+    });
+  }
+
+  void _closeAddSheet() {
+    if (!mounted) return;
+    setState(() {
+      _addUrl = null;
+      _addTitle = null;
+    });
+  }
+
   void _onSnapBackTick() => _dragOffset.value = _snapBackAnim.value;
 
   void _snapBack() {
@@ -295,6 +345,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _closeSheet() {
+    // The picker belongs to the page behind it — it must not outlive the sheet.
+    if (_addUrl != null) {
+      setState(() {
+        _addUrl = null;
+        _addTitle = null;
+      });
+    }
+    // Drop the keyboard and any open menu on the same frame the sheet starts
+    // leaving. Native already does this when *it* owns the gesture (the
+    // dismiss drag, the ⌄ button); this covers the Dart-initiated closes.
+    _browserKey.currentState?.endEditing();
     _snapBackCtrl.stop();
     // Fold an in-flight drag into the animation's starting point, so the sheet
     // carries on from where the finger left it. Without this it would snap
@@ -478,8 +539,45 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             mode: LaunchMode.externalApplication);
                       }
                     },
+                    onAddToCourse: _onAddToCourse,
                     onAuthExpired: _onBrowserAuthExpired,
                   ),
+                  if (_browserNote != null)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      // Clears the toolbar's 50 pt pill and its 32 pt inset.
+                      bottom: bottomClusterHeight(context) + 14,
+                      child: IgnorePointer(
+                        child: Center(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 9),
+                            decoration: BoxDecoration(
+                              color: s.surfaceElevated,
+                              borderRadius:
+                                  BorderRadius.circular(AppRadius.pill),
+                              border:
+                                  Border.all(color: s.cardBorder, width: 0.5),
+                            ),
+                            child: Text(
+                              _browserNote!,
+                              style: AppTextStyles.bodySmall(
+                                  color: s.textPrimary),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (_addUrl != null)
+                    AddToCourseSheet(
+                      // Keyed by URL so reopening on a different page rebuilds
+                      // the picker rather than reusing the old page's state.
+                      key: ValueKey(_addUrl),
+                      url: _addUrl!,
+                      pageTitle: _addTitle,
+                      onClose: _closeAddSheet,
+                    ),
                   if (_reconnecting)
                     Positioned.fill(
                       child: Container(

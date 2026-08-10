@@ -338,16 +338,27 @@ final class SpacesBrowserChrome: UIView {
         greaterThanOrEqualTo: bottomBar.contentView.leadingAnchor, constant: 16),
     ])
 
-    bottomBar.addGestureRecognizer(
-      UITapGestureRecognizer(target: self, action: #selector(onCollapsedTap)))
+    // Expanding by tapping the collapsed pill. Disabled while expanded, and
+    // non-cancelling either way: a tap recogniser on the bar would otherwise
+    // swallow the toolbar buttons' own touch tracking and they would never
+    // fire.
+    let expandTap = UITapGestureRecognizer(target: self, action: #selector(onCollapsedTap))
+    expandTap.cancelsTouchesInView = false
+    expandTap.isEnabled = false
+    bottomBar.addGestureRecognizer(expandTap)
+    self.expandTap = expandTap
   }
 
   private var collapsedChevron: UIImageView!
+  private var expandTap: UITapGestureRecognizer!
 
   private func buildProgress() {
     progressView.translatesAutoresizingMaskIntoConstraints = false
     progressView.trackTintColor = .clear
     progressView.isHidden = true
+    // Spans the full width across the top, overlapping the handle pill. Left
+    // interactive it would win hit-testing and the drag would never start.
+    progressView.isUserInteractionEnabled = false
     addSubview(progressView)
     NSLayoutConstraint.activate([
       progressView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -410,6 +421,7 @@ final class SpacesBrowserChrome: UIView {
 
     NSLayoutConstraint.deactivate(expanded ? collapsedConstraints : expandedConstraints)
     NSLayoutConstraint.activate(expanded ? expandedConstraints : collapsedConstraints)
+    expandTap.isEnabled = !expanded
 
     let apply = {
       self.toolbarRow.alpha = expanded ? 1 : 0

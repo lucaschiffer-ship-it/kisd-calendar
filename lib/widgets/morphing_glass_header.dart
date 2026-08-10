@@ -73,36 +73,52 @@ class MorphingGlassHeader extends StatelessWidget {
         }
 
         final glass = ThemeService.instance.glassEnabled.value;
-        final borderColor = ThemeService.instance.currentColor.value == 'dark'
-            ? const Color(0x1AFFFFFF)
-            : tokens.AppThemeTokens.cardBorder;
+        final tint = glass
+            ? AppColorScheme.current.glassHeaderTint
+            : tokens.AppThemeTokens.backgroundColor;
 
-        final surface = Container(
-          decoration: BoxDecoration(
-            color: glass
-                ? AppColorScheme.current.glassHeaderTint
-                : tokens.AppThemeTokens.backgroundColor,
-            border: Border(bottom: BorderSide(color: borderColor, width: 0.5)),
-          ),
-          child: SizedBox(
-            height: surfaceH,
-            width: double.infinity,
-            child: Stack(
-              clipBehavior: Clip.hardEdge,
-              children: [
-                // No height: content keeps its natural height, top-aligned,
-                // clipped at surfaceH while the surface morphs.
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: Opacity(opacity: opacity, child: child),
+        // No bottom border: the blur's own edge is the boundary.
+        //
+        // Two boxes rather than one so the overhang can sit outside the content
+        // clip and outside hit testing — see [AppGlass.headerOverhang].
+        final surface = Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              color: tint,
+              child: SizedBox(
+                height: surfaceH,
+                width: double.infinity,
+                child: Stack(
+                  clipBehavior: Clip.hardEdge,
+                  children: [
+                    // No height: content keeps its natural height, top-aligned,
+                    // clipped at surfaceH while the surface morphs.
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: Opacity(opacity: opacity, child: child),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
-          ),
+            IgnorePointer(
+              child: Container(color: tint, height: AppGlass.headerOverhang),
+            ),
+          ],
         );
 
+        // One clip, one filter, and a hard bottom edge — no hairline, no fade.
+        //
+        // A fade below the header can't be built out of thinner blurred bands:
+        // a BackdropFilter's input is bounded by its clip, so a 5px band sees
+        // only its own 5px and degenerates into a flat smear of whatever sits
+        // inside it. Stacked, those read as hard-edged rectangles, brighter
+        // than the header above them.
+        //
         // ClipRect sits inside the Transform so the blur samples the pinned
         // screen rect, not the sliding slot rect.
         final body = glass

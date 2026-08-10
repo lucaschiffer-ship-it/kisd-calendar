@@ -135,6 +135,9 @@ class _MailScreenState extends State<MailScreen>
       animation: Listenable.merge([
         ThemeService.instance.currentColor,
         ThemeService.instance.glassEnabled,
+        // The header's chips and search field follow the bottom cluster's shape,
+        // so this page has to rebuild when "Rounded bars" flips.
+        ThemeService.instance.roundedBars,
       ]),
       builder: (context, _) => _buildContent(),
     );
@@ -167,7 +170,9 @@ class _MailScreenState extends State<MailScreen>
     }
 
     final filtered = _filtered;
-    final radius = tokens.AppThemeTokens.cardBorderRadius;
+    // Shape comes from the bottom cluster, not the card scale: the header chrome
+    // reads as one system with the floating pills.
+    final barRadius = GlassPill.defaultRadius();
 
     final view = View.of(context);
     final statusH = view.viewPadding.top / view.devicePixelRatio;
@@ -229,13 +234,13 @@ class _MailScreenState extends State<MailScreen>
                       contentPadding: EdgeInsets.zero,
                       isDense: true,
                       border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(radius),
+                          borderRadius: BorderRadius.circular(barRadius),
                           borderSide: searchBorder),
                       enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(radius),
+                          borderRadius: BorderRadius.circular(barRadius),
                           borderSide: searchBorder),
                       focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(radius),
+                        borderRadius: BorderRadius.circular(barRadius),
                         borderSide: BorderSide(color: s.accent, width: 1),
                       ),
                     ),
@@ -250,8 +255,7 @@ class _MailScreenState extends State<MailScreen>
                         label: 'All',
                         selected: _filter == _MailFilter.all,
                         onTap: () => setState(() => _filter = _MailFilter.all),
-                        radius: radius,
-                        glass: glass,
+                        radius: barRadius,
                       ),
                       const SizedBox(width: 8),
                       _FilterChip(
@@ -259,8 +263,7 @@ class _MailScreenState extends State<MailScreen>
                         selected: _filter == _MailFilter.unread,
                         onTap: () =>
                             setState(() => _filter = _MailFilter.unread),
-                        radius: radius,
-                        glass: glass,
+                        radius: barRadius,
                       ),
                       const SizedBox(width: 8),
                       _FilterChip(
@@ -273,8 +276,7 @@ class _MailScreenState extends State<MailScreen>
                             mailService.fetchDrafts();
                           }
                         },
-                        radius: radius,
-                        glass: glass,
+                        radius: barRadius,
                       ),
                       const SizedBox(width: 8),
                       _FilterChip(
@@ -287,8 +289,7 @@ class _MailScreenState extends State<MailScreen>
                             mailService.fetchSent();
                           }
                         },
-                        radius: radius,
-                        glass: glass,
+                        radius: barRadius,
                       ),
                       const SizedBox(width: 8),
                       _FilterChip(
@@ -302,8 +303,7 @@ class _MailScreenState extends State<MailScreen>
                             mailService.fetchTrash();
                           }
                         },
-                        radius: radius,
-                        glass: glass,
+                        radius: barRadius,
                       ),
                     ],
                   ),
@@ -432,13 +432,20 @@ class _MailScreenState extends State<MailScreen>
 
 // ── Filter chip ───────────────────────────────────────────────────────────────
 
+/// Header-sized sibling of the bottom cluster's [GlassPill]: same shape, same
+/// hairline, no fill.
+///
+/// A fill would be wasted here. These sit *on* the header's glass, not over live
+/// page content, so a tint at chip strength lands on a surface already tinted the
+/// same way and reads as nothing — which is why the old accent-filled version
+/// looked mushy. The border is the only shape signal the material leaves, so
+/// selection moves onto the label/icon instead.
 class _FilterChip extends StatelessWidget {
   const _FilterChip({
     required this.label,
     required this.selected,
     required this.onTap,
     required this.radius,
-    this.glass = false,
     this.icon,
   });
 
@@ -446,53 +453,55 @@ class _FilterChip extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
   final double radius;
-  final bool glass;
   final IconData? icon;
 
   @override
   Widget build(BuildContext context) {
     final s = AppColorScheme.current;
-    final Color bg, border;
-    if (glass) {
-      bg = selected
-          ? s.accent.withValues(alpha: 0.65)
-          : Colors.white.withValues(alpha: 0.10); // TODO glass refinement
-      border = selected
-          ? s.accent.withValues(alpha: 0.80)
-          : Colors.white.withValues(alpha: 0.20); // TODO glass refinement
-    } else {
-      bg     = selected ? s.accent : tokens.AppThemeTokens.cardBackground;
-      border = selected ? s.accent : tokens.AppThemeTokens.cardBorder;
-    }
+    // GlassPill's rule verbatim (glass_pill.dart) — keyed on the color scheme,
+    // not on `glassEnabled`, so the hairline matches the floating pills in both.
+    final borderColor = ThemeService.instance.currentColor.value == 'dark'
+        ? AppGlass.dividerColor
+        : s.cardBorder;
+    final idleColor = tokens.AppThemeTokens.secondaryTextColor;
 
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        height: 36,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        decoration: BoxDecoration(
-          color: bg,
-          borderRadius: BorderRadius.circular(radius),
-          border: Border.all(color: border, width: 0.5),
-        ),
-        alignment: Alignment.center,
-        child: icon != null
-            ? Icon(
-                icon,
-                size: 18,
-                color: selected
-                    ? Colors.white
-                    : tokens.AppThemeTokens.secondaryTextColor,
-              )
-            : Text(
-                label,
-                style: AppTextStyles.bodySmall(
-                  color: selected
-                      ? Colors.white // on accent — white correct in both modes
-                      : tokens.AppThemeTokens.secondaryTextColor,
-                ).copyWith(
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400),
-              ),
+      // The chip paints nothing inside its border now, so the whole box has to
+      // be claimed explicitly — same as every other tappable in the chrome.
+      behavior: HitTestBehavior.opaque,
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(end: selected ? 1.0 : 0.0),
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOut,
+        builder: (context, t, _) {
+          final fg = Color.lerp(idleColor, s.accent, t)!;
+          // Picked off `t` rather than left to TextStyle.lerp, which rounds
+          // FontWeight to the nearest step anyway.
+          final weight = t > 0.5 ? FontWeight.w600 : FontWeight.w400;
+
+          return Container(
+            height: 36,
+            // Square when it's icon-only, so pill radius yields a true circle
+            // like the bottom cluster's icon buttons.
+            width: icon != null ? 36 : null,
+            padding: icon != null
+                ? EdgeInsets.zero
+                : const EdgeInsets.symmetric(horizontal: 14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(radius),
+              border: Border.all(color: borderColor, width: 0.5),
+            ),
+            alignment: Alignment.center,
+            child: icon != null
+                ? Icon(icon, size: 18, color: fg)
+                : Text(
+                    label,
+                    style: AppTextStyles.bodySmall(color: fg)
+                        .copyWith(fontWeight: weight),
+                  ),
+          );
+        },
       ),
     );
   }

@@ -61,9 +61,6 @@ class AppColorScheme {
   static ValueListenable<AppColorScheme> get currentListenable =>
       _currentNotifier;
 
-  // Bottom-border on glass headers — same in every mode.
-  static const Color glassDivider = Color(0x1AFFFFFF);
-
   // ── Light ──────────────────────────────────────────────────────────────────
   // Values derived from the T.0 audit of list_screen/calendar_screen light mode.
   // These are the canonical non-negotiable baseline values.
@@ -136,11 +133,17 @@ class AppGlass {
 
   static const double headerBlur  = 24.0;
   static const double cardBlur    = 20.0;
+  // How far the glass edge sits below the header's last element — breathing
+  // room between content and the boundary. Painted past the height reported to
+  // PageHeaderHandle, so it moves the edge without moving any geometry keyed
+  // off that height (scroll padding, content clip).
+  static const double headerOverhang = 8.0;
   static const double borderAlpha = 0.20;
   // Header tint alphas — match AppColorScheme.*.glassHeaderTint
   static const Color tintLight    = Color(0x66FFFFFF); // white 40 %
   static const Color tintDark     = Color(0x0FFFFFFF); // white 6 %
-  // Glass header bottom border — universal across modes
+  // Hairline on glass surfaces — universal across modes. Not the header, which
+  // ends on a bare edge; this is the floating pills' border.
   static const Color dividerColor = Color(0x1AFFFFFF);
   // Fill alpha for glass inputs (search fields, etc.)
   static const double fillAlpha   = 0.12;

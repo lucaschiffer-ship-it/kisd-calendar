@@ -221,6 +221,13 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
     // black band and made the dismiss feel broken.
     webView.scrollView.bounces = false
 
+    // NB: iOS 26's UIScrollEdgeEffect does not work on a WKWebView. Setting
+    // `scrollView.topEdgeEffect.style` compiles and the symbols resolve, but
+    // web content is composited by the web process, so UIKit has nothing to
+    // apply the effect to — confirmed with `.hard`, which draws a hard cutoff
+    // and a dividing line, and still rendered nothing. The chrome's own scrim
+    // reproduces the same look instead.
+
     let pan = UIPanGestureRecognizer(target: self, action: #selector(onWebPan(_:)))
     pan.delegate = self
     webView.scrollView.addGestureRecognizer(pan)

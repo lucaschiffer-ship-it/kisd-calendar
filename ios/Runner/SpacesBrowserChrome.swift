@@ -191,6 +191,16 @@ final class SpacesBrowserChrome: UIView {
   private static let bottomInset: CGFloat = 32
   private static let handleSize = CGSize(width: 72, height: 28)
 
+  /// Stands in for iOS 26's scroll edge effect, which a WKWebView ignores.
+  ///
+  /// A blur whose alpha ramps to zero downwards, so page content dissolves as
+  /// it passes under the status bar instead of colliding with the clock. Same
+  /// read as Safari's top edge; invisible at rest, because at the top of the
+  /// page the only thing under it is flat page background.
+  private let topScrim = UIVisualEffectView()
+  private let scrimMask = CAGradientLayer()
+  private var scrimHeight: NSLayoutConstraint!
+
   private let handle = GlassSurface()
   private let bottomBar = GlassSurface()
   private let toolbarRow = UIStackView()
@@ -216,12 +226,46 @@ final class SpacesBrowserChrome: UIView {
     super.init(frame: frame)
     // Touches land on the pills only — everything else belongs to the webview.
     isUserInteractionEnabled = true
+    buildTopScrim()
     buildHandle()
     buildBottomBar()
     buildProgress()
   }
 
+  private func buildTopScrim() {
+    topScrim.isUserInteractionEnabled = false
+    topScrim.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(topScrim)
+    scrimHeight = topScrim.heightAnchor.constraint(equalToConstant: 0)
+    NSLayoutConstraint.activate([
+      topScrim.leadingAnchor.constraint(equalTo: leadingAnchor),
+      topScrim.trailingAnchor.constraint(equalTo: trailingAnchor),
+      topScrim.topAnchor.constraint(equalTo: topAnchor),
+      scrimHeight,
+    ])
+    // Holds full strength across the status bar, then ramps out over the last
+    // third — a hard edge would read as a bar, which is the thing being
+    // avoided.
+    scrimMask.colors = [
+      UIColor.black.cgColor,
+      UIColor.black.cgColor,
+      UIColor.black.withAlphaComponent(0).cgColor,
+    ]
+    scrimMask.locations = [0, 0.6, 1]
+    topScrim.layer.mask = scrimMask
+  }
+
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    // Deep enough to cover the status bar plus a little ramp below it.
+    scrimHeight.constant = safeAreaInsets.top + 14
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    scrimMask.frame = topScrim.bounds
+    CATransaction.commit()
+  }
 
   /// Only the chrome's own surfaces are tappable; the rest of this view is a
   /// hole so scrolls, links and pinches reach the webview underneath.
@@ -384,8 +428,19 @@ final class SpacesBrowserChrome: UIView {
 
   func apply(_ theme: SpacesBrowserTheme) -> GlassSurface.Path {
     self.theme = theme
+    // UIKit materials and UIGlassEffect resolve against the trait collection,
+    // which follows the *OS* appearance — and the app's theme is chosen in its
+    // own settings, independent of that. Without this the scrim and the pills
+    // render as light glass over a dark page whenever the two disagree.
+    overrideUserInterfaceStyle = theme.isDark ? .dark : .light
     let path = handle.apply(theme)
     bottomBar.apply(theme)
+    // Off-glass the app avoids blur entirely, so the scrim falls back to a
+    // plain wash of the page background — it still has to stop text running
+    // into the status bar.
+    topScrim.effect =
+      theme.glassEnabled ? UIBlurEffect(style: .systemUltraThinMaterial) : nil
+    topScrim.backgroundColor = theme.glassEnabled ? .clear : theme.background
     handleBar.backgroundColor = theme.textTertiary
     titleLabel.textColor = theme.textPrimary
     collapsedChevron.tintColor = theme.textPrimary

@@ -172,6 +172,9 @@ protocol SpacesBrowserChromeDelegate: AnyObject {
   func chromeDidTapAddToCourse()
   func chromeDidTapDismiss()
   func chromeDidChangeExpanded(_ expanded: Bool)
+  /// A tap landed on the modal dim, i.e. outside whatever Flutter is showing
+  /// over the page. Dart owns that sheet, so it decides what to close.
+  func chromeDidTapModalScrim()
   /// The user committed the address bar. The text is raw — the host resolves
   /// it to a URL or a search.
   func chromeDidSubmit(_ text: String)
@@ -225,6 +228,19 @@ final class SpacesBrowserChrome: UIView {
   /// rather than a blur: at this moment the field is a modal layer, and there
   /// is nothing to be gained from sampling a page the user is not looking at.
   private let dimView = UIView()
+
+  /// Dims the page while Flutter shows a sheet over it — same fill as
+  /// `dimView`, but a separate view for three reasons: `applyState` rewrites
+  /// `dimView.alpha` on every transition, this one has to sit *above* the
+  /// pills so the chrome dims with the page, and it takes its own touches.
+  ///
+  /// It lives here rather than in Flutter because a full-screen Flutter layer
+  /// animating over the webview means recompositing the platform view every
+  /// frame. On this side it is a plain UIKit alpha ramp, and it blocks the
+  /// page's scrolling for free.
+  private let modalDim = UIView()
+  private var modalDimOn = false
+  private var modalDimAnimator: UIViewPropertyAnimator?
 
   private let leftPill = GlassSurface()
   private let urlPill = GlassSurface()
@@ -282,6 +298,9 @@ final class SpacesBrowserChrome: UIView {
     buildPills()
     buildMenu()
     buildProgress()
+    // Last, so it covers the pills too: while a Flutter sheet is up the whole
+    // chrome is behind it and has to read that way.
+    buildModalDim()
     buildGestures()
     observeKeyboard()
     applyState(.rest, animated: false, notify: false)
@@ -337,6 +356,54 @@ final class SpacesBrowserChrome: UIView {
       dimView.topAnchor.constraint(equalTo: topAnchor),
       dimView.bottomAnchor.constraint(equalTo: bottomAnchor),
     ])
+  }
+
+  private func buildModalDim() {
+    modalDim.translatesAutoresizingMaskIntoConstraints = false
+    modalDim.backgroundColor = UIColor.black.withAlphaComponent(0.35)
+    modalDim.alpha = 0
+    modalDim.isHidden = true
+    // Unlike `dimView` this one *does* take the touch: swallowing it is what
+    // stops the page scrolling under a sheet that is supposed to be modal.
+    // `outsideTap`/`outsidePan` cannot do this — both are
+    // `cancelsTouchesInView = false`, so the webview would still see the pan.
+    modalDim.addGestureRecognizer(
+      UITapGestureRecognizer(target: self, action: #selector(onModalScrimTap)))
+    addSubview(modalDim)
+    NSLayoutConstraint.activate([
+      modalDim.leadingAnchor.constraint(equalTo: leadingAnchor),
+      modalDim.trailingAnchor.constraint(equalTo: trailingAnchor),
+      modalDim.topAnchor.constraint(equalTo: topAnchor),
+      modalDim.bottomAnchor.constraint(equalTo: bottomAnchor),
+    ])
+  }
+
+  @objc private func onModalScrimTap() {
+    delegate?.chromeDidTapModalScrim()
+  }
+
+  /// Fades the page dim for a Flutter-owned sheet. Same curve and duration as
+  /// `applyState`, so the dim and the sheet ride one motion.
+  ///
+  /// Tracked by `modalDimOn` rather than `isHidden`: the view stays unhidden
+  /// for the whole fade-out, so an `isHidden` guard would swallow a reopen
+  /// that lands mid-dismiss and leave the dim fading to nothing.
+  func setModalDim(_ on: Bool) {
+    guard on != modalDimOn else { return }
+    modalDimOn = on
+    modalDimAnimator?.stopAnimation(true)
+    if on { modalDim.isHidden = false }
+    let timing = UICubicTimingParameters(
+      controlPoint1: CGPoint(x: 0.215, y: 0.61), controlPoint2: CGPoint(x: 0.355, y: 1))
+    let animator = UIViewPropertyAnimator(duration: 0.3, timingParameters: timing)
+    animator.addAnimations { self.modalDim.alpha = on ? 1 : 0 }
+    animator.addCompletion { [weak self] position in
+      guard let self, position == .end else { return }
+      self.modalDimAnimator = nil
+      if !self.modalDimOn { self.modalDim.isHidden = true }
+    }
+    modalDimAnimator = animator
+    animator.startAnimation()
   }
 
   private func buildPills() {
@@ -620,6 +687,10 @@ final class SpacesBrowserChrome: UIView {
   /// `menu` and `editing` are the exceptions: they claim the whole bounds so a
   /// tap anywhere outside the pills can dismiss them.
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+    // A Flutter sheet is up. Claim the whole bounds regardless of state: the
+    // `rest` branch below returns nil outside the pills, which would let the
+    // page scroll under a dim that is meant to be modal.
+    if modalDimOn { return super.hitTest(point, with: event) }
     switch state {
     case .menu, .editing:
       return super.hitTest(point, with: event)
@@ -926,6 +997,9 @@ final class SpacesBrowserChrome: UIView {
   }
 
   @objc private func onAddToCourse() {
+    // Matches `onMenuTap`, which taps back on the way in. Without this the
+    // one pill that opens a sheet is the only silent one.
+    UIImpactFeedbackGenerator(style: .light).impactOccurred()
     applyState(.rest)
     delegate?.chromeDidTapAddToCourse()
   }

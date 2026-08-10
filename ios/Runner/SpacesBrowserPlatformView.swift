@@ -466,6 +466,10 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
       chrome.setExpanded(call.arguments as? Bool ?? true, notify: false)
       result(nil)
 
+    case "setModalDim":
+      chrome.setModalDim(call.arguments as? Bool ?? false)
+      result(nil)
+
     default:
       result(FlutterMethodNotImplemented)
     }
@@ -507,12 +511,19 @@ extension SpacesBrowserView: SpacesBrowserChromeDelegate {
   /// the active webview directly — `onTitleChanged` is content-tab-only, so it
   /// would be nil for anything the user reached from the home tab.
   func chromeDidTapAddToCourse() {
+    // A nil URL would be dropped on the Dart side without a word, so the menu
+    // would close and nothing would happen. Send the tap anyway and let Dart
+    // show its "open a course page first" note.
     channel.invokeMethod(
       "onAddToCourse",
       arguments: [
-        "url": activeWebView.url?.absoluteString,
+        "url": activeWebView.url?.absoluteString ?? "",
         "title": activeWebView.title,
       ])
+  }
+
+  func chromeDidTapModalScrim() {
+    channel.invokeMethod("onModalScrimTapped", arguments: nil)
   }
 
   func chromeDidChangeExpanded(_ expanded: Bool) {

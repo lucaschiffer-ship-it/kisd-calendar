@@ -15,19 +15,32 @@ import '../theme/tokens.dart';
 /// Deliberately **not** a glass surface. `AppThemeTokens.glassContainer` and
 /// every other `BackdropFilter` sample Flutter-drawn pixels only, and the page
 /// behind this card is a platform view — a blur here would sample nothing and
-/// render as flat grey. A dim scrim plus a solid card is the honest version of
-/// the same read.
+/// render as flat grey. So this takes the shape every other sheet in the app
+/// already falls back to with glass switched off: a solid `surfaceElevated`
+/// panel, hairline border, handle pill.
+///
+/// **The scrim is native** (`NativeSpacesBrowserState.setModalDim`). A
+/// full-screen Flutter layer animating over a `UiKitView` forces the platform
+/// view to be recomposited every frame, which is what made this sheet feel
+/// heavy next to the chrome that launches it. Everything here is therefore
+/// bottom-anchored and small, and the open is a `SlideTransition` over a
+/// subtree that is built once — see [build].
 class AddToCourseSheet extends StatefulWidget {
   const AddToCourseSheet({
     super.key,
     required this.url,
     required this.pageTitle,
     required this.onClose,
+    this.initialCourses,
   });
 
   final String url;
   final String? pageTitle;
   final VoidCallback onClose;
+
+  /// Cache contents already warmed by `HomeScreen`, raw and unfiltered. When
+  /// present the first frame paints real rows; [_load] is only the cold path.
+  final List<CourseShell>? initialCourses;
 
   @override
   State<AddToCourseSheet> createState() => _AddToCourseSheetState();
@@ -35,12 +48,19 @@ class AddToCourseSheet extends StatefulWidget {
 
 class _AddToCourseSheetState extends State<AddToCourseSheet>
     with SingleTickerProviderStateMixin {
+  // 300 ms easeOutCubic: the duration `_sheetAnim` and the native chrome's
+  // animator both use, so the dim, the chrome and this sheet read as one move.
   late final AnimationController _anim = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 260),
+    duration: const Duration(milliseconds: 300),
   )..forward();
 
-  List<CourseShell> _favourites = [];
+  late final Animation<Offset> _slide = Tween<Offset>(
+    begin: const Offset(0, 1),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: _anim, curve: Curves.easeOutCubic));
+
+  List<CourseShell> _favourites = const [];
   bool _loading = true;
   String? _busyId;
   String? _doneMessage;
@@ -48,7 +68,13 @@ class _AddToCourseSheetState extends State<AddToCourseSheet>
   @override
   void initState() {
     super.initState();
-    _load();
+    final warm = widget.initialCourses;
+    if (warm != null) {
+      _favourites = _pick(warm);
+      _loading = false;
+    } else {
+      _load();
+    }
   }
 
   @override
@@ -57,19 +83,22 @@ class _AddToCourseSheetState extends State<AddToCourseSheet>
     super.dispose();
   }
 
+  /// The one place the favourite filter and ordering live, so a warm snapshot
+  /// and a cold load cannot drift apart.
+  static List<CourseShell> _pick(List<CourseShell> shells) =>
+      shells.where((s) => s.isFavourite).toList()
+        ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+
   Future<void> _load() async {
-    List<CourseShell> shells = [];
+    List<CourseShell> shells = const [];
     try {
       shells = await scraperService.loadCached();
     } catch (e) {
-      print('[add-to-course] cache load: $e');
+      debugPrint('[add-to-course] cache load: $e');
     }
     if (!mounted) return;
     setState(() {
-      _favourites = shells.where((s) => s.isFavourite).toList()
-        ..sort(
-          (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
-        );
+      _favourites = _pick(shells);
       _loading = false;
     });
   }
@@ -77,6 +106,22 @@ class _AddToCourseSheetState extends State<AddToCourseSheet>
   Future<void> _dismiss() async {
     await _anim.reverse();
     widget.onClose();
+  }
+
+  /// Confirms first, writes second.
+  ///
+  /// The write is a `SharedPreferences` round-trip that effectively cannot
+  /// fail, and the calendar resync it used to wait on is now detached — so
+  /// holding the haptic and the label until it returns bought nothing but a
+  /// tap that felt like it hung.
+  Future<void> _confirm(String message, Future<void> Function() write) async {
+    HapticFeedback.mediumImpact();
+    setState(() => _doneMessage = message);
+    await Future.wait([
+      write(),
+      Future<void>.delayed(const Duration(milliseconds: 350)),
+    ]);
+    if (mounted) await _dismiss();
   }
 
   Future<void> _attach(CourseShell shell) async {
@@ -87,103 +132,95 @@ class _AddToCourseSheetState extends State<AddToCourseSheet>
       return;
     }
     setState(() => _busyId = shell.id);
-    await attachLink(shell, widget.url, widget.pageTitle);
-    HapticFeedback.mediumImpact();
-    if (!mounted) return;
-    setState(() => _doneMessage = 'Added to ${shell.title}');
-    await Future<void>.delayed(const Duration(milliseconds: 550));
-    if (mounted) await _dismiss();
+    await _confirm(
+      'Added to ${shell.title}',
+      () => attachLink(shell, widget.url, widget.pageTitle),
+    );
   }
 
   Future<void> _createNew() async {
     if (_busyId != null) return;
     setState(() => _busyId = '__new__');
-    final shell = await createCourseFrom(widget.url, widget.pageTitle);
-    HapticFeedback.mediumImpact();
-    if (!mounted) return;
-    setState(() => _doneMessage = 'Created ${shell.title}');
-    await Future<void>.delayed(const Duration(milliseconds: 550));
-    if (mounted) await _dismiss();
+    // The title is derived exactly as `createCourseFrom` derives it, so the
+    // confirmation can be shown before the shell exists.
+    await _confirm(
+      'Created ${titleFor(widget.url, widget.pageTitle)}',
+      () => createCourseFrom(widget.url, widget.pageTitle),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final s = AppColorScheme.current;
-    final curve = CurvedAnimation(parent: _anim, curve: Curves.easeOutCubic);
-
-    return AnimatedBuilder(
-      animation: curve,
-      builder: (context, _) {
-        return Stack(
-          children: [
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: _dismiss,
-                behavior: HitTestBehavior.opaque,
-                child: Container(
-                  color: Colors.black.withValues(alpha: 0.55 * curve.value),
-                ),
-              ),
-            ),
-            Center(
-              child: Opacity(
-                opacity: curve.value,
-                child: Transform.scale(
-                  scale: 0.94 + 0.06 * curve.value,
-                  child: _card(s),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
+    // No scrim here: the dim is a UIKit view behind this one, because a
+    // full-screen Flutter layer over the webview costs a platform-view
+    // recomposite per frame. The only thing that moves is this panel.
+    //
+    // `SlideTransition` wraps a subtree built *outside* the animation, so the
+    // `shrinkWrap` list below lays out once per state change instead of once
+    // per frame.
+    return ValueListenableBuilder<AppColorScheme>(
+      valueListenable: AppColorScheme.currentListenable,
+      builder: (context, s, _) => Align(
+        alignment: Alignment.bottomCenter,
+        child: SlideTransition(position: _slide, child: _panel(s)),
+      ),
     );
   }
 
-  Widget _card(AppColorScheme s) {
-    final media = MediaQuery.of(context);
+  Widget _panel(AppColorScheme s) {
     return Container(
-      margin: EdgeInsets.symmetric(
-        horizontal: 24,
-        vertical: media.padding.vertical + 60,
+      // Full-bleed and bottom-anchored, like every other sheet in the app.
+      // Capped so a long favourites list scrolls inside the panel rather than
+      // growing it over the page — `shrinkWrap` has no bound of its own.
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.6,
       ),
-      constraints: const BoxConstraints(maxWidth: 420, maxHeight: 460),
       decoration: BoxDecoration(
         color: s.surfaceElevated,
-        borderRadius: BorderRadius.circular(AppRadius.sheet),
-        border: Border.all(color: s.cardBorder, width: 0.5),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.4),
-            blurRadius: 30,
-            offset: const Offset(0, 10),
-          ),
-        ],
+        borderRadius:
+            const BorderRadius.vertical(top: Radius.circular(AppRadius.sheet)),
+        border: Border(top: BorderSide(color: s.cardBorder, width: 0.5)),
+        boxShadow: const [AppGlass.cardShadow],
       ),
       clipBehavior: Clip.antiAlias,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _header(s),
-          Flexible(child: _body(s)),
-          _footer(s),
-        ],
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _header(s),
+            Flexible(child: _body(s)),
+            _footer(s),
+          ],
+        ),
       ),
     );
   }
 
   Widget _header(AppColorScheme s) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: s.textSecondary.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(AppRadius.handle),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
           Text(
             _doneMessage ?? 'Add to course',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: AppTextStyles.contentHeading(color: _doneMessage != null ? s.accent : s.textPrimary),
+            style: AppTextStyles.contentHeading(
+                color: _doneMessage != null ? s.accent : s.textPrimary),
           ),
           const SizedBox(height: 4),
           Text(

@@ -35,9 +35,7 @@ class CacheService {
     final raw = prefs.getString(_keyCourses);
     if (raw == null) return [];
     final decoded = json.decode(raw) as List;
-    final courses = decoded.cast<Map<String, dynamic>>();
-    print('loadCourses: read ${courses.length} courses, sample[0] title=${courses.isNotEmpty ? courses[0]['title'] : 'EMPTY'}');
-    return courses;
+    return decoded.cast<Map<String, dynamic>>();
   }
 
   Future<void> markScraped() async {

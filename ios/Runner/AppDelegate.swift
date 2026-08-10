@@ -13,5 +13,14 @@ import UIKit
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     TranslationBridge.shared.register(with: engineBridge.pluginRegistry)
+
+    // Registered after GeneratedPluginRegistrant on purpose: flutter_inappwebview
+    // initialises WKWebsiteDataStore.default() during its own registration, and
+    // the Spaces browser shares that cookie jar to keep the SAML session alive.
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "SpacesBrowser") {
+      registrar.register(
+        SpacesBrowserViewFactory(messenger: registrar.messenger()),
+        withId: SpacesBrowserViewFactory.viewType)
+    }
   }
 }

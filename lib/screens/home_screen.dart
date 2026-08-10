@@ -7,7 +7,6 @@ import 'calendar_screen.dart';
 import 'list_screen.dart';
 import 'mail_screen.dart';
 import 'mensa_screen.dart';
-import 'browser_screen.dart';
 import 'settings_screen.dart';
 import '../config/app_theme.dart' as tokens;
 import '../services/page_actions.dart';
@@ -16,6 +15,7 @@ import '../services/spaces_browser.dart';
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass_pill.dart';
+import '../widgets/native_spaces_browser.dart';
 import '../widgets/page_floating_actions.dart';
 
 export '../services/spaces_browser.dart' show SpacesBrowser;
@@ -38,7 +38,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   late final AnimationController _sheetAnim;
   late final AnimationController _snapBackCtrl;
   late Animation<double> _snapBackAnim;
-  final _browserKey = GlobalKey<BrowserSheetState>();
+  final _browserKey = GlobalKey<NativeSpacesBrowserState>();
 
   double _dragOffset = 0;
 
@@ -112,6 +112,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _browserKey.currentState?.navigateTo(url);
       _openSheet();
     });
+    // TEMP-QA: auto-open the browser sheet so it can be inspected without UI
+    // automation. Removed before commit.
+    if (const bool.fromEnvironment('QA_OPEN_BROWSER')) {
+      Future.delayed(const Duration(seconds: 8), () {
+        if (mounted) _openSheet();
+      });
+    }
   }
 
   @override
@@ -285,13 +292,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     // Defensive: if the page was loaded before auth and the login transition
     // reload was missed (ordering edge cases), reload on first open.
     if (_browserLoadedPreAuth && loginService.isLoggedIn) _reloadBrowserHome();
+    _snapBackCtrl.stop();
+    setState(() => _dragOffset = 0);
     _sheetAnim.animateTo(1.0,
         duration: const Duration(milliseconds: 300), curve: Curves.easeOutCubic);
   }
 
   void _closeSheet() {
     _snapBackCtrl.stop();
-    setState(() => _dragOffset = 0);
+    setState(() {
+      // Fold an in-flight drag into the animation's starting point, so the
+      // sheet carries on from where the finger left it. Without this it would
+      // snap back to fully-open for one frame and only then animate down.
+      if (_dragOffset > 0) {
+        final h = MediaQuery.sizeOf(context).height;
+        _sheetAnim.value = (_sheetAnim.value - _dragOffset / h).clamp(0.0, 1.0);
+        _dragOffset = 0;
+      }
+    });
     _sheetAnim
         .animateTo(0.0,
             duration: const Duration(milliseconds: 300),
@@ -442,7 +460,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       onVerticalDragEnd: (details) {
                         final velocityY = details.primaryVelocity ?? 0;
                         if (_dragOffset > 200 || velocityY > 800) {
-                          setState(() => _dragOffset = 0);
+                          // _closeSheet folds the drag into the animation's
+                          // start — zeroing it here would pop the sheet open.
                           _closeSheet();
                         } else {
                           _snapBack();
@@ -462,7 +481,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   Expanded(
                     child: Stack(
                       children: [
-                        BrowserSheet(
+                        NativeSpacesBrowser(
                       key: _browserKey,
                       onPageTitleChanged: (title, url) {
                         if (url == null || !_isTrackablePage(url)) return;
@@ -486,7 +505,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       },
                       onPullEnd: (velocityY) {
                         if (_dragOffset > 200 || velocityY > 400) {
-                          setState(() => _dragOffset = 0);
                           _closeSheet();
                         } else {
                           _snapBack();
@@ -552,14 +570,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
           builder: (context, child) {
             final size = _sheetAnim.value;
+            // Fixed height, translated into place — never resized.
+            //
+            // Load-bearing: the sheet now hosts a platform view, and animating
+            // its height would re-lay-out the native container (webview *and*
+            // glass chrome) on every frame of the 300 ms open. Constant frame,
+            // paint-time offset, no Auto Layout churn.
+            final dy = (1 - size) * screenHeight + _dragOffset;
             return Align(
               alignment: Alignment.bottomCenter,
               child: SizedBox(
                 width: double.infinity,
-                height: size * screenHeight,
-                child: IgnorePointer(
-                  ignoring: size < 0.02,
-                  child: child!,
+                height: screenHeight,
+                child: Transform.translate(
+                  offset: Offset(0, dy),
+                  child: IgnorePointer(
+                    ignoring: size < 0.02,
+                    child: child!,
+                  ),
                 ),
               ),
             );

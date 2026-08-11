@@ -30,6 +30,7 @@ class NativeSpacesBrowser extends StatefulWidget {
     this.onDismiss,
     this.onOpenExternally,
     this.onAddToCourse,
+    this.onModalScrimTapped,
     this.onAuthExpired,
   });
 
@@ -56,6 +57,10 @@ class NativeSpacesBrowser extends StatefulWidget {
   /// straight from the active webview, so it is present for the home tab too —
   /// unlike [onPageTitleChanged], which only reports the content tab.
   final void Function(String url, String? title)? onAddToCourse;
+
+  /// A tap on the native modal dim, i.e. outside a Flutter sheet shown over
+  /// the page. Dart owns that sheet, so Dart decides what to close.
+  final VoidCallback? onModalScrimTapped;
 
   /// Fired when a page load lands on the TH-Köln IdP / WordPress login instead
   /// of Spaces — i.e. the session expired and Spaces bounced us to re-auth.
@@ -142,9 +147,11 @@ class NativeSpacesBrowserState extends State<NativeSpacesBrowser> {
       case 'onAddToCourse':
         final args = (call.arguments as Map).cast<String, dynamic>();
         final url = args['url'] as String?;
-        if (url != null) {
-          widget.onAddToCourse?.call(url, args['title'] as String?);
-        }
+        // An empty URL still reaches the handler: the page gate there rejects
+        // it with a note, which beats a tap that silently does nothing.
+        widget.onAddToCourse?.call(url ?? '', args['title'] as String?);
+      case 'onModalScrimTapped':
+        widget.onModalScrimTapped?.call();
       case 'onAuthExpired':
         widget.onAuthExpired?.call();
       case 'onLoadingChanged':
@@ -186,6 +193,15 @@ class NativeSpacesBrowserState extends State<NativeSpacesBrowser> {
 
   void setPillTitle(String title) =>
       _channel?.invokeMethod('setPillTitle', title);
+
+  /// Dim the page behind a Flutter sheet shown over the browser.
+  ///
+  /// Native on purpose. A full-screen Flutter scrim over this platform view
+  /// has to be recomposited with UIKit every frame it changes, which is what
+  /// made the add-to-course sheet feel heavy next to the native chrome. As a
+  /// UIKit view it is a plain alpha ramp, and it blocks page scrolling while
+  /// the sheet is up for free.
+  void setModalDim(bool on) => _channel?.invokeMethod('setModalDim', on);
 
   /// Drop the keyboard and close the ≡ menu. The native side does this itself
   /// when a dismiss drag starts; this is the path for Dart-initiated closes.

@@ -1,3 +1,7 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+
 import '../models/course_shell.dart';
 import 'cache_service.dart';
 import 'calendar_service.dart';
@@ -6,9 +10,9 @@ import 'service_locator.dart';
 
 /// Attaching a page from the Spaces browser to a course.
 ///
-/// Two entry points, one persistence path: write the shell, resync the
-/// calendar from the cache, then bump [CourseUpdates] so `ListScreen` reloads
-/// instead of overwriting the change on its next heart tap.
+/// Two entry points, one persistence path: write the shell, bump
+/// [CourseUpdates] so `ListScreen` reloads instead of overwriting the change
+/// on its next heart tap, then resync the calendar in the background.
 
 /// The kinds of link the scraper distinguishes, which decide both the label and
 /// the position in `links`. Mirrors the vocabulary `_buildShell` produces in
@@ -149,11 +153,22 @@ Future<CourseShell> createCourseFrom(String url, String? pageTitle) async {
 /// missing from the cache, which would look like a tap that did nothing.
 Future<void> _persist(CourseShell shell) async {
   await CacheService().addShell(shell);
+  // Immediately after the write and before returning. Load-bearing:
+  // `ListScreen` rewrites the whole cache array from its in-memory `_shells`
+  // on every heart tap, so an attachment that is not published by the time the
+  // caller resumes gets clobbered by the next ♥.
+  CourseUpdates.instance.bump();
+  // Detached. This re-reads every course and hands the lot to EventKit, which
+  // is far too slow to sit between the user's tap and the confirmation — and
+  // nothing here depends on its result. Failures were already swallowed.
+  unawaited(_resyncCalendar());
+}
+
+Future<void> _resyncCalendar() async {
   try {
     final all = await scraperService.loadCached();
     await CalendarService.instance.writeCourses(all);
   } catch (e) {
-    print('[attach] calendar resync error: $e');
+    debugPrint('[attach] calendar resync error: $e');
   }
-  CourseUpdates.instance.bump();
 }

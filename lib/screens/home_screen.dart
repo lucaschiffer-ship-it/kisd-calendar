@@ -11,6 +11,8 @@ import 'mail_screen.dart';
 import 'mensa_screen.dart';
 import 'settings_screen.dart';
 import '../config/app_theme.dart' as tokens;
+import '../models/course_shell.dart';
+import '../services/course_updates.dart';
 import '../services/page_actions.dart';
 import '../services/service_locator.dart';
 import '../services/spaces_browser.dart';
@@ -76,6 +78,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   String? _addUrl;
   String? _addTitle;
 
+  /// The raw cached course list, kept warm so the picker can paint its rows on
+  /// its first frame. Decoding it inside the sheet meant a spinner plus a
+  /// main-isolate JSON parse of every course landing mid-open animation.
+  ///
+  /// Unfiltered on purpose — the sheet owns the favourite filter and the sort,
+  /// so refreshing here stays a plain reassignment.
+  List<CourseShell>? _courseSnapshot;
+
   // Transient note shown *inside* the browser sheet. A SnackBar cannot be used
   // here: ScaffoldMessenger renders into the Scaffold, which the full-screen
   // browser overlay covers completely, so the message would never be seen.
@@ -121,6 +131,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     ThemeService.instance.currentColor.addListener(_rebuild);
     ThemeService.instance.glassEnabled.addListener(_rebuild);
     ThemeService.instance.roundedBars.addListener(_rebuild);
+    // Already the invalidation hook everywhere else (ListScreen listens the
+    // same way), so an attach made from anywhere refreshes the picker's rows.
+    CourseUpdates.instance.revision.addListener(_refreshCourseSnapshot);
     SpacesBrowser.register((url) {
       // Loads in the content tab; the pinned home tab (and its pre-auth
       // reload guard in _openSheet) is unaffected.
@@ -132,6 +145,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   void dispose() {
     SpacesBrowser.unregister();
+    CourseUpdates.instance.revision.removeListener(_refreshCourseSnapshot);
     _browserNoteTimer?.cancel();
     _snapBackCtrl.removeListener(_onSnapBackTick);
     _snapBackCtrl.dispose();
@@ -300,6 +314,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _showBrowserNote('Open a course page first');
       return;
     }
+    // After the gate, never before: the early return above would otherwise
+    // dim the page for a sheet that never appears — and nothing would turn it
+    // back off.
+    _browserKey.currentState?.setModalDim(true);
     setState(() {
       _addUrl = url;
       _addTitle = title;
@@ -314,8 +332,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     });
   }
 
+  /// The single path that retires the picker. Every caller goes through here:
+  /// the dim lives in UIKit now, and the browser survives the sheet closing
+  /// (`_browserKey` keeps it mounted, the overlay only translates), so a dim
+  /// left on would come back with the *next* open — over a page that has no
+  /// sheet, with `hitTest` claiming the bounds. That reads as a browser with
+  /// dead scrolling and dead pills until the app restarts.
   void _closeAddSheet() {
     if (!mounted) return;
+    _browserKey.currentState?.setModalDim(false);
+    if (_addUrl == null) return;
     setState(() {
       _addUrl = null;
       _addTitle = null;
@@ -332,10 +358,25 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _snapBackCtrl.forward(from: 0.0);
   }
 
+  /// Warms [_courseSnapshot]. Deliberately not awaited and not a `setState`:
+  /// nothing on screen renders it, and it only has to be ready by the time the
+  /// user reaches ≡ → +.
+  Future<void> _refreshCourseSnapshot() async {
+    try {
+      final shells = await scraperService.loadCached();
+      if (mounted) _courseSnapshot = shells;
+    } catch (e) {
+      debugPrint('[home] course snapshot: $e');
+    }
+  }
+
   void _openSheet() {
     // Defensive: if the page was loaded before auth and the login transition
     // reload was missed (ordering edge cases), reload on first open.
     if (_browserLoadedPreAuth && loginService.isLoggedIn) _reloadBrowserHome();
+    // Opening the browser is the earliest reliable signal that ≡ → + is
+    // reachable, and it is far enough ahead of the tap to hide the decode.
+    _refreshCourseSnapshot();
     _snapBackCtrl.stop();
     _dragOffset.value = 0;
     // The toolbar collapses itself on scroll; every fresh open starts expanded.
@@ -345,13 +386,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _closeSheet() {
-    // The picker belongs to the page behind it — it must not outlive the sheet.
-    if (_addUrl != null) {
-      setState(() {
-        _addUrl = null;
-        _addTitle = null;
-      });
-    }
+    // The picker belongs to the page behind it — it must not outlive the
+    // sheet. Unconditional, and via `_closeAddSheet`, so the native dim is
+    // always cleared even when the browser is dragged away under an open
+    // picker.
+    _closeAddSheet();
     // Drop the keyboard and any open menu on the same frame the sheet starts
     // leaving. Native already does this when *it* owns the gesture (the
     // dismiss drag, the ⌄ button); this covers the Dart-initiated closes.
@@ -540,6 +579,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       }
                     },
                     onAddToCourse: _onAddToCourse,
+                    onModalScrimTapped: _closeAddSheet,
                     onAuthExpired: _onBrowserAuthExpired,
                   ),
                   if (_browserNote != null)
@@ -576,6 +616,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       key: ValueKey(_addUrl),
                       url: _addUrl!,
                       pageTitle: _addTitle,
+                      initialCourses: _courseSnapshot,
                       onClose: _closeAddSheet,
                     ),
                   if (_reconnecting)

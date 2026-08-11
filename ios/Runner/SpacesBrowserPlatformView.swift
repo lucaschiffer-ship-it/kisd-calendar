@@ -392,6 +392,10 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
     scrollAccum = 0
     chrome.setURL(activeWebView.url)
     chrome.setTitle(activeWebView.title)
+    // `onUrlChanged` — and with it Dart's `setCanAttach` — is content-tab-only,
+    // so the flag says nothing about the home tab. Track which tab is showing
+    // here rather than widening that guard, which would corrupt `_lastTabUrl`.
+    chrome.setContentTabActive(index == 1)
     emitNavState()
     channel.invokeMethod("onTabSwitched", arguments: index)
   }
@@ -481,8 +485,12 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
       chrome.setExpanded(call.arguments as? Bool ?? true, notify: false)
       result(nil)
 
-    case "setModalDim":
-      chrome.setModalDim(call.arguments as? Bool ?? false)
+    case "setAttachCourses":
+      chrome.setAttachCourses(AttachCourse.list(from: call.arguments))
+      result(nil)
+
+    case "setCanAttach":
+      chrome.setCanAttach(call.arguments as? Bool ?? false)
       result(nil)
 
     default:
@@ -525,14 +533,10 @@ extension SpacesBrowserView: SpacesBrowserChromeDelegate {
     channel.invokeMethod("onOpenExternally", arguments: activeWebView.url?.absoluteString)
   }
 
-  /// Dart owns the course cache and the picker UI, so the page identity goes
-  /// over the channel and everything else happens there. The title comes from
-  /// the active webview directly — `onTitleChanged` is content-tab-only, so it
-  /// would be nil for anything the user reached from the home tab.
+  /// Only reached when the chrome has been told this page is not attachable —
+  /// the picker itself is native now. Dart owns the gate and the note, so the
+  /// tap goes back there rather than being second-guessed here.
   func chromeDidTapAddToCourse() {
-    // A nil URL would be dropped on the Dart side without a word, so the menu
-    // would close and nothing would happen. Send the tap anyway and let Dart
-    // show its "open a course page first" note.
     channel.invokeMethod(
       "onAddToCourse",
       arguments: [
@@ -541,8 +545,27 @@ extension SpacesBrowserView: SpacesBrowserChromeDelegate {
       ])
   }
 
-  func chromeDidTapModalScrim() {
-    channel.invokeMethod("onModalScrimTapped", arguments: nil)
+  /// Dart still owns every cache rule (`course_link_attach.dart`, and the
+  /// tests that pin it), so the panel reports the row and nothing more. The
+  /// title comes off the active webview directly — `onTitleChanged` is
+  /// content-tab-only, so it would be nil for anything reached from home.
+  func chromeDidAttach(courseId: String) {
+    channel.invokeMethod(
+      "onAttachCourse",
+      arguments: [
+        "courseId": courseId,
+        "url": activeWebView.url?.absoluteString ?? "",
+        "title": activeWebView.title,
+      ])
+  }
+
+  func chromeDidCreateCourseFromPage() {
+    channel.invokeMethod(
+      "onCreateCourseFromPage",
+      arguments: [
+        "url": activeWebView.url?.absoluteString ?? "",
+        "title": activeWebView.title,
+      ])
   }
 
   func chromeDidChangeExpanded(_ expanded: Bool) {

@@ -496,6 +496,10 @@ extension SpacesBrowserView: SpacesBrowserChromeDelegate {
   func chromeDidTapReload() { activeWebView.reload() }
   func chromeDidTapDismiss() { channel.invokeMethod("onCollapseTapped", arguments: nil) }
 
+  /// The pinned home tab is always warm (see the type doc), so this is an
+  /// instant tab switch — never a reload.
+  func chromeDidTapHome() { switchTo(0) }
+
   func chromeDidTapOpenExternally() {
     // Dart owns url_launcher, so the URL goes back over the channel rather
     // than being opened here.

@@ -170,6 +170,7 @@ protocol SpacesBrowserChromeDelegate: AnyObject {
   func chromeDidTapReload()
   func chromeDidTapOpenExternally()
   func chromeDidTapAddToCourse()
+  func chromeDidTapHome()
   func chromeDidTapDismiss()
   func chromeDidChangeExpanded(_ expanded: Bool)
   /// The user committed the address bar. The text is raw — the host resolves
@@ -469,6 +470,13 @@ final class SpacesBrowserChrome: UIView {
     NSLayoutConstraint.activate(urlRestConstraints)
   }
 
+  /// A menu-stack pill's glyph: an SF Symbol (tinted like the rest of the
+  /// chrome) or a bundled asset shown at its own colours.
+  private enum MenuGlyph {
+    case symbol(String, CGFloat)
+    case logo(String)
+  }
+
   private func buildMenu() {
     menuStack.axis = .vertical
     menuStack.spacing = Self.gutter
@@ -488,30 +496,47 @@ final class SpacesBrowserChrome: UIView {
     // UIButton nested in the stack's pills never received touchUpInside (the
     // hit stopped at the pill's contentView), and the whole 50 pt pill is the
     // better target anyway. Same pattern as the ≡ pill.
-    let items: [(String, CGFloat)] = [
-      ("safari", 19),
-      ("arrow.clockwise", 19),
-      ("plus", 20),
+    let items: [MenuGlyph] = [
+      .symbol("safari", 19),
+      .logo("SpacesIcon"),
+      .symbol("arrow.clockwise", 19),
+      .symbol("plus", 20),
     ]
     for (index, item) in items.enumerated() {
       let pill = GlassSurface()
       pill.translatesAutoresizingMaskIntoConstraints = false
       pill.tag = index
-      let icon = UIImageView(image: symbol(item.0, item.1))
-      icon.contentMode = .center
+      let icon = UIImageView()
       icon.alpha = 0.85
       icon.translatesAutoresizingMaskIntoConstraints = false
       pill.contentView.addSubview(icon)
-      NSLayoutConstraint.activate([
-        pill.widthAnchor.constraint(equalToConstant: Self.pillHeight),
-        pill.heightAnchor.constraint(equalToConstant: Self.pillHeight),
-        icon.centerXAnchor.constraint(equalTo: pill.contentView.centerXAnchor),
-        icon.centerYAnchor.constraint(equalTo: pill.contentView.centerYAnchor),
-      ])
+      var iconSizeConstraints: [NSLayoutConstraint] = []
+      switch item {
+      case .symbol(let name, let points):
+        icon.image = symbol(name, points)
+        icon.contentMode = .center
+        menuIcons.append(icon)
+      case .logo(let assetName):
+        // The Spaces mark is a full-colour glyph, not a template — tinting it
+        // like the SF Symbols would flatten its orange into the icon colour,
+        // so it stays out of `menuIcons` and never reaches `apply(_:)`.
+        icon.image = UIImage(named: assetName)?.withRenderingMode(.alwaysOriginal)
+        icon.contentMode = .scaleAspectFit
+        iconSizeConstraints = [
+          icon.widthAnchor.constraint(equalToConstant: 20),
+          icon.heightAnchor.constraint(equalToConstant: 20),
+        ]
+      }
+      NSLayoutConstraint.activate(
+        iconSizeConstraints + [
+          pill.widthAnchor.constraint(equalToConstant: Self.pillHeight),
+          pill.heightAnchor.constraint(equalToConstant: Self.pillHeight),
+          icon.centerXAnchor.constraint(equalTo: pill.contentView.centerXAnchor),
+          icon.centerYAnchor.constraint(equalTo: pill.contentView.centerYAnchor),
+        ])
       let tap = UITapGestureRecognizer(target: self, action: #selector(onMenuItemTap(_:)))
       tap.cancelsTouchesInView = false
       pill.addGestureRecognizer(tap)
-      menuIcons.append(icon)
       menuStack.addArrangedSubview(pill)
     }
   }
@@ -519,8 +544,9 @@ final class SpacesBrowserChrome: UIView {
   @objc private func onMenuItemTap(_ recognizer: UITapGestureRecognizer) {
     switch recognizer.view?.tag {
     case 0: onOpenExternally()
-    case 1: onReload()
-    case 2: onAddToCourse()
+    case 1: onHome()
+    case 2: onReload()
+    case 3: onAddToCourse()
     default: break
     }
   }
@@ -923,6 +949,11 @@ final class SpacesBrowserChrome: UIView {
   @objc private func onOpenExternally() {
     applyState(.rest)
     delegate?.chromeDidTapOpenExternally()
+  }
+
+  @objc private func onHome() {
+    applyState(.rest)
+    delegate?.chromeDidTapHome()
   }
 
   @objc private func onAddToCourse() {

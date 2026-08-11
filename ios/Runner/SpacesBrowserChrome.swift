@@ -223,6 +223,10 @@ final class SpacesBrowserChrome: UIView {
   /// The collapsed pill also rides lower than the resting toolbar, closer to
   /// the hard edge — Safari's measures ~14 pt off the bottom, not 32.
   private static let collapsedBottomInset: CGFloat = 14
+  /// Padding either side of the host label once collapsed. This is the *only*
+  /// thing setting the collapsed pill's width — it hugs its text, so the pill
+  /// is `label + 24`, not a fraction of the screen.
+  private static let collapsedHPadding: CGFloat = 12
 
   /// Stands in for iOS 26's scroll edge effect, which a WKWebView ignores.
   ///
@@ -495,6 +499,13 @@ final class SpacesBrowserChrome: UIView {
     hostLabel.textAlignment = .center
     hostLabel.translatesAutoresizingMaskIntoConstraints = false
     hostLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    // Required, and load-bearing for the collapsed state: hugging is the only
+    // force pulling the pill *inwards* onto its text. At a UILabel's default
+    // 251 it loses to the text field's 750 compression resistance below and
+    // the collapsed pill inflates to the screen-fraction cap instead of
+    // shrinking. Shrinking is still allowed — hugging only forbids growing
+    // past the intrinsic width — so a long host still truncates at the cap.
+    hostLabel.setContentHuggingPriority(.required, for: .horizontal)
     urlPill.contentView.addSubview(hostLabel)
 
     urlField.translatesAutoresizingMaskIntoConstraints = false
@@ -508,6 +519,15 @@ final class SpacesBrowserChrome: UIView {
     urlField.delegate = self
     urlField.alpha = 0
     urlField.isHidden = true
+    // The field is pinned to both of the pill's edges and keeps its intrinsic
+    // width the whole time — `isHidden` only drops a view out of Auto Layout
+    // inside a UIStackView, and this one is a plain subview. At UITextField's
+    // default 750 that intrinsic (the placeholder, or the whole URL left over
+    // from the last edit) becomes a floor under the pill's width, which is
+    // what stopped the collapsed pill from ever shrinking. Lowered to match
+    // hostLabel: while editing the pill's width comes from required edge
+    // anchors, so the field never needs to argue for its own size.
+    urlField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     urlPill.contentView.addSubview(urlField)
 
     urlHeight = urlPill.heightAnchor.constraint(equalToConstant: Self.pillHeight)
@@ -519,8 +539,6 @@ final class SpacesBrowserChrome: UIView {
       urlHeight,
       hostLabel.centerXAnchor.constraint(equalTo: urlPill.contentView.centerXAnchor),
       hostLabel.centerYAnchor.constraint(equalTo: urlPill.contentView.centerYAnchor),
-      hostLabel.leadingAnchor.constraint(
-        greaterThanOrEqualTo: urlPill.contentView.leadingAnchor, constant: 16),
       urlField.leadingAnchor.constraint(equalTo: urlPill.contentView.leadingAnchor, constant: 16),
       urlField.trailingAnchor.constraint(equalTo: urlPill.contentView.trailingAnchor, constant: -16),
       urlField.centerYAnchor.constraint(equalTo: urlPill.contentView.centerYAnchor),
@@ -531,10 +549,17 @@ final class SpacesBrowserChrome: UIView {
       urlPill.trailingAnchor.constraint(
         equalTo: dismissPill.leadingAnchor, constant: -Self.gutter),
       urlPill.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.bottomInset),
+      // Rest-only. The wide pill needs a floor keeping its centred label off
+      // the leading edge, but 16 pt of it directly contradicts the collapsed
+      // pill's 12 pt: both are required, so leaving this permanently active
+      // left the solver to break one of the two at random.
+      hostLabel.leadingAnchor.constraint(
+        greaterThanOrEqualTo: urlPill.contentView.leadingAnchor, constant: 16),
     ]
     urlCollapsedConstraints = [
       urlPill.centerXAnchor.constraint(equalTo: centerXAnchor),
-      urlPill.widthAnchor.constraint(equalTo: hostLabel.widthAnchor, constant: 40),
+      urlPill.widthAnchor.constraint(
+        equalTo: hostLabel.widthAnchor, constant: 2 * Self.collapsedHPadding),
       urlPill.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.6),
       urlPill.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.collapsedBottomInset),
     ]

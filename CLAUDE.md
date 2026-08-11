@@ -128,7 +128,7 @@ Gotchas that will bite:
 - **Never give the address pill a permanent bottom anchor.** It owns its vertical placement per state; a stray bottom constraint fights the editing centre and stretches the pill to fill the screen.
 - `bottomContentInset` is constant across all four states, so `updateContentInsets()` never re-runs on both webviews for a transient overlay.
 - The `\.url` KVO emits `onUrlChanged` to Dart for the **content tab only**; the chrome's host label is a separate native-only path (`chrome.setURL`). Widening that guard corrupts `_lastTabUrl` tracking.
-- Geometry constants (`pillHeight 50`, `sideInset 12`, `bottomInset 32`) are duplicated from `lib/widgets/page_floating_actions.dart`. Change both or the toolbar desyncs from the app's bottom cluster.
+- Geometry constants `pillHeight 50` and `bottomInset 32` are duplicated from `lib/widgets/page_floating_actions.dart`. Change both or the toolbar desyncs from the app's bottom cluster. `sideInset` (34) is the one deliberate exception — it matches Safari's own toolbar margin instead of the app's `_kSideInset` (12), so the browser's side pills sit further from the edge than the rest of the app's floating buttons on purpose. The collapsed pill has its own shorter height (`collapsedHeight 32`) and bottom inset (`collapsedBottomInset 14`), also matched to Safari rather than the resting toolbar's values.
 
 ### Attaching a page to a course
 

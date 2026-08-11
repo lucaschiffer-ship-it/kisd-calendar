@@ -202,8 +202,11 @@ final class SpacesBrowserChrome: UIView {
 
   /// Side of every pill in the bottom cluster (`kFloatingButtonSize`).
   static let pillHeight: CGFloat = 50
-  /// Matches the Spaces mini bar's `left: 12` and the bottom bar's sidePad.
-  private static let sideInset: CGFloat = 12
+  /// Deliberately wider than the app's own `_kSideInset` (12) — matches
+  /// Safari's own toolbar margin instead, since this chrome is meant to read
+  /// as a browser bar first. Desyncs on purpose from the Spaces mini bar and
+  /// the app's floating buttons, which stay at 12.
+  private static let sideInset: CGFloat = 34
   /// `bottomClusterInset()` — clears the home-indicator glyph, not the whole
   /// safe-area inset, so the toolbar rides where the nav pills do.
   private static let bottomInset: CGFloat = 32
@@ -214,6 +217,12 @@ final class SpacesBrowserChrome: UIView {
   private static let navPillWidth: CGFloat = 96
   /// The address pill grows a little when it takes focus.
   private static let editingHeight: CGFloat = 56
+  /// The collapsed host pill is shorter than the resting toolbar buttons —
+  /// Safari's own scroll-collapsed pill measures ~32 pt, not the full 50.
+  private static let collapsedHeight: CGFloat = 32
+  /// The collapsed pill also rides lower than the resting toolbar, closer to
+  /// the hard edge — Safari's measures ~14 pt off the bottom, not 32.
+  private static let collapsedBottomInset: CGFloat = 14
 
   /// Stands in for iOS 26's scroll edge effect, which a WKWebView ignores.
   ///
@@ -527,7 +536,7 @@ final class SpacesBrowserChrome: UIView {
       urlPill.centerXAnchor.constraint(equalTo: centerXAnchor),
       urlPill.widthAnchor.constraint(equalTo: hostLabel.widthAnchor, constant: 40),
       urlPill.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.6),
-      urlPill.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.bottomInset),
+      urlPill.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.collapsedBottomInset),
     ]
     urlEditingConstraints = [
       urlPill.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.sideInset),
@@ -867,7 +876,11 @@ final class SpacesBrowserChrome: UIView {
     }
 
     leftPillWidth.constant = next == .menu ? Self.navPillWidth : Self.pillHeight
-    urlHeight.constant = next == .editing ? Self.editingHeight : Self.pillHeight
+    switch next {
+    case .editing: urlHeight.constant = Self.editingHeight
+    case .collapsed: urlHeight.constant = Self.collapsedHeight
+    case .rest, .menu: urlHeight.constant = Self.pillHeight
+    }
     outsideTap.isEnabled = next == .menu || next == .editing
     outsidePan.isEnabled = next == .menu || next == .editing
     urlTap.isEnabled = next != .editing

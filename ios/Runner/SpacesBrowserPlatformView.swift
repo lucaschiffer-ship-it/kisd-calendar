@@ -87,6 +87,16 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
 
   /// Drives the Safari-style auto-collapse.
   private var lastScrollY: CGFloat = 0
+  /// Net travel in the current direction since the chrome last committed to
+  /// expanding or collapsing. Real touch input is not monotonic — a couple of
+  /// points of reversal mid-gesture would otherwise flip `delta`'s sign on a
+  /// single sample and flip the chrome state with it, which read as the
+  /// toolbar twitching and snapping back on a physical device (a synthetic,
+  /// perfectly monotonic swipe never showed this). Accumulating net travel
+  /// and only committing past a threshold makes a reversal cancel out
+  /// instead of instantly flipping state.
+  private var scrollAccum: CGFloat = 0
+  private static let collapseThreshold: CGFloat = 24
 
   private var activeWebView: WKWebView {
     return activeIndex == 0 ? homeWebView : contentWebView
@@ -375,6 +385,11 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
     activeIndex = index
     homeWebView.isHidden = index != 0
     contentWebView.isHidden = index != 1
+    // The scroll-collapse accumulator is shared across both webviews' scroll
+    // views (only one is ever active at a time) — without this a tab switch
+    // mid-gesture would carry stale net-travel from the other tab's scroll
+    // position into the one now active.
+    scrollAccum = 0
     chrome.setURL(activeWebView.url)
     chrome.setTitle(activeWebView.title)
     emitNavState()
@@ -570,23 +585,44 @@ extension SpacesBrowserView: SpacesBrowserChromeDelegate {
 // MARK: - UIScrollViewDelegate
 
 extension SpacesBrowserView: UIScrollViewDelegate {
+  /// Resyncs the delta baseline to where the finger actually lands, not
+  /// wherever `contentOffset` drifted to at the end of the last processed
+  /// sample — deceleration keeps moving it after `scrollViewDidScroll` stops
+  /// being read (see the `isDragging` guard below), so without this the first
+  /// sample of a new drag could compute a large bogus delta.
+  func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+    guard scrollView === activeWebView.scrollView else { return }
+    lastScrollY = scrollView.contentOffset.y
+    scrollAccum = 0
+  }
+
   /// Safari-style auto-collapse. Native decides and mirrors the result to
   /// Dart; `setExpanded` remains available as a Dart-side override.
   func scrollViewDidScroll(_ scrollView: UIScrollView) {
     guard scrollView === activeWebView.scrollView, scrollView.isDragging else { return }
     let y = scrollView.contentOffset.y
     let delta = y - lastScrollY
-    guard abs(delta) > 6 else { return }
     lastScrollY = y
+    guard delta != 0 else { return }
+    scrollAccum += delta
 
     // Near the top the toolbar always comes back, so it can never be stranded
-    // collapsed on a page too short to scroll up from.
+    // collapsed on a page too short to scroll up from. `scrollAccum` keeps
+    // accumulating through this zone rather than being reset here — resetting
+    // on every sample inside it would demand a *further* threshold's worth of
+    // travel once the user clears the boundary, which is dead weight on any
+    // page too short to build up much scroll room past it.
     let top = -scrollView.contentInset.top
     if y <= top + 40 {
       chrome.setExpanded(true)
-    } else if delta > 0 {
+      return
+    }
+
+    if scrollAccum > Self.collapseThreshold {
+      scrollAccum = 0
       chrome.setExpanded(false)
-    } else {
+    } else if scrollAccum < -Self.collapseThreshold {
+      scrollAccum = 0
       chrome.setExpanded(true)
     }
   }

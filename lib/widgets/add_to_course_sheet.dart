@@ -266,7 +266,10 @@ class _AddToCourseSheetState extends State<AddToCourseSheet>
 
   Widget _row(AppColorScheme s, CourseShell shell) {
     final already = courseHasLink(shell, widget.url);
-    final busy = _busyId == shell.id;
+    // `_busyId` stays the re-entry guard, but the spinner stands down once the
+    // header is already confirming: since the write no longer gates the
+    // confirmation, both would otherwise report the same action at once.
+    final busy = _busyId == shell.id && _doneMessage == null;
     return InkWell(
       onTap: () => _attach(shell),
       child: Container(
@@ -303,7 +306,7 @@ class _AddToCourseSheetState extends State<AddToCourseSheet>
   }
 
   Widget _footer(AppColorScheme s) {
-    final busy = _busyId == '__new__';
+    final busy = _busyId == '__new__' && _doneMessage == null;
     return InkWell(
       onTap: _createNew,
       child: Container(

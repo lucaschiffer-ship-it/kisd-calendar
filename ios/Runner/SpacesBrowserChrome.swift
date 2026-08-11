@@ -60,7 +60,9 @@ extension UIColor {
 /// `UIGlassEffect`, which samples the `WKWebView` sitting behind it in the same
 /// view hierarchy. Flutter's `BackdropFilter` cannot — it has no access to
 /// platform-view pixels — which is why the Dart chrome had to be flat.
-final class GlassSurface: UIView {
+/// Not `final`: `SpacesBrowserAttachPanel` is a tall surface that reuses the
+/// same three flavours and needs to restyle its own contents on theme changes.
+class GlassSurface: UIView {
   enum Path: String {
     case glass  // iOS 26 UIGlassEffect — real Liquid Glass
     case material  // .systemUltraThinMaterial
@@ -69,6 +71,12 @@ final class GlassSurface: UIView {
 
   private(set) var path: Path = .opaque
   private var effectView: UIVisualEffectView?
+
+  /// Ceiling on the corner radius, for surfaces that are not pills.
+  ///
+  /// The stadium below is `bounds.height / 2`, which is right for a 50 pt pill
+  /// and absurd for a 400 pt box — it would round the panel into a lozenge.
+  var maximumCornerRadius: CGFloat?
 
   /// Add chrome content here, never as a direct subview.
   let contentView = UIView()
@@ -142,7 +150,8 @@ final class GlassSurface: UIView {
 
   override func layoutSubviews() {
     super.layoutSubviews()
-    let radius = theme.isCapsule ? bounds.height / 2 : theme.fixedRadius
+    let natural = theme.isCapsule ? bounds.height / 2 : theme.fixedRadius
+    let radius = min(natural, maximumCornerRadius ?? .greatestFiniteMagnitude)
     layer.cornerRadius = radius
     if #available(iOS 26.0, *) {
       // Liquid Glass shapes its edge from the corner configuration, not from
@@ -153,9 +162,9 @@ final class GlassSurface: UIView {
       // surface here is far taller than 16. That avoids UICornerRadius, whose
       // factory does not import into Swift under the name its header suggests.
       let configuration =
-        theme.isCapsule
+        (theme.isCapsule && maximumCornerRadius == nil)
         ? UICornerConfiguration.capsule()
-        : UICornerConfiguration.capsule(maximumRadius: theme.fixedRadius)
+        : UICornerConfiguration.capsule(maximumRadius: radius)
       cornerConfiguration = configuration
       effectView?.cornerConfiguration = configuration
     }
@@ -169,13 +178,16 @@ protocol SpacesBrowserChromeDelegate: AnyObject {
   func chromeDidTapForward()
   func chromeDidTapReload()
   func chromeDidTapOpenExternally()
+  /// The `+` was pressed on a page the chrome has been told is not attachable.
+  /// Dart owns the gate and the note it shows, so the tap goes back there.
   func chromeDidTapAddToCourse()
+  /// A course row in the attach panel was tapped. Dart owns the cache write.
+  func chromeDidAttach(courseId: String)
+  /// "New course from this page" was tapped.
+  func chromeDidCreateCourseFromPage()
   func chromeDidTapHome()
   func chromeDidTapDismiss()
   func chromeDidChangeExpanded(_ expanded: Bool)
-  /// A tap landed on the modal dim, i.e. outside whatever Flutter is showing
-  /// over the page. Dart owns that sheet, so it decides what to close.
-  func chromeDidTapModalScrim()
   /// The user committed the address bar. The text is raw — the host resolves
   /// it to a URL or a search.
   func chromeDidSubmit(_ text: String)
@@ -198,6 +210,7 @@ final class SpacesBrowserChrome: UIView {
     case collapsed  // centred host pill only (Safari-style, scroll-driven)
     case menu  // ≡ expanded: back/forward pill + a stack of actions above it
     case editing  // address bar focused, keyboard up, page dimmed
+    case attach  // add-to-course box above the toolbar, page dimmed
   }
 
   /// Side of every pill in the bottom cluster (`kFloatingButtonSize`).
@@ -243,23 +256,18 @@ final class SpacesBrowserChrome: UIView {
   /// is nothing to be gained from sampling a page the user is not looking at.
   private let dimView = UIView()
 
-  /// Dims the page while Flutter shows a sheet over it — same fill as
-  /// `dimView`, but a separate view for three reasons: `applyState` rewrites
-  /// `dimView.alpha` on every transition, this one has to sit *above* the
-  /// pills so the chrome dims with the page, and it takes its own touches.
-  ///
-  /// It lives here rather than in Flutter because a full-screen Flutter layer
-  /// animating over the webview means recompositing the platform view every
-  /// frame. On this side it is a plain UIKit alpha ramp, and it blocks the
-  /// page's scrolling for free.
-  private let modalDim = UIView()
-  private var modalDimOn = false
-  private var modalDimAnimator: UIViewPropertyAnimator?
-
   private let leftPill = GlassSurface()
   private let urlPill = GlassSurface()
   private let dismissPill = GlassSurface()
   private let menuStack = UIStackView()
+  private let attachPanel = SpacesBrowserAttachPanel()
+
+  /// Whether the current page is worth attaching. Pushed from Dart, which owns
+  /// `_isTrackablePage`, and ANDed with "the content tab is showing": the URL
+  /// channel is content-tab-only on purpose, so the flag would otherwise go
+  /// stale the moment the pinned home tab came forward.
+  private var canAttach = false
+  private var contentTabActive = false
 
   private let menuIcon = UIImageView()
   private var menuIcons: [UIImageView] = []
@@ -311,10 +319,8 @@ final class SpacesBrowserChrome: UIView {
     buildDim()
     buildPills()
     buildMenu()
+    buildAttachPanel()
     buildProgress()
-    // Last, so it covers the pills too: while a Flutter sheet is up the whole
-    // chrome is behind it and has to read that way.
-    buildModalDim()
     buildGestures()
     observeKeyboard()
     applyState(.rest, animated: false, notify: false)
@@ -370,54 +376,6 @@ final class SpacesBrowserChrome: UIView {
       dimView.topAnchor.constraint(equalTo: topAnchor),
       dimView.bottomAnchor.constraint(equalTo: bottomAnchor),
     ])
-  }
-
-  private func buildModalDim() {
-    modalDim.translatesAutoresizingMaskIntoConstraints = false
-    modalDim.backgroundColor = UIColor.black.withAlphaComponent(0.35)
-    modalDim.alpha = 0
-    modalDim.isHidden = true
-    // Unlike `dimView` this one *does* take the touch: swallowing it is what
-    // stops the page scrolling under a sheet that is supposed to be modal.
-    // `outsideTap`/`outsidePan` cannot do this — both are
-    // `cancelsTouchesInView = false`, so the webview would still see the pan.
-    modalDim.addGestureRecognizer(
-      UITapGestureRecognizer(target: self, action: #selector(onModalScrimTap)))
-    addSubview(modalDim)
-    NSLayoutConstraint.activate([
-      modalDim.leadingAnchor.constraint(equalTo: leadingAnchor),
-      modalDim.trailingAnchor.constraint(equalTo: trailingAnchor),
-      modalDim.topAnchor.constraint(equalTo: topAnchor),
-      modalDim.bottomAnchor.constraint(equalTo: bottomAnchor),
-    ])
-  }
-
-  @objc private func onModalScrimTap() {
-    delegate?.chromeDidTapModalScrim()
-  }
-
-  /// Fades the page dim for a Flutter-owned sheet. Same curve and duration as
-  /// `applyState`, so the dim and the sheet ride one motion.
-  ///
-  /// Tracked by `modalDimOn` rather than `isHidden`: the view stays unhidden
-  /// for the whole fade-out, so an `isHidden` guard would swallow a reopen
-  /// that lands mid-dismiss and leave the dim fading to nothing.
-  func setModalDim(_ on: Bool) {
-    guard on != modalDimOn else { return }
-    modalDimOn = on
-    modalDimAnimator?.stopAnimation(true)
-    if on { modalDim.isHidden = false }
-    let timing = UICubicTimingParameters(
-      controlPoint1: CGPoint(x: 0.215, y: 0.61), controlPoint2: CGPoint(x: 0.355, y: 1))
-    let animator = UIViewPropertyAnimator(duration: 0.3, timingParameters: timing)
-    animator.addAnimations { self.modalDim.alpha = on ? 1 : 0 }
-    animator.addCompletion { [weak self] position in
-      guard let self, position == .end else { return }
-      self.modalDimAnimator = nil
-      if !self.modalDimOn { self.modalDim.isHidden = true }
-    }
-    modalDimAnimator = animator
-    animator.startAnimation()
   }
 
   private func buildPills() {
@@ -642,6 +600,26 @@ final class SpacesBrowserChrome: UIView {
     }
   }
 
+  /// The add-to-course box: full width between the toolbar's own margins,
+  /// sitting where the menu stack would be.
+  ///
+  /// The top anchor is a `>=`, not a height: the box hugs its rows while they
+  /// fit and stops growing at the status bar, after which its list scrolls
+  /// internally (see the scroll view's `defaultHigh` hugging constraint).
+  private func buildAttachPanel() {
+    attachPanel.translatesAutoresizingMaskIntoConstraints = false
+    attachPanel.isHidden = true
+    attachPanel.delegate = self
+    addSubview(attachPanel)
+    NSLayoutConstraint.activate([
+      attachPanel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.sideInset),
+      attachPanel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.sideInset),
+      attachPanel.bottomAnchor.constraint(equalTo: leftPill.topAnchor, constant: -Self.gutter),
+      attachPanel.topAnchor.constraint(
+        greaterThanOrEqualTo: safeAreaLayoutGuide.topAnchor, constant: 8),
+    ])
+  }
+
   @objc private func onMenuItemTap(_ recognizer: UITapGestureRecognizer) {
     switch recognizer.view?.tag {
     case 0: onOpenExternally()
@@ -702,6 +680,12 @@ final class SpacesBrowserChrome: UIView {
     if state == .menu, menuStack.frame.contains(point) || leftPill.frame.contains(point) {
       return
     }
+    // Nor is one that starts on the attach panel — that is the user scrolling
+    // the course list. Without this the first drag over the list dismisses the
+    // box instead of scrolling it.
+    if state == .attach, attachPanel.frame.contains(point) {
+      return
+    }
     cancelTransientStates()
   }
 
@@ -747,12 +731,8 @@ final class SpacesBrowserChrome: UIView {
   /// `menu` and `editing` are the exceptions: they claim the whole bounds so a
   /// tap anywhere outside the pills can dismiss them.
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-    // A Flutter sheet is up. Claim the whole bounds regardless of state: the
-    // `rest` branch below returns nil outside the pills, which would let the
-    // page scroll under a dim that is meant to be modal.
-    if modalDimOn { return super.hitTest(point, with: event) }
     switch state {
-    case .menu, .editing:
+    case .menu, .editing, .attach:
       return super.hitTest(point, with: event)
     case .rest, .collapsed:
       let surfaces: [UIView] = state == .collapsed ? [urlPill] : [leftPill, urlPill, dismissPill]
@@ -778,6 +758,7 @@ final class SpacesBrowserChrome: UIView {
     let path = leftPill.apply(theme)
     urlPill.apply(theme)
     dismissPill.apply(theme)
+    attachPanel.apply(theme)
     for case let pill as GlassSurface in menuStack.arrangedSubviews { pill.apply(theme) }
     // Off-glass the app avoids blur entirely, so the scrim falls back to a
     // plain wash of the page background — it still has to stop text running
@@ -858,7 +839,7 @@ final class SpacesBrowserChrome: UIView {
   /// the menu is open or the bar has focus — neither is a scroll-owned state.
   func setExpanded(_ expanded: Bool, animated: Bool = true, notify: Bool = true) {
     switch state {
-    case .menu, .editing:
+    case .menu, .editing, .attach:
       return
     case .rest where expanded, .collapsed where !expanded:
       return
@@ -875,9 +856,28 @@ final class SpacesBrowserChrome: UIView {
   func cancelTransientStates() {
     if state == .editing {
       finishEditing(commit: false)
-    } else if state == .menu {
+    } else if state == .menu || state == .attach {
       applyState(.rest)
     }
+  }
+
+  // MARK: Add to course
+
+  /// The liked courses, pushed from Dart whenever the cache changes so the
+  /// panel's first frame is already populated — the round trip this replaces
+  /// is most of what made the old sheet feel slow.
+  func setAttachCourses(_ courses: [AttachCourse]) {
+    attachPanel.setCourses(courses)
+  }
+
+  func setCanAttach(_ can: Bool) {
+    canAttach = can
+  }
+
+  /// Which tab is showing. Only the content tab can be attached: the pinned
+  /// home tab is the Spaces front page, which Dart's gate rejects anyway.
+  func setContentTabActive(_ active: Bool) {
+    contentTabActive = active
   }
 
   // MARK: State machine
@@ -891,7 +891,9 @@ final class SpacesBrowserChrome: UIView {
     NSLayoutConstraint.deactivate(urlCollapsedConstraints)
     NSLayoutConstraint.deactivate(urlEditingConstraints)
     switch next {
-    case .rest, .menu:
+    // The toolbar keeps its resting geometry under the panel: the box is an
+    // overlay above it, not a replacement for it.
+    case .rest, .menu, .attach:
       NSLayoutConstraint.activate(urlRestConstraints)
     case .collapsed:
       NSLayoutConstraint.activate(urlCollapsedConstraints)
@@ -904,17 +906,24 @@ final class SpacesBrowserChrome: UIView {
     switch next {
     case .editing: urlHeight.constant = Self.editingHeight
     case .collapsed: urlHeight.constant = Self.collapsedHeight
-    case .rest, .menu: urlHeight.constant = Self.pillHeight
+    case .rest, .menu, .attach: urlHeight.constant = Self.pillHeight
     }
-    outsideTap.isEnabled = next == .menu || next == .editing
-    outsidePan.isEnabled = next == .menu || next == .editing
-    urlTap.isEnabled = next != .editing
+    let transient = next == .menu || next == .editing || next == .attach
+    outsideTap.isEnabled = transient
+    outsidePan.isEnabled = transient
+    // The address pill must not take focus from under the panel.
+    urlTap.isEnabled = next != .editing && next != .attach
 
     if next == .menu { menuStack.isHidden = false }
+    if next == .attach { attachPanel.isHidden = false }
     if next == .editing {
       dimView.isHidden = false
       urlField.isHidden = false
     }
+    // Shares `dimView` with the editing state: both are moments where the page
+    // is backdrop. It sits below the pills, so the toolbar stays lit and keeps
+    // reading as the thing the box grew out of.
+    if next == .attach { dimView.isHidden = false }
 
     let sidePillsAlpha: CGFloat = (next == .collapsed || next == .editing) ? 0 : 1
     let apply = {
@@ -922,17 +931,16 @@ final class SpacesBrowserChrome: UIView {
       self.dismissPill.alpha = sidePillsAlpha
       self.menuIcon.alpha = next == .menu ? 0 : 1
       self.navRow.alpha = next == .menu ? 1 : 0
-      self.dimView.alpha = next == .editing ? 1 : 0
+      self.dimView.alpha = (next == .editing || next == .attach) ? 1 : 0
       self.hostLabel.alpha = next == .editing ? 0 : 1
       self.urlField.alpha = next == .editing ? 1 : 0
       self.layoutIfNeeded()
     }
     let cleanup = {
       if next != .menu { self.menuStack.isHidden = true }
-      if next != .editing {
-        self.dimView.isHidden = true
-        self.urlField.isHidden = true
-      }
+      if next != .attach { self.attachPanel.isHidden = true }
+      if next != .editing && next != .attach { self.dimView.isHidden = true }
+      if next != .editing { self.urlField.isHidden = true }
     }
 
     animator?.stopAnimation(true)
@@ -957,6 +965,12 @@ final class SpacesBrowserChrome: UIView {
       animateMenuOut()
     }
 
+    if next == .attach {
+      animatePanelIn()
+    } else if previous == .attach {
+      animatePanelOut()
+    }
+
     // Only the scroll-owned pair is an "expanded" change as far as Dart is
     // concerned; menu and editing are chrome-internal.
     if notify, next == .rest || next == .collapsed, previous == .rest || previous == .collapsed {
@@ -979,6 +993,34 @@ final class SpacesBrowserChrome: UIView {
         item.alpha = 1
         item.transform = .identity
       }
+    }
+  }
+
+  /// Same spring as the menu stack, rising off the toolbar rather than fading
+  /// in over the page.
+  ///
+  /// Deliberately no `layer.anchorPoint` change to scale from the bottom edge:
+  /// Auto Layout positions this view by its centre, so moving the anchor
+  /// re-maps that centre and displaces the whole panel by half its height.
+  private func animatePanelIn() {
+    attachPanel.alpha = 0
+    attachPanel.transform = CGAffineTransform(translationX: 0, y: 10).scaledBy(x: 0.94, y: 0.86)
+    UIView.animate(
+      withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.78,
+      initialSpringVelocity: 0.4, options: [.allowUserInteraction]
+    ) {
+      self.attachPanel.alpha = 1
+      self.attachPanel.transform = .identity
+    }
+  }
+
+  private func animatePanelOut() {
+    UIView.animate(
+      withDuration: 0.2, delay: 0, options: [.curveEaseIn, .allowUserInteraction]
+    ) {
+      self.attachPanel.alpha = 0
+      self.attachPanel.transform = CGAffineTransform(translationX: 0, y: 8)
+        .scaledBy(x: 0.96, y: 0.9)
     }
   }
 
@@ -1067,10 +1109,19 @@ final class SpacesBrowserChrome: UIView {
 
   @objc private func onAddToCourse() {
     // Matches `onMenuTap`, which taps back on the way in. Without this the
-    // one pill that opens a sheet is the only silent one.
+    // one pill that opens a box is the only silent one.
     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-    applyState(.rest)
-    delegate?.chromeDidTapAddToCourse()
+    // The gate lives in Dart (`_isTrackablePage`); the chrome only mirrors its
+    // verdict, so the common case opens the box on this frame with no round
+    // trip, and the rejected case still gets Dart's own note.
+    guard canAttach && contentTabActive else {
+      applyState(.rest)
+      delegate?.chromeDidTapAddToCourse()
+      return
+    }
+    attachPanel.setPage(title: pageTitle, host: displayHost())
+    attachPanel.prepare(for: currentURL?.absoluteString)
+    applyState(.attach)
   }
 
   @objc private func onDismiss() {
@@ -1085,7 +1136,7 @@ final class SpacesBrowserChrome: UIView {
       applyState(.menu)
     case .menu:
       applyState(.rest)
-    case .collapsed, .editing:
+    case .collapsed, .editing, .attach:
       break
     }
   }
@@ -1099,7 +1150,7 @@ final class SpacesBrowserChrome: UIView {
       applyState(.rest)
     case .rest:
       beginEditing()
-    case .menu, .editing:
+    case .menu, .editing, .attach:
       break
     }
   }
@@ -1126,11 +1177,59 @@ final class SpacesBrowserChrome: UIView {
       let live = [leftPill.frame, menuStack.frame, urlPill.frame, dismissPill.frame]
       guard !live.contains(where: { $0.contains(point) }) else { return }
       applyState(.rest)
+    case .attach:
+      // The panel's own frame has to be live here, or a tap on a course row
+      // dismisses the box instead of attaching to it.
+      let live = [attachPanel.frame, leftPill.frame, urlPill.frame, dismissPill.frame]
+      guard !live.contains(where: { $0.contains(point) }) else { return }
+      applyState(.rest)
     case .editing:
       guard !urlPill.frame.contains(point) else { return }
       finishEditing(commit: false)
     case .rest, .collapsed:
       break
+    }
+  }
+}
+
+// MARK: - Attach panel delegate
+
+extension SpacesBrowserChrome: SpacesBrowserAttachPanelDelegate {
+  /// Confirms first, writes second.
+  ///
+  /// The write is a `SharedPreferences` round-trip that effectively cannot
+  /// fail and the calendar resync behind it is detached, so holding the haptic
+  /// and the label until Dart answers would buy nothing but a tap that feels
+  /// like it hung.
+  func attachPanel(
+    _ panel: SpacesBrowserAttachPanel, didSelect course: AttachCourse, alreadyAttached: Bool
+  ) {
+    guard !alreadyAttached else {
+      // No write, and the box stays up: nothing happened, so closing it would
+      // read as though something had.
+      UISelectionFeedbackGenerator().selectionChanged()
+      panel.confirm("Already on \(course.title)")
+      return
+    }
+    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    panel.confirm("Added to \(course.title)")
+    delegate?.chromeDidAttach(courseId: course.id)
+    closeAttachPanelAfterConfirmation()
+  }
+
+  func attachPanelDidTapCreateCourse(_ panel: SpacesBrowserAttachPanel) {
+    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    panel.confirm("Created \(panel.pageName)")
+    delegate?.chromeDidCreateCourseFromPage()
+    closeAttachPanelAfterConfirmation()
+  }
+
+  /// Long enough for the confirmation to be read, short enough not to feel
+  /// like a wait — the 350 ms the Flutter sheet used.
+  private func closeAttachPanelAfterConfirmation() {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+      guard let self, self.state == .attach else { return }
+      self.applyState(.rest)
     }
   }
 }

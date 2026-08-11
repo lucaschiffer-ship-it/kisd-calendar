@@ -16,6 +16,7 @@
 		7884E8722EC3CD1000C636F2 /* TranslationBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7884E8712EC3CD1000C636F2 /* TranslationBridge.swift */; };
 		7884E8812EC3CD1000C636F3 /* SpacesBrowserPlatformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7884E8802EC3CD1000C636F3 /* SpacesBrowserPlatformView.swift */; };
 		7884E8832EC3CD1000C636F3 /* SpacesBrowserChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7884E8822EC3CD1000C636F3 /* SpacesBrowserChrome.swift */; };
+		7884E8A12EC3CD1000C636F3 /* SpacesBrowserAttachPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7884E8A02EC3CD1000C636F3 /* SpacesBrowserAttachPanel.swift */; };
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
@@ -62,6 +63,7 @@
 		7884E8712EC3CD1000C636F2 /* TranslationBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslationBridge.swift; sourceTree = "<group>"; };
 		7884E8802EC3CD1000C636F3 /* SpacesBrowserPlatformView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpacesBrowserPlatformView.swift; sourceTree = "<group>"; };
 		7884E8822EC3CD1000C636F3 /* SpacesBrowserChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpacesBrowserChrome.swift; sourceTree = "<group>"; };
+		7884E8A02EC3CD1000C636F3 /* SpacesBrowserAttachPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpacesBrowserAttachPanel.swift; sourceTree = "<group>"; };
 		7AFA3C8E1D35360C0083082E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Release.xcconfig; path = Flutter/Release.xcconfig; sourceTree = "<group>"; };
 		9740EEB21CF90195004384FC /* Debug.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = Debug.xcconfig; path = Flutter/Debug.xcconfig; sourceTree = "<group>"; };
 		9740EEB31CF90195004384FC /* Generated.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = Generated.xcconfig; path = Flutter/Generated.xcconfig; sourceTree = "<group>"; };
@@ -171,6 +173,7 @@
 				7884E8712EC3CD1000C636F2 /* TranslationBridge.swift */,
 				7884E8802EC3CD1000C636F3 /* SpacesBrowserPlatformView.swift */,
 				7884E8822EC3CD1000C636F3 /* SpacesBrowserChrome.swift */,
+				7884E8A02EC3CD1000C636F3 /* SpacesBrowserAttachPanel.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
 			path = Runner;
@@ -394,6 +397,7 @@
 				7884E8722EC3CD1000C636F2 /* TranslationBridge.swift in Sources */,
 				7884E8812EC3CD1000C636F3 /* SpacesBrowserPlatformView.swift in Sources */,
 				7884E8832EC3CD1000C636F3 /* SpacesBrowserChrome.swift in Sources */,
+				7884E8A12EC3CD1000C636F3 /* SpacesBrowserAttachPanel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

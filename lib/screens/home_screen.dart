@@ -17,8 +17,8 @@ import '../services/page_actions.dart';
 import '../services/service_locator.dart';
 import '../services/spaces_browser.dart';
 import '../services/theme_service.dart';
+import '../services/course_link_attach.dart';
 import '../theme/app_theme.dart';
-import '../widgets/add_to_course_sheet.dart';
 import '../widgets/glass_pill.dart';
 import '../widgets/native_spaces_browser.dart';
 import '../widgets/page_floating_actions.dart';
@@ -74,16 +74,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // "Reconnecting…" overlay over the Spaces browser).
   bool _reconnecting = false;
 
-  // The page the browser's ≡ → + is offering to attach, while the picker is up.
-  String? _addUrl;
-  String? _addTitle;
-
-  /// The raw cached course list, kept warm so the picker can paint its rows on
-  /// its first frame. Decoding it inside the sheet meant a spinner plus a
-  /// main-isolate JSON parse of every course landing mid-open animation.
-  ///
-  /// Unfiltered on purpose — the sheet owns the favourite filter and the sort,
-  /// so refreshing here stays a plain reassignment.
+  /// The raw cached course list. Kept so the liked subset can be pushed into
+  /// the native picker, which renders its rows from that snapshot — decoding
+  /// the cache at open time meant a spinner plus a main-isolate JSON parse of
+  /// every course landing mid-animation.
   List<CourseShell>? _courseSnapshot;
 
   // Transient note shown *inside* the browser sheet. A SnackBar cannot be used
@@ -306,22 +300,55 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  // The browser's ≡ → + button. Only pages worth keeping are attachable: the
-  // Spaces home and the IdP/MFA pages would just add noise to a course.
+  // The browser's ≡ → + on a page that isn't worth keeping: the Spaces home
+  // and the IdP/MFA pages would just add noise to a course. The chrome opens
+  // its own panel for everything else and never reaches this.
   void _onAddToCourse(String url, String? title) {
-    if (!_isTrackablePage(url)) {
-      HapticFeedback.selectionClick();
-      _showBrowserNote('Open a course page first');
-      return;
+    HapticFeedback.selectionClick();
+    _showBrowserNote('Open a course page first');
+  }
+
+  // A row in the native panel. It has already confirmed on screen, so this is
+  // purely the write — `attachLink` bumps `CourseUpdates`, which refreshes the
+  // snapshot and re-pushes the rows so the checkmarks are right next time.
+  Future<void> _onAttachCourse(String courseId, String url, String? title) async {
+    try {
+      final shells = await scraperService.loadCached();
+      for (final shell in shells) {
+        if (shell.id == courseId) {
+          await attachLink(shell, url, title);
+          return;
+        }
+      }
+      debugPrint('[home] attach: no course $courseId in cache');
+    } catch (e) {
+      debugPrint('[home] attach: $e');
     }
-    // After the gate, never before: the early return above would otherwise
-    // dim the page for a sheet that never appears — and nothing would turn it
-    // back off.
-    _browserKey.currentState?.setModalDim(true);
-    setState(() {
-      _addUrl = url;
-      _addTitle = title;
-    });
+  }
+
+  Future<void> _onCreateCourseFromPage(String url, String? title) async {
+    try {
+      await createCourseFrom(url, title);
+    } catch (e) {
+      debugPrint('[home] create course: $e');
+    }
+  }
+
+  /// The liked courses, in the shape the native panel wants. Sorted by title
+  /// so the rows do not reshuffle between opens.
+  void _pushAttachCourses() {
+    final shells = _courseSnapshot;
+    if (shells == null) return;
+    final liked = shells.where((s) => s.isFavourite).toList()
+      ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+    _browserKey.currentState?.setAttachCourses([
+      for (final s in liked)
+        {
+          'id': s.id,
+          'title': s.title,
+          'urls': [for (final l in s.links) l.url],
+        },
+    ]);
   }
 
   void _showBrowserNote(String message) {
@@ -329,22 +356,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     setState(() => _browserNote = message);
     _browserNoteTimer = Timer(const Duration(milliseconds: 1800), () {
       if (mounted) setState(() => _browserNote = null);
-    });
-  }
-
-  /// The single path that retires the picker. Every caller goes through here:
-  /// the dim lives in UIKit now, and the browser survives the sheet closing
-  /// (`_browserKey` keeps it mounted, the overlay only translates), so a dim
-  /// left on would come back with the *next* open — over a page that has no
-  /// sheet, with `hitTest` claiming the bounds. That reads as a browser with
-  /// dead scrolling and dead pills until the app restarts.
-  void _closeAddSheet() {
-    if (!mounted) return;
-    _browserKey.currentState?.setModalDim(false);
-    if (_addUrl == null) return;
-    setState(() {
-      _addUrl = null;
-      _addTitle = null;
     });
   }
 
@@ -364,7 +375,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Future<void> _refreshCourseSnapshot() async {
     try {
       final shells = await scraperService.loadCached();
-      if (mounted) _courseSnapshot = shells;
+      if (!mounted) return;
+      _courseSnapshot = shells;
+      // Straight through to the chrome: this is a `CourseUpdates` listener, so
+      // it is also the path an attach takes on its way back, and the panel's
+      // checkmarks would otherwise be a revision behind.
+      _pushAttachCourses();
     } catch (e) {
       debugPrint('[home] course snapshot: $e');
     }
@@ -386,14 +402,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _closeSheet() {
-    // The picker belongs to the page behind it — it must not outlive the
-    // sheet. Unconditional, and via `_closeAddSheet`, so the native dim is
-    // always cleared even when the browser is dragged away under an open
-    // picker.
-    _closeAddSheet();
-    // Drop the keyboard and any open menu on the same frame the sheet starts
-    // leaving. Native already does this when *it* owns the gesture (the
-    // dismiss drag, the ⌄ button); this covers the Dart-initiated closes.
+    // Drop the keyboard, any open menu, and the add-to-course panel on the
+    // same frame the sheet starts leaving — `endEditing` lands on the chrome's
+    // `cancelTransientStates`, which owns all three. Native already does this
+    // when *it* owns the gesture (the dismiss drag, the ⌄ button); this covers
+    // the Dart-initiated closes.
     _browserKey.currentState?.endEditing();
     _snapBackCtrl.stop();
     // Fold an in-flight drag into the animation's starting point, so the sheet
@@ -555,6 +568,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     },
                     onCurrentUrlChanged: (url) {
                       if (url == _pendingBrowserUrl) _pendingBrowserUrl = null;
+                      // The gate stays here, in Dart. The chrome only caches
+                      // the verdict so ≡ → + can open its panel on the same
+                      // frame as the tap.
+                      _browserKey.currentState
+                          ?.setCanAttach(_isTrackablePage(url));
                     },
                     // One drag path for both the handle pill and the pull at
                     // the top of the page. No clamp and no dead zone: the
@@ -579,7 +597,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       }
                     },
                     onAddToCourse: _onAddToCourse,
-                    onModalScrimTapped: _closeAddSheet,
+                    onAttachCourse: _onAttachCourse,
+                    onCreateCourseFromPage: _onCreateCourseFromPage,
                     onAuthExpired: _onBrowserAuthExpired,
                   ),
                   if (_browserNote != null)
@@ -608,16 +627,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           ),
                         ),
                       ),
-                    ),
-                  if (_addUrl != null)
-                    AddToCourseSheet(
-                      // Keyed by URL so reopening on a different page rebuilds
-                      // the picker rather than reusing the old page's state.
-                      key: ValueKey(_addUrl),
-                      url: _addUrl!,
-                      pageTitle: _addTitle,
-                      initialCourses: _courseSnapshot,
-                      onClose: _closeAddSheet,
                     ),
                   if (_reconnecting)
                     Positioned.fill(

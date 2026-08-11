@@ -30,7 +30,8 @@ class NativeSpacesBrowser extends StatefulWidget {
     this.onDismiss,
     this.onOpenExternally,
     this.onAddToCourse,
-    this.onModalScrimTapped,
+    this.onAttachCourse,
+    this.onCreateCourseFromPage,
     this.onAuthExpired,
   });
 
@@ -53,14 +54,18 @@ class NativeSpacesBrowser extends StatefulWidget {
   /// The toolbar's Safari button. Dart owns `url_launcher`.
   final ValueChanged<String>? onOpenExternally;
 
-  /// The menu's `+` button: attach this page to a course. The title comes
-  /// straight from the active webview, so it is present for the home tab too —
-  /// unlike [onPageTitleChanged], which only reports the content tab.
+  /// The menu's `+` on a page the chrome has been told is *not* attachable.
+  /// The picker itself is native; this is only the rejected path, so Dart can
+  /// show its note. The title comes straight from the active webview, so it is
+  /// present for the home tab too — unlike [onPageTitleChanged].
   final void Function(String url, String? title)? onAddToCourse;
 
-  /// A tap on the native modal dim, i.e. outside a Flutter sheet shown over
-  /// the page. Dart owns that sheet, so Dart decides what to close.
-  final VoidCallback? onModalScrimTapped;
+  /// A course row in the native panel was tapped. The panel has already
+  /// confirmed on screen; this only has to perform the write.
+  final void Function(String courseId, String url, String? title)? onAttachCourse;
+
+  /// "New course from this page" in the native panel.
+  final void Function(String url, String? title)? onCreateCourseFromPage;
 
   /// Fired when a page load lands on the TH-Köln IdP / WordPress login instead
   /// of Spaces — i.e. the session expired and Spaces bounced us to re-auth.
@@ -150,8 +155,22 @@ class NativeSpacesBrowserState extends State<NativeSpacesBrowser> {
         // An empty URL still reaches the handler: the page gate there rejects
         // it with a note, which beats a tap that silently does nothing.
         widget.onAddToCourse?.call(url ?? '', args['title'] as String?);
-      case 'onModalScrimTapped':
-        widget.onModalScrimTapped?.call();
+      case 'onAttachCourse':
+        final args = (call.arguments as Map).cast<String, dynamic>();
+        final courseId = args['courseId'] as String?;
+        if (courseId != null) {
+          widget.onAttachCourse?.call(
+            courseId,
+            args['url'] as String? ?? '',
+            args['title'] as String?,
+          );
+        }
+      case 'onCreateCourseFromPage':
+        final args = (call.arguments as Map).cast<String, dynamic>();
+        widget.onCreateCourseFromPage?.call(
+          args['url'] as String? ?? '',
+          args['title'] as String?,
+        );
       case 'onAuthExpired':
         widget.onAuthExpired?.call();
       case 'onLoadingChanged':
@@ -194,14 +213,17 @@ class NativeSpacesBrowserState extends State<NativeSpacesBrowser> {
   void setPillTitle(String title) =>
       _channel?.invokeMethod('setPillTitle', title);
 
-  /// Dim the page behind a Flutter sheet shown over the browser.
-  ///
-  /// Native on purpose. A full-screen Flutter scrim over this platform view
-  /// has to be recomposited with UIKit every frame it changes, which is what
-  /// made the add-to-course sheet feel heavy next to the native chrome. As a
-  /// UIKit view it is a plain alpha ramp, and it blocks page scrolling while
-  /// the sheet is up for free.
-  void setModalDim(bool on) => _channel?.invokeMethod('setModalDim', on);
+  /// The liked courses the native add-to-course panel offers, as
+  /// `{id, title, urls}`. Pushed whenever the cache changes rather than pulled
+  /// when the panel opens: the panel's first frame then paints real rows, with
+  /// no round trip between the tap and the box.
+  void setAttachCourses(List<Map<String, dynamic>> courses) =>
+      _channel?.invokeMethod('setAttachCourses', courses);
+
+  /// Whether the current page is worth attaching. Dart owns the rule
+  /// (`_isTrackablePage`); the chrome only mirrors the verdict so it can open
+  /// the panel without asking first.
+  void setCanAttach(bool can) => _channel?.invokeMethod('setCanAttach', can);
 
   /// Drop the keyboard and close the ≡ menu. The native side does this itself
   /// when a dismiss drag starts; this is the path for Dart-initiated closes.

@@ -183,17 +183,17 @@ class _AddToCourseSheetState extends State<AddToCourseSheet>
         boxShadow: const [AppGlass.cardShadow],
       ),
       clipBehavior: Clip.antiAlias,
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _header(s),
-            Flexible(child: _body(s)),
-            _footer(s),
-          ],
-        ),
+      // No SafeArea wrapper: it would inset the whole column and leave the
+      // accent footer floating above a strip of panel. The inset belongs to
+      // the footer's own padding, so its tint runs to the screen edge.
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _header(s),
+          Flexible(child: _body(s)),
+          _footer(s),
+        ],
       ),
     );
   }
@@ -307,7 +307,8 @@ class _AddToCourseSheetState extends State<AddToCourseSheet>
     return InkWell(
       onTap: _createNew,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+        padding: EdgeInsets.fromLTRB(
+            20, 15, 20, 15 + MediaQuery.of(context).padding.bottom),
         decoration: BoxDecoration(
           color: s.accent.withValues(alpha: 0.12),
           border: Border(top: BorderSide(color: s.divider, width: 0.5)),

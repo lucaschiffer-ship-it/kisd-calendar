@@ -214,6 +214,12 @@ final class SpacesBrowserView: NSObject, FlutterPlatformView {
 
     let webView = WKWebView(frame: .zero, configuration: configuration)
     webView.navigationDelegate = self
+    // Without a UI delegate, WKWebView *silently drops* every navigation that
+    // wants a new window — `target="_blank"` links and `window.open()`. It
+    // reads as "the link is dead": no error, no delegate callback, nothing.
+    // See the WKUIDelegate extension for why they are folded into the content
+    // tab instead.
+    webView.uiDelegate = self
     webView.allowsBackForwardNavigationGestures = true
     // Opaque on purpose. Left transparent, the strip above the content inset
     // showed the container's black, which turned into a hard black band the
@@ -672,6 +678,35 @@ extension SpacesBrowserView: UIGestureRecognizerDelegate {
     shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
   ) -> Bool {
     return true
+  }
+}
+
+// MARK: - WKUIDelegate
+
+extension SpacesBrowserView: WKUIDelegate {
+  /// A page asked for a new window — `target="_blank"` or `window.open()`.
+  ///
+  /// There is no third tab to give it (the split is a pinned home tab plus one
+  /// content tab), and returning nil without doing anything is what made those
+  /// links look dead. So the request is folded into the content tab, which is
+  /// the same move `decidePolicyFor` already makes for a link tap on the home
+  /// tab. Returning nil tells WebKit no new webview was created, so it must
+  /// not drive the navigation itself — we have already taken it.
+  func webView(
+    _ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+    for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures
+  ) -> WKWebView? {
+    // Nil for a window JS populates by hand (`window.open()` with no URL, then
+    // `document.write`). Nothing to load, and no tab to hand back — those stay
+    // unsupported rather than opening a blank page.
+    guard let url = navigationAction.request.url else {
+      browserLog("popup with no URL — ignored")
+      return nil
+    }
+    browserLog("popup → content tab: \(url.absoluteString)")
+    contentWebView.load(URLRequest(url: url))
+    switchTo(1)
+    return nil
   }
 }
 

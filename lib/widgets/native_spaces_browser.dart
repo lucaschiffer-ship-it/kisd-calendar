@@ -31,6 +31,7 @@ class NativeSpacesBrowser extends StatefulWidget {
     this.onOpenExternally,
     this.onAddToCourse,
     this.onAttachCourse,
+    this.onDetachCourse,
     this.onCreateCourseFromPage,
     this.onAuthExpired,
   });
@@ -63,6 +64,10 @@ class NativeSpacesBrowser extends StatefulWidget {
   /// A course row in the native panel was tapped. The panel has already
   /// confirmed on screen; this only has to perform the write.
   final void Function(String courseId, String url, String? title)? onAttachCourse;
+
+  /// A *ticked* course row was tapped, i.e. the user unchecked it. Same shape
+  /// as [onAttachCourse] minus the title, which a removal has no use for.
+  final void Function(String courseId, String url)? onDetachCourse;
 
   /// "New course from this page" in the native panel.
   final void Function(String url, String? title)? onCreateCourseFromPage;
@@ -164,6 +169,16 @@ class NativeSpacesBrowserState extends State<NativeSpacesBrowser> {
             args['url'] as String? ?? '',
             args['title'] as String?,
           );
+        }
+      case 'onDetachCourse':
+        final args = (call.arguments as Map).cast<String, dynamic>();
+        final courseId = args['courseId'] as String?;
+        final url = args['url'] as String?;
+        // Unlike the attach path an empty URL is dropped here: it can match no
+        // stored link, so the write would be a no-op with a confirmation
+        // already on screen.
+        if (courseId != null && url != null && url.isNotEmpty) {
+          widget.onDetachCourse?.call(courseId, url);
         }
       case 'onCreateCourseFromPage':
         final args = (call.arguments as Map).cast<String, dynamic>();

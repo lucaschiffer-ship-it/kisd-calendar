@@ -106,6 +106,12 @@ List<CourseLink> insertLink(List<CourseLink> links, CourseLink link) {
   return next;
 }
 
+/// Drops every link matching [url]. The comparison is the exact-string one
+/// [courseHasLink] uses, so a row that shows a checkmark is exactly a row this
+/// removes — a looser match here would unhook a link the panel never ticked.
+List<CourseLink> removeLink(List<CourseLink> links, String url) =>
+    links.where((l) => l.url != url).toList();
+
 /// Adds [url] to [shell]. Returns the shell unchanged when the link is already
 /// there, so the caller can report "already added" without a redundant write.
 Future<CourseShell> attachLink(
@@ -122,6 +128,28 @@ Future<CourseShell> attachLink(
     // preserves cached links when 'links' is in editedFields — without it the
     // next scrape drops the attachment. The trade is that this course's links
     // stop tracking Spaces from here on.
+    editedFields: {...shell.editedFields, 'links'},
+  );
+  await _persist(updated);
+  return updated;
+}
+
+/// Removes [url] from [shell] — the panel's checkmark tapped a second time.
+/// Returns the shell unchanged when the link is not there, so an unchecked row
+/// costs no write.
+///
+/// Emptying `links` is allowed: every consumer of `links.first` guards on
+/// `isEmpty` first (`CourseShellCard._openPrimary`, `EventStore`,
+/// `PagePrefetcher`), so a course with no links simply stops offering one.
+Future<CourseShell> detachLink(CourseShell shell, String url) async {
+  if (!courseHasLink(shell, url)) return shell;
+
+  final updated = shell.copyWith(
+    links: removeLink(shell.links, url),
+    // Same one-way door as `attachLink`, and load-bearing in the same way: a
+    // removal that is not recorded as an edit is undone by the next
+    // `scrapeMyCourses`, which would put a scraped link straight back and make
+    // the uncheck look like it never happened.
     editedFields: {...shell.editedFields, 'links'},
   );
   await _persist(updated);

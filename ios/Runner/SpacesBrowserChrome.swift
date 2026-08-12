@@ -183,6 +183,8 @@ protocol SpacesBrowserChromeDelegate: AnyObject {
   func chromeDidTapAddToCourse()
   /// A course row in the attach panel was tapped. Dart owns the cache write.
   func chromeDidAttach(courseId: String)
+  /// A *ticked* course row was tapped: take this page back off that course.
+  func chromeDidDetach(courseId: String)
   /// "New course from this page" was tapped.
   func chromeDidCreateCourseFromPage()
   func chromeDidTapHome()
@@ -1202,10 +1204,14 @@ extension SpacesBrowserChrome: SpacesBrowserAttachPanelDelegate {
     _ panel: SpacesBrowserAttachPanel, didSelect course: AttachCourse, alreadyAttached: Bool
   ) {
     guard !alreadyAttached else {
-      // No write, and the box stays up: nothing happened, so closing it would
-      // read as though something had.
-      UISelectionFeedbackGenerator().selectionChanged()
-      panel.confirm("Already on \(course.title)")
+      // A ticked row is a toggle, not a dead end: tapping it takes this page
+      // back off the course. Closes on confirmation exactly as the add does —
+      // the write bumps `CourseUpdates`, which re-pushes the rows and rebuilds
+      // them underneath, so there is no ticked row left to leave on screen.
+      UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+      panel.confirm("Removed from \(course.title)")
+      delegate?.chromeDidDetach(courseId: course.id)
+      closeAttachPanelAfterConfirmation()
       return
     }
     UIImpactFeedbackGenerator(style: .medium).impactOccurred()

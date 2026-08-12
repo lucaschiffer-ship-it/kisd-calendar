@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kisd_calendar/models/course_shell.dart';
 import 'package:kisd_calendar/services/course_link_attach.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Pins the pure half of the browser's "add this page to a course" flow: how a
 /// URL is classified, what it gets labelled, and where it lands in `links`.
@@ -108,6 +109,39 @@ void main() {
     });
   });
 
+  group('removeLink', () {
+    const spaces = CourseLink(url: _spacesPage, label: 'Spaces page');
+    const selection = CourseLink(url: _selection, label: 'Course selection');
+
+    test('drops the matching link and keeps the rest in order', () {
+      final other = CourseLink(url: 'https://example.com/x', label: 'x');
+      final result = removeLink([spaces, selection, other], _selection);
+      expect(result.map((l) => l.url).toList(), [
+        _spacesPage,
+        'https://example.com/x',
+      ]);
+    });
+
+    test('matches exactly, like the checkmark that offered the removal', () {
+      // The panel ticks a row on `urls.contains(url)`, so a near-miss URL must
+      // not remove the link the user can see ticked — and must not remove a
+      // different one either.
+      final result = removeLink([spaces], '$_spacesPage#extra');
+      expect(result.single.url, _spacesPage);
+    });
+
+    test('removing the only link is allowed and leaves no links', () {
+      // Every `links.first` consumer guards on isEmpty first, so a course with
+      // no links simply stops offering one.
+      expect(removeLink([spaces], _spacesPage), isEmpty);
+    });
+
+    test('a link that is not there changes nothing', () {
+      final result = removeLink([spaces], 'https://example.com/nope');
+      expect(result.map((l) => l.url).toList(), [_spacesPage]);
+    });
+  });
+
   group('courseHasLink', () {
     test('matches on the exact URL', () {
       final shell = _shell(
@@ -115,6 +149,43 @@ void main() {
       );
       expect(courseHasLink(shell, _spacesPage), isTrue);
       expect(courseHasLink(shell, '$_spacesPage#extra'), isFalse);
+    });
+  });
+
+  group('detachLink', () {
+    const spaces = CourseLink(url: _spacesPage, label: 'Spaces page');
+    const selection = CourseLink(url: _selection, label: 'Course selection');
+
+    setUp(() {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      SharedPreferences.setMockInitialValues({});
+    });
+
+    test('records the removal as an edit', () async {
+      // The one-way door, and the whole reason an uncheck sticks: without
+      // 'links' in editedFields the next `scrapeMyCourses` puts the scraped
+      // link straight back and the removal silently undoes itself.
+      final updated = await detachLink(
+        _shell(links: const [spaces]),
+        _spacesPage,
+      );
+      expect(updated.links, isEmpty);
+      expect(updated.editedFields, contains('links'));
+    });
+
+    test('leaves the other links alone', () async {
+      final updated = await detachLink(
+        _shell(links: const [spaces, selection]),
+        _spacesPage,
+      );
+      expect(updated.links.map((l) => l.url).toList(), [_selection]);
+    });
+
+    test('a link that is not attached is not a write', () async {
+      final shell = _shell(links: const [spaces]);
+      final updated = await detachLink(shell, 'https://example.com/nope');
+      expect(identical(updated, shell), isTrue);
+      expect(updated.editedFields, isNot(contains('links')));
     });
   });
 

@@ -326,6 +326,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
+  // A ticked row tapped again. Mirrors `_onAttachCourse`: the panel has
+  // confirmed already, so this is only the write, and `detachLink` bumps
+  // `CourseUpdates` so the rows come back without the checkmark.
+  Future<void> _onDetachCourse(String courseId, String url) async {
+    try {
+      final shells = await scraperService.loadCached();
+      for (final shell in shells) {
+        if (shell.id == courseId) {
+          await detachLink(shell, url);
+          return;
+        }
+      }
+      debugPrint('[home] detach: no course $courseId in cache');
+    } catch (e) {
+      debugPrint('[home] detach: $e');
+    }
+  }
+
   Future<void> _onCreateCourseFromPage(String url, String? title) async {
     try {
       await createCourseFrom(url, title);
@@ -598,6 +616,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     },
                     onAddToCourse: _onAddToCourse,
                     onAttachCourse: _onAttachCourse,
+                    onDetachCourse: _onDetachCourse,
                     onCreateCourseFromPage: _onCreateCourseFromPage,
                     onAuthExpired: _onBrowserAuthExpired,
                   ),

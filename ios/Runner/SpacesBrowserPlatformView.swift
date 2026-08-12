@@ -559,6 +559,16 @@ extension SpacesBrowserView: SpacesBrowserChromeDelegate {
       ])
   }
 
+  /// No title: a removal matches on the stored URL alone.
+  func chromeDidDetach(courseId: String) {
+    channel.invokeMethod(
+      "onDetachCourse",
+      arguments: [
+        "courseId": courseId,
+        "url": activeWebView.url?.absoluteString ?? "",
+      ])
+  }
+
   func chromeDidCreateCourseFromPage() {
     channel.invokeMethod(
       "onCreateCourseFromPage",

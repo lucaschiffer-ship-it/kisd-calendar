@@ -347,7 +347,10 @@ final class AttachRow: UIView {
 
   private var theme = SpacesBrowserTheme()
 
+  /// Full-strength in both states. The tick used to come with dimmed text to
+  /// say "already added, nothing to do here" — now that tapping the row takes
+  /// the page back off the course, dimming it would read as disabled.
   private func applyTitleColor() {
-    titleLabel.textColor = isAttached ? theme.textTertiary : theme.textPrimary
+    titleLabel.textColor = theme.textPrimary
   }
 }

@@ -407,7 +407,7 @@ final class SpacesBrowserChrome: UIView {
     ])
     // A tap recogniser on the whole pill rather than a button, so the ≡ target
     // stays the full 50 pt even though the glyph is small.
-    let menuTap = UITapGestureRecognizer(target: self, action: #selector(onMenuTap))
+    let menuTap = UITapGestureRecognizer(target: self, action: #selector(onMenuTap(_:)))
     menuTap.cancelsTouchesInView = false
     leftPill.addGestureRecognizer(menuTap)
 
@@ -1128,13 +1128,38 @@ final class SpacesBrowserChrome: UIView {
     delegate?.chromeDidTapDismiss()
   }
 
-  @objc private func onMenuTap() {
+  @objc private func onMenuTap(_ recognizer: UITapGestureRecognizer) {
     switch state {
     case .rest:
       UIImpactFeedbackGenerator(style: .light).impactOccurred()
       applyState(.menu)
     case .menu:
-      applyState(.rest)
+      // In `menu` the ≡ pill *is* the back/forward control, so the tap has to
+      // be routed by which half it landed on. `backButton`/`forwardButton`
+      // never receive `touchUpInside` themselves: UIControl only takes
+      // precedence over a tap recogniser on its *immediate* superview, and
+      // this one is three levels up (button → navRow → contentView → pill).
+      // Same reason the menu stack's pills are driven by recognisers rather
+      // than by buttons pinned inside them.
+      //
+      // `addTarget` stays wired on the buttons regardless — VoiceOver's
+      // `accessibilityActivate` fires target-action directly, without a touch,
+      // so that path never reaches here and the two cannot double-fire.
+      let point = recognizer.location(in: leftPill)
+      let back = point.x < leftPill.bounds.midX
+      let button: UIButton = back ? backButton : forwardButton
+      // A spent history is a no-op, as everywhere else: `setNavState` already
+      // tracks `canGoBack`/`canGoForward` here, so read it rather than asking
+      // the webview again.
+      guard button.isEnabled else { return }
+      // Deliberately no `applyState(.rest)`: back and forward live in a
+      // persistent toolbar in every browser worth copying, so the menu stays
+      // up and repeated taps walk the history.
+      if back {
+        delegate?.chromeDidTapBack()
+      } else {
+        delegate?.chromeDidTapForward()
+      }
     case .collapsed, .editing, .attach:
       break
     }

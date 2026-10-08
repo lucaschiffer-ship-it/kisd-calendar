@@ -566,6 +566,20 @@ class EventStore {
 
   /// Deletes every scrape-derived event (and its overrides), then re-imports
   /// from the cached scrape. Manual events are untouched.
+  /// Account switch: drops every collection, event and override (including
+  /// hand-made ones — they belong to the old account). The mirror sync then
+  /// empties the iOS "KISD" calendar, which deletes anything it can't map.
+  Future<void> resetForAccountSwitch() async {
+    await ensureLoaded();
+    collections.clear();
+    events.clear();
+    overrides.clear();
+    _seedEventsCollection();
+    await _persist();
+    revision.value++;
+    await IosMirrorService.instance.syncNowIfPermitted();
+  }
+
   Future<void> resetManualChanges() async {
     await ensureLoaded();
     final scraped = events.where((e) => e.scrapeKey != null).toList();

@@ -4,7 +4,10 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
+import 'services/account_teardown.dart';
 import 'services/calendar_service.dart';
+import 'services/course_reminder_scheduler.dart';
+import 'services/notification_service.dart';
 import 'services/service_locator.dart';
 import 'services/theme_service.dart';
 import 'theme/app_theme.dart';
@@ -16,7 +19,10 @@ void main() async {
   // runtime, so the app makes no third-party connections carrying device data.
   GoogleFonts.config.allowRuntimeFetching = false;
   await ThemeService.instance.init();
+  await NotificationService.instance.init();
+  await CourseReminderScheduler.loadPrefs();
   await loginService.initialize();
+  await AccountTeardown.adoptExistingOwner();
   CalendarService.instance.performStartupCleanup().ignore();
   loginService.navigatorKey = navigatorKey;
   pagePrefetcher.start();

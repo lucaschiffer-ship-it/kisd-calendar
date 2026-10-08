@@ -33,10 +33,13 @@ anywhere in the chain.
 | Campus-ID username + password | **iOS Keychain** | Hardware-backed encryption; device-only (excluded from iCloud sync & backups) |
 | Session + MFA "trust this device" cookies | **iOS Keychain** | Enables skipping the OTP for ~2 weeks; revocable in the TH MFA portal |
 | Confirmed sender email | **iOS Keychain** | |
+| Data owner (Campus ID the local data belongs to) | **iOS Keychain** | Lets a login with a different Campus ID wipe the previous account's data first |
 | Courses, favourites, theme | Local app storage | No personal data beyond course choices |
 | TOTP / 2FA secret | ❌ **never stored** | The user types each one-time code |
 
 This is the same storage mechanism Apple Passwords uses. Signing out wipes all of it.
+
+**Account switch (added 8 October 2026):** sign-out and a *successful* login with a different Campus ID share one teardown (`lib/services/account_teardown.dart`). It also clears the previous account's courses, local calendar store and its iOS "KISD" calendar mirror, pending reminders, and mail state. Before this, a rejected-login → different-Campus-ID path left the previous account's courses visible for up to 24 h. The comparison runs only after authentication succeeds, so a mistyped Campus ID can never delete data. Public data (KISD events, Mensa) and device settings are kept.
 
 ### Network connections — the complete list
 

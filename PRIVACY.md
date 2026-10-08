@@ -1,6 +1,6 @@
 # Privacy Notice — KISD Calendar
 
-*Last updated: 14 July 2026. The German version below is identical in substance.*
+*Last updated: 8 October 2026. The German version below is identical in substance.*
 
 KISD Calendar is an unofficial student app for KISD / TH Köln. It is not
 affiliated with, or endorsed by, TH Köln. Everything the app does happens
@@ -15,11 +15,14 @@ service.
 | Campus-ID username & password | iOS Keychain (hardware-encrypted, this device only — excluded from iCloud sync and backups) | To log you into spaces.kisd.de via TH Köln SSO and into your TH Köln mailbox |
 | Login/session cookies (incl. the optional "trust this device" MFA cookie) | iOS Keychain | So you don't have to enter your password and one-time code on every launch |
 | Your confirmed sender email address | iOS Keychain | So sent mail carries your real address |
+| Which Campus ID the data on the device belongs to | iOS Keychain | So signing in with a different Campus ID clears the previous account's data |
 | Course list, schedule, favourites, theme settings | Local app storage on your device | App functionality |
 
 Your two-factor (TOTP) secret is **never** stored — you enter the one-time
-code yourself when TH Köln asks for it. Signing out deletes the stored
-credentials, cookies, and email address.
+code yourself when TH Köln asks for it. Signing out — or signing in with a
+different Campus ID — deletes the stored credentials, cookies and email
+address, plus that account's courses, calendar entries (including the "KISD"
+calendar in Apple Calendar), pending reminders and cached mail.
 
 ## Where your credentials are sent
 
@@ -74,8 +77,9 @@ keinerlei Daten über dich oder deine Nutzung — keine Analytics, kein
 Crash-Reporting, keine Telemetrie.
 
 **Gespeichert werden** (ausschließlich lokal): Campus-ID-Benutzername und
--Passwort sowie Sitzungs-Cookies im iOS-Schlüsselbund (hardware-
-verschlüsselt, vom iCloud-Sync und von Backups ausgeschlossen), außerdem
+-Passwort, Sitzungs-Cookies, die bestätigte Absenderadresse und die Angabe,
+zu welcher Campus-ID die Daten auf dem Gerät gehören, im iOS-Schlüsselbund
+(hardware-verschlüsselt, vom iCloud-Sync und von Backups ausgeschlossen), außerdem
 Kursliste, Favoriten und Einstellungen im lokalen App-Speicher. Das
 TOTP-Geheimnis für die Zwei-Faktor-Authentifizierung wird **nie**
 gespeichert — den Einmalcode gibst du selbst ein.
@@ -90,8 +94,10 @@ Beim Login aktiviert die App die TH-Köln-Option „Diesem Gerät vertrauen"
 (Gerätename „KISD App"), damit der Einmalcode ca. zwei Wochen lang nicht
 erneut nötig ist; das lässt sich im MFA-Portal der TH Köln jederzeit
 widerrufen. Der Mensaplan wird ohne Personenbezug von `openmensa.org`
-geladen. Beim Abmelden werden Zugangsdaten, Cookies und E-Mail-Adresse
-gelöscht.
+geladen. Beim Abmelden – oder bei der Anmeldung mit einer anderen
+Campus-ID – werden Zugangsdaten, Cookies und E-Mail-Adresse gelöscht, ebenso
+die Kurse, Kalendereinträge (auch der Kalender „KISD" in Apple Kalender),
+anstehende Erinnerungen und zwischengespeicherte E-Mails dieses Kontos.
 
 Da der Entwickler keine personenbezogenen Daten verarbeitet, ist er für
 diese Daten weder Verantwortlicher noch Auftragsverarbeiter im Sinne der

@@ -914,6 +914,40 @@ class _ClampTopBouncingPhysics extends BouncingScrollPhysics {
   }
 }
 
+/// Opens a course's expanded detail without a card to grow from (e.g. from a
+/// notification tap) — the overlay expands out of a card-sized rect centred
+/// on screen.
+Future<void> openCourseDetail(
+  BuildContext context,
+  CourseShell shell, {
+  void Function(bool isFavourite)? onFavouriteChanged,
+  void Function(CourseShell)? onShellUpdated,
+}) {
+  final size = MediaQuery.sizeOf(context);
+  final originRect = Rect.fromCenter(
+    center: size.center(Offset.zero),
+    width: size.width - 2 * AppSpacing.screenPadding,
+    height: 120,
+  );
+  return Navigator.of(context).push(PageRouteBuilder<void>(
+    opaque: false,
+    barrierDismissible: false,
+    barrierColor: Colors.transparent,
+    barrierLabel: 'expanded card',
+    transitionDuration: const Duration(milliseconds: 320),
+    reverseTransitionDuration: Duration.zero,
+    transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+        child,
+    pageBuilder: (ctx, animation, secondaryAnimation) => _ExpandedCardOverlay(
+      shell: shell,
+      originRect: originRect,
+      animation: animation,
+      onFavouriteChanged: onFavouriteChanged,
+      onShellUpdated: onShellUpdated,
+    ),
+  ));
+}
+
 class _ExpandedCardOverlay extends StatefulWidget {
   const _ExpandedCardOverlay({
     required this.shell,

@@ -71,6 +71,15 @@ class IosMirrorService {
     _sync().ignore();
   }
 
+  /// Like [syncNow], but never shows the calendar-access prompt — for
+  /// background clean-up (account switch), where a prompt over the login
+  /// screen would make no sense. Without access there is nothing to clean.
+  Future<void> syncNowIfPermitted() async {
+    if (_isSimulator) return;
+    final r = await _plugin.hasPermissions();
+    if (r.isSuccess && r.data == true) syncNow();
+  }
+
   // ── Sync ────────────────────────────────────────────────────────────────────
 
   Future<void> _sync() async {

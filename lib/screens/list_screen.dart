@@ -10,7 +10,10 @@ import '../config/app_theme.dart' as tokens;
 import '../models/course_shell.dart';
 import '../services/cache_service.dart';
 import '../services/calendar_service.dart';
+import '../services/account_teardown.dart';
+import '../services/course_reminder_scheduler.dart';
 import '../services/course_updates.dart';
+import '../services/notification_service.dart';
 import '../services/page_actions.dart';
 import '../services/semester.dart';
 import '../services/service_locator.dart';
@@ -120,6 +123,10 @@ class _ListScreenState extends State<ListScreen>
   final _now = ValueNotifier<DateTime>(DateTime.now());
   late final Timer _clock;
   Timer? _calendarWriteTimer;
+  Timer? _reminderSyncTimer;
+  bool _reminderPromptOpen = false;
+  // Course a notification tap asked to open; held until _shells has it.
+  String? _pendingOpenId;
 
   final _pageCtrl = PageController();
   int _pageIndex = 0;
@@ -141,6 +148,7 @@ class _ListScreenState extends State<ListScreen>
 
   void _rebuildFilteredLists() {
     _updateAnchorDay();
+    _scheduleReminderSync();
     _myCourses  = _shells.where((s) => s.isMyCourse).toList();
     _favourites = _shells.where((s) => s.isFavourite).toList();
     // _shells has cached/enrolled courses first (merge order from the
@@ -206,6 +214,10 @@ class _ListScreenState extends State<ListScreen>
     CalendarService.instance.writeRevision.addListener(_loadTodayEvents);
     CourseUpdates.instance.revision.addListener(_reloadFromCache);
     Semester.overrideId.addListener(_onSemesterChanged);
+    CourseReminderScheduler.enabled.addListener(_scheduleReminderSync);
+    AccountTeardown.wiped.addListener(_onAccountWiped);
+    NotificationService.instance
+        .registerTapHandler('course', _openCourseFromNotification);
     _revealSnap = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 180));
     _revealSnap.addListener(() {
@@ -283,6 +295,7 @@ class _ListScreenState extends State<ListScreen>
       print('[list] cache load: $e');
     }
     print('[list] cache loaded: ${_shells.length} shells');
+    _tryOpenPending();
     print('[list] loaded ${_shells.length}, favourited=${_shells.where((s) => s.isFavourite).length}');
 
     if (_shells.isEmpty) {
@@ -323,6 +336,19 @@ class _ListScreenState extends State<ListScreen>
       _rebuildFilteredLists();
     });
     await _scrape();
+  }
+
+  // A different account just logged in and the device was cleared. _shells
+  // still holds the old account's courses — drop them (or the next heart tap
+  // writes them back to the cache) and fetch the new account's.
+  Future<void> _onAccountWiped() async {
+    if (!mounted) return;
+    setState(() {
+      _shells = [];
+      _rebuildFilteredLists();
+    });
+    // A scrape already running belongs to the new session and repopulates.
+    if (!_loading) await _scrape();
   }
 
   Future<void> _reloadFromCache() async {
@@ -460,6 +486,10 @@ class _ListScreenState extends State<ListScreen>
     CalendarService.instance.writeRevision.removeListener(_loadTodayEvents);
     CourseUpdates.instance.revision.removeListener(_reloadFromCache);
     Semester.overrideId.removeListener(_onSemesterChanged);
+    CourseReminderScheduler.enabled.removeListener(_scheduleReminderSync);
+    AccountTeardown.wiped.removeListener(_onAccountWiped);
+    NotificationService.instance.unregisterTapHandler('course');
+    _reminderSyncTimer?.cancel();
     _revealSnap.dispose();
     _searchReveal.dispose();
     _now.dispose();
@@ -550,6 +580,71 @@ class _ListScreenState extends State<ListScreen>
         print('[list] _onFavouriteChanged: calendar write error: $e');
       }
     });
+  }
+
+  // Every _shells change passes through _rebuildFilteredLists — app start,
+  // hearts, refreshes, semester switches — so reminders resync from here,
+  // debounced so a burst of rebuilds costs one sync.
+  void _scheduleReminderSync() {
+    _reminderSyncTimer?.cancel();
+    _reminderSyncTimer = Timer(const Duration(seconds: 1), () {
+      if (CourseReminderScheduler.enabled.value == null &&
+          !_reminderPromptOpen &&
+          CourseReminderScheduler.hasUpcoming(_shells)) {
+        _askFirstMeetingReminders();
+      }
+      CourseReminderScheduler.syncAll(_shells).ignore();
+    });
+  }
+
+  // Asked once, the first time there is something to remind about. Either
+  // answer sets the pref, whose listener resyncs; Settings → Notifications
+  // changes it later.
+  Future<void> _askFirstMeetingReminders() async {
+    _reminderPromptOpen = true;
+    final yes = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (ctx) => CupertinoAlertDialog(
+        title: const Text('Get notified for first meetings?'),
+        content: const Text('Reminders a week, a day and an hour before '
+            'your liked courses start.'),
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Not now'),
+          ),
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Notify me'),
+          ),
+        ],
+      ),
+    );
+    _reminderPromptOpen = false;
+    await CourseReminderScheduler.setEnabled(yes ?? false);
+  }
+
+  void _openCourseFromNotification(String id) {
+    _pendingOpenId = id;
+    // May fire during initState (cold start from a tap) — wait for a frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _tryOpenPending());
+  }
+
+  // Routed through this screen so the overlay's heart/edit callbacks keep
+  // _shells — the cache's source of truth on every heart tap — in sync.
+  void _tryOpenPending() {
+    final id = _pendingOpenId;
+    if (id == null || !mounted) return;
+    final shell = _shells.where((s) => s.id == id).firstOrNull;
+    if (shell == null) return; // retried once the cache has loaded
+    _pendingOpenId = null;
+    openCourseDetail(
+      context,
+      shell,
+      onFavouriteChanged: (isFav) => _onFavouriteChanged(shell, isFav),
+      onShellUpdated: _onShellUpdated,
+    );
   }
 
   void _onPageChanged(int index) {

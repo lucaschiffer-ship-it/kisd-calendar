@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/account_teardown.dart';
 import '../services/service_locator.dart';
 import '../theme/tokens.dart';
 
@@ -34,6 +35,9 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
     final success = await loginService.login(username, password);
+    // Only a login that actually authenticated can switch accounts — a typo
+    // in the Campus ID fails above and leaves the data untouched.
+    if (success) await AccountTeardown.onLoginSucceeded(username);
     if (mounted && !success) {
       setState(() {
         _loading = false;

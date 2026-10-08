@@ -25,6 +25,14 @@ class PagePrefetcher {
     _onLoginChanged();
   }
 
+  /// Re-arms the one-shot prefetch so the next account's favourites are
+  /// warmed too.
+  void resetForAccountSwitch() {
+    _started = false;
+    loginService.removeListener(_onLoginChanged);
+    loginService.addListener(_onLoginChanged);
+  }
+
   void _onLoginChanged() {
     if (_started || !loginService.isLoggedIn) return;
     _started = true;

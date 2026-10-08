@@ -45,7 +45,8 @@ class PrivacyScreen extends StatelessWidget {
           _card(s, [
             _body(s,
                 'Your Campus-ID username and password, your login/session '
-                'cookies and your confirmed sender email address are kept in '
+                'cookies, your confirmed sender email address and which '
+                'Campus ID the data on this device belongs to are kept in '
                 'the iOS Keychain — the same hardware-encrypted store Apple '
                 'Passwords uses, restricted to this device and excluded from '
                 'iCloud sync and backups.'),
@@ -57,8 +58,10 @@ class PrivacyScreen extends StatelessWidget {
             _body(s,
                 'Your two-factor (TOTP) secret is never stored — you enter '
                 'each one-time code yourself when TH Köln asks for it. '
-                'Signing out deletes the stored credentials, cookies and '
-                'email address.'),
+                'Signing out — or signing in with a different Campus ID — '
+                'deletes the stored credentials, cookies and email address, '
+                'plus that account\'s courses, calendar entries, pending '
+                'reminders and cached mail.'),
           ]),
 
           _section(s, 'WHERE YOUR CREDENTIALS ARE SENT'),
@@ -126,7 +129,8 @@ class PrivacyScreen extends StatelessWidget {
                 'Alles passiert lokal auf deinem Gerät: Der Entwickler '
                 'betreibt keinen Server und erhält keinerlei Daten — keine '
                 'Analytics, kein Crash-Reporting, keine Telemetrie.\n\n'
-                'Campus-ID und Sitzungs-Cookies liegen im iOS-Schlüsselbund '
+                'Campus-ID, Sitzungs-Cookies und die Zuordnung der lokalen '
+                'Daten zur Campus-ID liegen im iOS-Schlüsselbund '
                 '(hardware-verschlüsselt, vom iCloud-Sync und von Backups '
                 'ausgeschlossen). Das TOTP-Geheimnis wird nie gespeichert. '
                 'Übertragen werden die Zugangsdaten ausschließlich '
@@ -135,7 +139,10 @@ class PrivacyScreen extends StatelessWidget {
                 'Beim Login aktiviert die App die Option „Diesem Gerät '
                 'vertrauen" (Gerätename „KISD App"); das lässt sich im '
                 'MFA-Portal der TH Köln jederzeit widerrufen. Beim Abmelden '
-                'werden Zugangsdaten, Cookies und E-Mail-Adresse gelöscht.\n\n'
+                '– oder bei der Anmeldung mit einer anderen Campus-ID – '
+                'werden Zugangsdaten, Cookies und E-Mail-Adresse gelöscht, '
+                'ebenso Kurse, Kalendereinträge, Erinnerungen und '
+                'zwischengespeicherte E-Mails dieses Kontos.\n\n'
                 'Da der Entwickler keine personenbezogenen Daten '
                 'verarbeitet, ist er für diese Daten weder Verantwortlicher '
                 'noch Auftragsverarbeiter im Sinne der DSGVO.'),
@@ -145,7 +152,7 @@ class PrivacyScreen extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Text(
-              'Last updated: 16 July 2026',
+              'Last updated: 8 October 2026',
               style: AppTextStyles.bodySmall(color: s.textSecondary),
             ),
           ),

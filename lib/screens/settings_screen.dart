@@ -1,11 +1,15 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../models/app_event.dart';
+import '../services/account_teardown.dart';
 import '../services/cache_service.dart';
 import '../services/calendar_service.dart';
+import '../services/course_reminder_scheduler.dart';
 import '../services/event_store.dart';
+import '../services/notification_service.dart';
 import '../services/semester.dart';
 import '../services/service_locator.dart';
 import 'privacy_screen.dart';
@@ -41,12 +45,9 @@ class SettingsScreen extends StatelessWidget {
     if (confirmed != true) return;
 
     await CookieManager.instance().deleteAllCookies();
-    await CacheService().clearCourses();
-    // Mail belongs in this teardown list too: its service is a singleton that
-    // nothing disposes, so without this the inbox and the tab badge keep
-    // showing the signed-out account until the stale IMAP socket happens to
-    // drop.
-    await mailService.resetForAccountSwitch();
+    // Everything that belongs to the account lives in one list, shared with
+    // the switch-at-login path.
+    await AccountTeardown.run();
     await loginService.logout();
 
     navigatorKey.currentState?.popUntil((route) => route.isFirst);
@@ -113,6 +114,15 @@ class SettingsScreen extends StatelessWidget {
               label: 'Calendar',
               onTap: () => _push(context, const _CalendarPage()),
             ),
+            ValueListenableBuilder<bool?>(
+              valueListenable: CourseReminderScheduler.enabled,
+              builder: (context, on, _) => _NavRow(
+                icon: CupertinoIcons.bell,
+                label: 'Notifications',
+                value: on == true ? 'On' : 'Off',
+                onTap: () => _push(context, const _NotificationsPage()),
+              ),
+            ),
           ],
         ),
 
@@ -154,6 +164,23 @@ class SettingsScreen extends StatelessWidget {
       ],
     );
   }
+}
+
+// Debug only. Uses the top of the course range, so the next reminder sync
+// clears it if it hasn't fired yet.
+Future<void> _scheduleTestNotification() async {
+  final svc = NotificationService.instance;
+  await svc.requestPermission();
+  // Point the payload at a real liked course so the tap exercises routing.
+  final courses = await scraperService.loadCached();
+  final liked = courses.where((c) => c.isFavourite).firstOrNull;
+  await svc.schedule(
+    NotificationService.courseIdMax,
+    liked?.title ?? 'Test',
+    'Test notification',
+    DateTime.now().add(const Duration(seconds: 10)),
+    NotificationPayload(type: 'course', id: liked?.id ?? 'test'),
+  );
 }
 
 // ─── Subpages ─────────────────────────────────────────────────────────────────
@@ -321,6 +348,90 @@ class _CalendarPage extends StatelessWidget {
           'The iOS calendar “KISD” is a read-only copy of this app — '
           'changes made in Apple Calendar are overwritten on the next sync.',
         ),
+        const SizedBox(height: 32),
+      ],
+    );
+  }
+}
+
+class _NotificationsPage extends StatefulWidget {
+  const _NotificationsPage();
+
+  @override
+  State<_NotificationsPage> createState() => _NotificationsPageState();
+}
+
+class _NotificationsPageState extends State<_NotificationsPage> {
+  // Null until checked. Re-checked after every toggle, since turning it on
+  // may have just shown (or been refused by) the iOS prompt.
+  bool? _systemAllowed;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkSystem();
+  }
+
+  Future<void> _checkSystem() async {
+    final ok = await NotificationService.instance.permissionGranted();
+    if (mounted) setState(() => _systemAllowed = ok);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _SettingsPage(
+      title: 'Notifications',
+      builder: (context, s) => [
+        const _SectionHeader('COURSES'),
+        _Padded(
+          ValueListenableBuilder<bool?>(
+            valueListenable: CourseReminderScheduler.enabled,
+            builder: (context, on, _) => _Group(
+              inset: false,
+              children: [
+                SwitchListTile(
+                  title: Text(
+                    'First meeting reminders',
+                    style: AppTextStyles.bodyLarge(
+                      color: s.textPrimary,
+                    ).copyWith(fontWeight: FontWeight.w500),
+                  ),
+                  subtitle: Text(
+                    'A week, a day and an hour before liked courses start',
+                    style: AppTextStyles.bodySmall(color: s.textSecondary),
+                  ),
+                  value: on == true,
+                  onChanged: (v) async {
+                    await CourseReminderScheduler.setEnabled(v);
+                    await _checkSystem();
+                  },
+                  activeThumbColor: s.accent,
+                ),
+              ],
+            ),
+          ),
+        ),
+        ValueListenableBuilder<bool?>(
+          valueListenable: CourseReminderScheduler.enabled,
+          builder: (context, on, _) => on == true && _systemAllowed == false
+              ? const _Caption(
+                  'Notifications are turned off for KISD Calendar in iOS '
+                  'Settings, so reminders won\'t appear.',
+                )
+              : const SizedBox.shrink(),
+        ),
+        if (kDebugMode) ...[
+          const SizedBox(height: 24),
+          _Group(
+            children: [
+              _NavRow(
+                icon: CupertinoIcons.bell,
+                label: 'Test notification (10 s)',
+                onTap: _scheduleTestNotification,
+              ),
+            ],
+          ),
+        ],
         const SizedBox(height: 32),
       ],
     );

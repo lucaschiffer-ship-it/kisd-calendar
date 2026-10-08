@@ -140,6 +140,15 @@ class CacheService {
     await prefs.remove(_keyUpdated);
   }
 
+  /// Account switch: the courses plus the stamps that would otherwise make the
+  /// next account's ListScreen trust a fresh-looking but foreign cache.
+  Future<void> clearAccountData() async {
+    await clearCourses();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keyScrapeTime);
+    await prefs.remove(_keySemester);
+  }
+
   // ── KISD Events cache ────────────────────────────────────────────────────
 
   static const _keyEventsV2        = 'kisd_events_v2';

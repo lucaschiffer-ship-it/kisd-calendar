@@ -12,6 +12,7 @@ import '../services/cache_service.dart';
 import '../services/calendar_service.dart';
 import '../services/course_updates.dart';
 import '../services/page_actions.dart';
+import '../services/semester.dart';
 import '../services/service_locator.dart';
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
@@ -19,6 +20,7 @@ import '../widgets/course_shell_card.dart';
 import '../widgets/morphing_glass_header.dart';
 import '../widgets/page_floating_actions.dart';
 import 'course_shell_edit_screen.dart';
+import 'settings_screen.dart';
 
 // ── Abbreviations ─────────────────────────────────────────────────────────────
 const _kWeekdays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
@@ -31,6 +33,9 @@ const double _kDateRowH   = 52.0;  // date/time row + vertical padding
 // Tab text is 18px; below it sit 6px gap + 2px underline + 8px padding = 16px
 // to the header bottom. Top padding matches that 16px so the tabs look evenly
 // spaced between the search bar and the header edge (underline ignored).
+// "Viewing <semester>" pill — only present while a manual semester override
+// is in force, so it is added to the header height dynamically.
+const double _kHintRowH   = 28.0;
 const double _kFilterBarH = 50.0;  // 16 + tabs (26) + 8
 const double _kEventRowH  = 51.0;  // per calendar event
 const double _kSearchH    = 36.0;  // search bar
@@ -135,6 +140,7 @@ class _ListScreenState extends State<ListScreen>
   double _snapFrom = 0.0, _snapTo = 0.0;
 
   void _rebuildFilteredLists() {
+    _updateAnchorDay();
     _myCourses  = _shells.where((s) => s.isMyCourse).toList();
     _favourites = _shells.where((s) => s.isFavourite).toList();
     // _shells has cached/enrolled courses first (merge order from the
@@ -149,8 +155,27 @@ class _ListScreenState extends State<ListScreen>
   // Personal calendars never show here.
   static const _kHeaderCalendars = {'KISD', 'KISD Events'};
 
+  // Which day the header strip shows. Today, unless the user is viewing
+  // another semester — then the first day its courses meet, so the strip isn't
+  // permanently empty. Recomputed whenever the shells or the override change.
+  DateTime _anchorDay = DateTime.now();
+
+  void _updateAnchorDay() {
+    final next = Semester.isOverridden
+        ? (firstCourseDate(_shells) ?? DateTime.now())
+        : DateTime.now();
+    if (_anchorDay.year == next.year &&
+        _anchorDay.month == next.month &&
+        _anchorDay.day == next.day) {
+      return;
+    }
+    _anchorDay = next;
+    _loadTodayEvents();
+  }
+
   Future<void> _loadTodayEvents() async {
-    final events = await CalendarService.instance.getTodayEvents();
+    final events =
+        await CalendarService.instance.getEventsForDay(_anchorDay);
     if (!mounted) return;
     setState(() {
       _todayEvents = events
@@ -180,6 +205,7 @@ class _ListScreenState extends State<ListScreen>
     });
     CalendarService.instance.writeRevision.addListener(_loadTodayEvents);
     CourseUpdates.instance.revision.addListener(_reloadFromCache);
+    Semester.overrideId.addListener(_onSemesterChanged);
     _revealSnap = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 180));
     _revealSnap.addListener(() {
@@ -230,6 +256,21 @@ class _ListScreenState extends State<ListScreen>
       await cache.markCurrentVersion();
     }
 
+    // The cache belongs to one semester. When it no longer matches, drop the
+    // scraped half so the empty-cache path below pulls the new semester in;
+    // the user's manual courses survive.
+    final cachedSemester = await cache.cachedSemester();
+    final semesterChanged = !isCachedSemesterUsable(
+      cachedSemester,
+      DateTime.now(),
+      override: Semester.overrideId.value,
+    );
+    if (semesterChanged) {
+      print('[list] cache semester ${cachedSemester ?? 'unset'} != '
+          '${Semester.activeId} — clearing scraped courses');
+      await cache.clearScrapedCourses();
+    }
+
     try {
       final cached = await scraperService.loadCached();
       if (cached.isNotEmpty && mounted) {
@@ -249,8 +290,11 @@ class _ListScreenState extends State<ListScreen>
       return;
     }
 
+    // A semester switch is always stale, even with manual courses left in the
+    // cache keeping `_shells` non-empty and a fresh scrape timestamp.
     final lastScrape = await cache.lastScrapeTimestamp();
-    final stale = lastScrape == null ||
+    final stale = semesterChanged ||
+        lastScrape == null ||
         DateTime.now().difference(lastScrape) > const Duration(hours: 24);
     if (stale) _scrapeBackground();
     _maybeScrapeEvents();
@@ -260,6 +304,27 @@ class _ListScreenState extends State<ListScreen>
   // browser attaching a link or creating a course. Pull the change into
   // `_shells`, or the next heart tap would rewrite the whole array from a
   // stale list and silently undo it.
+  // The user picked another semester in Settings. Drop the old semester's
+  // scraped courses from both the cache and `_shells` before scraping: a
+  // leftover in `_shells` would be merged straight back in by `_scrape`'s
+  // `_mergeWithExisting`, and the next heart tap would write it to the cache.
+  // Bumped on every semester pick, so a slower handler can tell it has been
+  // superseded (two quick taps in Settings) and bow out instead of scraping
+  // and writing `_shells` in parallel with the newer one.
+  int _semesterGeneration = 0;
+
+  Future<void> _onSemesterChanged() async {
+    final gen = ++_semesterGeneration;
+    print('[list] semester → ${Semester.activeId}');
+    await CacheService().clearScrapedCourses();
+    if (!mounted || gen != _semesterGeneration) return;
+    setState(() {
+      _shells = _shells.where((s) => s.isManual).toList();
+      _rebuildFilteredLists();
+    });
+    await _scrape();
+  }
+
   Future<void> _reloadFromCache() async {
     try {
       final cached = await scraperService.loadCached();
@@ -394,6 +459,7 @@ class _ListScreenState extends State<ListScreen>
   void dispose() {
     CalendarService.instance.writeRevision.removeListener(_loadTodayEvents);
     CourseUpdates.instance.revision.removeListener(_reloadFromCache);
+    Semester.overrideId.removeListener(_onSemesterChanged);
     _revealSnap.dispose();
     _searchReveal.dispose();
     _now.dispose();
@@ -580,7 +646,7 @@ class _ListScreenState extends State<ListScreen>
     required Widget searchBar,
     required Widget filterBar,
   }) {
-    final topH = statusH + _kTitleRowH + _kDateRowH;
+    final topH = statusH + _kTitleRowH + _kDateRowH + _hintH;
 
     final body = SizedBox(
       height: currentH,
@@ -657,6 +723,45 @@ class _ListScreenState extends State<ListScreen>
 
   // ── Header subtrees — built once per setState, reused across scroll frames ─
 
+  // Reserved height of the "Viewing <semester>" pill: 0 unless the user has
+  // manually switched away from the automatic semester.
+  double get _hintH => Semester.isOverridden ? _kHintRowH : 0.0;
+
+  // Shown only while a manual override differs from the automatic semester —
+  // picking the current semester explicitly looks like no override at all.
+  Widget _buildSemesterHint() {
+    return SizedBox(
+      height: _kHintRowH,
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Padding(
+          padding: const EdgeInsets.only(left: 20, right: 20, bottom: 6),
+          child: GestureDetector(
+            onTap: () => Navigator.of(context).push(
+              CupertinoPageRoute(builder: (_) => const SettingsScreen()),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(CupertinoIcons.calendar,
+                    size: 13, color: AppColors.accent),
+                const SizedBox(width: 5),
+                Text(
+                  'Viewing ${semesterLabel(Semester.activeId)}',
+                  style: AppTextStyle.label
+                      .copyWith(fontSize: 13, color: AppColors.accent),
+                ),
+                const SizedBox(width: 2),
+                Icon(CupertinoIcons.chevron_right,
+                    size: 11, color: AppColors.accent.withValues(alpha: 0.7)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildTopSection(
       double statusH, Color titleColor, Color secondaryColor) {
     return Column(
@@ -701,6 +806,7 @@ class _ListScreenState extends State<ListScreen>
             ),
           ),
         ),
+        if (Semester.isOverridden) _buildSemesterHint(),
       ],
     );
   }
@@ -886,6 +992,7 @@ class _ListScreenState extends State<ListScreen>
       animation: Listenable.merge([
         ThemeService.instance.currentColor,
         ThemeService.instance.glassEnabled,
+        Semester.overrideId,
       ]),
       builder: (context, _) {
         final titleColor    = tokens.AppThemeTokens.titleColor;
@@ -895,7 +1002,8 @@ class _ListScreenState extends State<ListScreen>
         final view    = View.of(context);
         final statusH = view.viewPadding.top / view.devicePixelRatio;
 
-        final minH  = statusH + _kTitleRowH + _kDateRowH + _kFilterBarH;
+        final minH =
+            statusH + _kTitleRowH + _kDateRowH + _hintH + _kFilterBarH;
         final range = _collapseRange(_todayEvents.length);
         final maxH  = minH + range;
 

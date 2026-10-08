@@ -6,6 +6,7 @@ import '../models/app_event.dart';
 import '../services/cache_service.dart';
 import '../services/calendar_service.dart';
 import '../services/event_store.dart';
+import '../services/semester.dart';
 import '../services/service_locator.dart';
 import 'privacy_screen.dart';
 import '../services/theme_service.dart';
@@ -38,6 +39,11 @@ class SettingsScreen extends StatelessWidget {
 
     await CookieManager.instance().deleteAllCookies();
     await CacheService().clearCourses();
+    // Mail belongs in this teardown list too: its service is a singleton that
+    // nothing disposes, so without this the inbox and the tab badge keep
+    // showing the signed-out account until the stale IMAP socket happens to
+    // drop.
+    await mailService.resetForAccountSwitch();
     await loginService.logout();
 
     navigatorKey.currentState?.popUntil((route) => route.isFirst);
@@ -66,6 +72,32 @@ class SettingsScreen extends StatelessWidget {
       ),
       body: ListView(
         children: [
+          // ── Semester ─────────────────────────────────────────────────────
+          // First section: the only setting that changes *which* data the app
+          // shows rather than how it looks.
+          const SizedBox(height: 24),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Text(
+              'SEMESTER',
+              style: AppTextStyles.sectionLabel(color: s.textSecondary),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: _SemesterSection(),
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Text(
+              'Courses, list and calendar all follow this semester. '
+              'Switching re-scrapes Spaces.',
+              style: AppTextStyles.caption(color: s.textSecondary),
+            ),
+          ),
+
           // ── Colour ───────────────────────────────────────────────────────
           const SizedBox(height: 24),
           Padding(
@@ -307,6 +339,86 @@ class SettingsScreen extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ─── Semester picker ──────────────────────────────────────────────────────────
+
+class _SemesterSection extends StatefulWidget {
+  const _SemesterSection();
+
+  @override
+  State<_SemesterSection> createState() => _SemesterSectionState();
+}
+
+class _SemesterSectionState extends State<_SemesterSection> {
+  // Semesters the course-selection filter last advertised. Empty until the
+  // cached list lands (and if it never does — `semesterOptions` falls back to
+  // the automatic semester plus the four before it), so the picker renders
+  // immediately and never waits on the network.
+  List<String> _available = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAvailable();
+  }
+
+  Future<void> _loadAvailable() async {
+    final ids = await CacheService().availableSemesters();
+    if (!mounted || ids.isEmpty) return;
+    setState(() => _available = ids);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = AppColorScheme.current;
+    return ValueListenableBuilder<String?>(
+      valueListenable: Semester.overrideId,
+      builder: (context, override, _) {
+        final automatic = Semester.automaticId;
+        final options = semesterOptions(
+          parsed: _available,
+          automatic: automatic,
+          override: override,
+        );
+        final rows = <Widget>[
+          _ThemeOption(
+            label: 'Automatic (${semesterLabel(automatic)})',
+            subtitle: 'Follows the current date',
+            selected: override == null,
+            onTap: () => ThemeService.instance.setSemesterOverride(null),
+          ),
+          for (final id in options)
+            _ThemeOption(
+              label: semesterLabel(id),
+              subtitle: id,
+              selected: override == id,
+              onTap: () => ThemeService.instance.setSemesterOverride(id),
+            ),
+        ];
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(AppRadius.input),
+          child: Container(
+            color: s.surfaceElevated,
+            child: Column(
+              children: [
+                for (var i = 0; i < rows.length; i++) ...[
+                  if (i > 0)
+                    Divider(
+                      height: 1,
+                      thickness: 0.5,
+                      indent: 16,
+                      color: s.divider,
+                    ),
+                  rows[i],
+                ],
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

@@ -7,6 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'cache_service.dart';
+import 'scraper_service.dart';
+import 'semester.dart';
 import 'spaces_theme.dart';
 
 // Flow diagnostics (URLs, cookie names, form structure) must never reach the
@@ -183,6 +186,7 @@ class LoginService extends ChangeNotifier {
       await _handleMfaPage(ctrl, s);
     } else if (s.contains('spaces.kisd.de/course-selection')) {
       await Future.delayed(const Duration(seconds: 2));
+      await _probeSemesterMarker(ctrl);
       _log('[login] login complete');
       await _finish(true);
     } else if (s.contains('spaces.kisd.de') && _samlClicked && !_courseSelectionVisited) {
@@ -815,7 +819,7 @@ class LoginService extends ChangeNotifier {
     checkView = HeadlessInAppWebView(
       initialUrlRequest: URLRequest(
         url: WebUri(
-          'https://spaces.kisd.de/course-selection/?semester=2026-1&mycourses=on',
+          ScraperService.myCoursesUrl(Semester.activeId),
         ),
       ),
       initialUserScripts: UnmodifiableListView(spacesThemeScripts()),
@@ -851,6 +855,9 @@ class LoginService extends ChangeNotifier {
             _log('[login] session check body classes: ${m['cls']}');
           } catch (_) {}
           isValid = loggedIn;
+          // Cheapest place to notice Spaces flipping the semester before the
+          // calendar does — this page is loaded on every launch anyway.
+          await _probeSemesterMarker(ctrl);
         }
         checkView?.dispose();
         checkView = null;
@@ -874,6 +881,32 @@ class LoginService extends ChangeNotifier {
         return false;
       },
     );
+  }
+
+  // Reads the course-selection filter form: the "(Current semester)" marker,
+  // which `Semester` only honours when it is exactly the next semester after
+  // the date-based one, and the full list of semesters the filter offers,
+  // which Settings' picker reads back from the cache. Best-effort — any
+  // failure here leaves the date-based id and the last known list in charge
+  // and must never surface.
+  Future<void> _probeSemesterMarker(InAppWebViewController ctrl) async {
+    try {
+      final result = await ctrl.callAsyncJavaScript(
+        functionBody: """
+          var sel = document.querySelector("select[name='semester']");
+          return sel ? sel.outerHTML : '';
+        """,
+      );
+      final html = result?.value?.toString();
+      final marker = parseCurrentSemesterMarker(html);
+      _log('[login] semester marker: ${marker ?? 'none'}');
+      Semester.noteMarker(marker);
+      final ids = parseSemesterIds(html);
+      _log('[login] semesters offered: ${ids.length}');
+      await CacheService().setAvailableSemesters(ids);
+    } catch (e) {
+      _log('[login] semester marker probe failed: $e');
+    }
   }
 
   Future<void> _saveCookies() async {

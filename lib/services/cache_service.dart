@@ -9,6 +9,8 @@ class CacheService {
   static const _keyUpdated    = 'kisd_courses_updated';
   static const _keyVersion    = 'kisd_courses_version';
   static const _keyScrapeTime = 'kisd_last_scrape';
+  static const _keySemester   = 'kisd_courses_semester';
+  static const _keySemesterList = 'kisd_semester_list';
 
   // Bump this whenever the scraper output format changes so that stale
   // cached data is automatically discarded on the next app launch.
@@ -36,6 +38,43 @@ class CacheService {
     if (raw == null) return [];
     final decoded = json.decode(raw) as List;
     return decoded.cast<Map<String, dynamic>>();
+  }
+
+  // Which semester the cached courses were scraped for. `null` for a cache
+  // written before the app resolved the semester at all — treated as stale.
+  Future<String?> cachedSemester() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_keySemester);
+  }
+
+  Future<void> setCachedSemester(String semester) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keySemester, semester);
+  }
+
+  // Every semester the course-selection filter last advertised. Cached so the
+  // Settings picker never waits on the network.
+  Future<List<String>> availableSemesters() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList(_keySemesterList) ?? const [];
+  }
+
+  Future<void> setAvailableSemesters(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_keySemesterList, ids);
+  }
+
+  // Drops everything that came from Spaces, keeping the user's own manual
+  // courses — used when the semester changes, where the scraped half is stale
+  // but hand-made courses are not.
+  Future<void> clearScrapedCourses() async {
+    final kept = (await loadCourses())
+        .where((c) => c['isManual'] == true)
+        .toList();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyCourses, json.encode(kept));
+    await prefs.remove(_keyUpdated);
   }
 
   Future<void> markScraped() async {

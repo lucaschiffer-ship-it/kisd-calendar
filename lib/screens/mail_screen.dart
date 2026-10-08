@@ -45,11 +45,12 @@ class _MailScreenState extends State<MailScreen>
     super.initState();
     widget.actions.handler = _onReload;
     mailService.addListener(_onUpdate);
-    if (!mailService.isConnected && !mailService.isConnecting) {
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => mailService.connect(),
-      );
-    }
+    // Unconditional: `connect()` guards on its own flags, and it now clears
+    // the previous account's state first. Gating here on `isConnected` meant a
+    // still-live session from the signed-out account was never replaced.
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => mailService.connect(),
+    );
   }
 
   @override

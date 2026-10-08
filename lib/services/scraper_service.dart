@@ -9,14 +9,19 @@ import '../models/kisd_event.dart';
 import '../models/one_off_event.dart';
 import 'cache_service.dart';
 import 'calendar_service.dart';
+import 'semester.dart';
 import 'service_locator.dart';
 import 'spaces_theme.dart';
 
 class ScraperService extends ChangeNotifier {
-  static const _myCoursesUrl =
-      'https://spaces.kisd.de/course-selection/?semester=2026-1&mycourses=on';
-  static const _allCoursesUrl =
-      'https://spaces.kisd.de/course-selection/?semester=2026-1';
+  // The semester is never hardcoded: every scrape resolves it through
+  // `Semester.activeId` (see services/semester.dart) and threads it in, so a
+  // rollover needs no release.
+  static const _courseSelectionUrl = 'https://spaces.kisd.de/course-selection/';
+  static String myCoursesUrl(String semester) =>
+      '$_courseSelectionUrl?semester=$semester&mycourses=on';
+  static String allCoursesUrl(String semester) =>
+      '$_courseSelectionUrl?semester=$semester';
   // `all_posts=1` is WordPress's own "All" view param — without it wp-admin
   // defaults to the "Mine" filter (only events authored by the logged-in
   // account), which collapsed the list to a single event. See [evt-recon]
@@ -271,6 +276,13 @@ class ScraperService extends ChangeNotifier {
     return raw.map(_fromJson).toList();
   }
 
+  // True when the user switched semester while a scrape was in flight. Its
+  // results belong to a semester nobody is looking at any more, so they must
+  // not reach the cache, the semester stamp or the calendar — otherwise a slow
+  // scrape can land on top of a newer one and leave the stamp disagreeing with
+  // the data next to it.
+  bool _semesterLeft(String semester) => Semester.activeId != semester;
+
   Future<void> saveToCache(List<CourseShell> shells) =>
       CacheService().saveCourses(shells.map(_toJson).toList());
 
@@ -280,9 +292,14 @@ class ScraperService extends ChangeNotifier {
     _error = null;
     notifyListeners();
 
+    // Resolved once per scrape so the whole run belongs to one semester.
+    final semester = Semester.activeId;
+    print('[scraper] my-courses semester: $semester');
+
     try {
       final scraped =
-          (await _scrapeOnePage(_myCoursesUrl, isMyCourse: true)).shells;
+          (await _scrapeOnePage(myCoursesUrl(semester), isMyCourse: true))
+              .shells;
 
       // Preserve isFavourite choices the user set manually — but only if the
       // course was already enrolled (isMyCourse: true in cache). If it was
@@ -388,7 +405,16 @@ class ScraperService extends ChangeNotifier {
           existing.map(_fromJson).where((s) => s.isManual).toList();
       final result = [...shells, ...manualShells];
 
+      if (_semesterLeft(semester)) {
+        print('[scraper] my-courses: semester left $semester → '
+            '${Semester.activeId}; discarding ${result.length} shells');
+        _isLoading = false;
+        notifyListeners();
+        return loadCached();
+      }
+
       await saveToCache(result);
+      await CacheService().setCachedSemester(semester);
       await CacheService().markScraped();
       CalendarService.instance.writeCourses(result).ignore();
 
@@ -407,6 +433,10 @@ class ScraperService extends ChangeNotifier {
   // Slow path: all courses. Merges with the cache, preserving isMyCourse /
   // isFavourite. Does not write the calendar or update the scrape timestamp.
   Future<List<CourseShell>> scrapeAllCourses() async {
+    final semester = Semester.activeId;
+    final baseUrl = allCoursesUrl(semester);
+    print('[scraper] all-courses semester: $semester');
+
     try {
       final existing = await CacheService().loadCourses();
       final cachedShells = existing.map(_fromJson).toList();
@@ -416,8 +446,7 @@ class ScraperService extends ChangeNotifier {
       const maxPages = 15;
       final newShells = <CourseShell>[];
       for (var page = 1; page <= maxPages; page++) {
-        final url =
-            page == 1 ? _allCoursesUrl : '$_allCoursesUrl&paged=$page';
+        final url = page == 1 ? baseUrl : '$baseUrl&paged=$page';
         final result = await _scrapeOnePage(
           url,
           isMyCourse: false,
@@ -447,7 +476,14 @@ class ScraperService extends ChangeNotifier {
               : s)
           .toList();
 
+      if (_semesterLeft(semester)) {
+        print('[scraper] all-courses: semester left $semester → '
+            '${Semester.activeId}; discarding');
+        return loadCached();
+      }
+
       await saveToCache(mergedWithFavs);
+      await CacheService().setCachedSemester(semester);
       return mergedWithFavs;
     } catch (e, st) {
       print('[scraper] scrapeAllCourses error: $e\n$st');

@@ -11,6 +11,7 @@ import '../screens/event_detail_screen.dart';
 import '../services/cache_service.dart';
 import '../services/calendar_service.dart';
 import '../services/page_actions.dart';
+import '../services/semester.dart';
 import '../services/service_locator.dart';
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
@@ -238,6 +239,8 @@ class _CalendarScreenState extends State<CalendarScreen>
     );
     _allDayCurved = CurvedAnimation(parent: _allDayAnim, curve: Curves.easeOut);
     CalendarService.instance.writeRevision.addListener(_onAllDayRevisionChanged);
+    Semester.overrideId.addListener(_onSemesterOverrideChanged);
+    _semesterAnchorPending = Semester.isOverridden;
     _swipeSnapAnim = AnimationController(vsync: this);
     _weekStripSnapAnim = AnimationController(vsync: this);
     _monthAnim = AnimationController(
@@ -252,6 +255,7 @@ class _CalendarScreenState extends State<CalendarScreen>
       _scrollToDefaultTime();
       // Pre-warm ±2 days so adjacent slots are always rendered before a swipe.
       _preloadRange(_kTodayPage);
+      unawaited(_tryAnchorSemester());
     });
   }
 
@@ -259,6 +263,7 @@ class _CalendarScreenState extends State<CalendarScreen>
   void dispose() {
     CalendarService.instance.writeRevision
         .removeListener(_onAllDayRevisionChanged);
+    Semester.overrideId.removeListener(_onSemesterOverrideChanged);
     _allDayCurved.dispose();
     _allDayAnim.dispose();
     _editController.dispose();
@@ -283,6 +288,43 @@ class _CalendarScreenState extends State<CalendarScreen>
     final day = _dayForMultiDayPage(_focusedMultiDayPage);
     _allDayLoadedFor = day;
     unawaited(_loadAllDay(day));
+    // A semester switch clears the cache before re-scraping, so the first
+    // anchor attempt usually finds no courses. This fires when the new
+    // semester's scrape has been written — retry then.
+    unawaited(_tryAnchorSemester());
+  }
+
+  // ── Semester anchoring ─────────────────────────────────────────────────────
+
+  // Set while the view still has to jump to the viewed semester's first course
+  // day. `_today` stays the real today throughout — only the focused day moves.
+  bool _semesterAnchorPending = false;
+
+  void _onSemesterOverrideChanged() {
+    if (Semester.isOverridden) {
+      _semesterAnchorPending = true;
+      unawaited(_tryAnchorSemester());
+    } else {
+      _semesterAnchorPending = false;
+      _goToToday();
+    }
+  }
+
+  Future<void> _tryAnchorSemester() async {
+    if (!_semesterAnchorPending || !mounted) return;
+    final shells = await scraperService.loadCached();
+    if (!mounted || !_semesterAnchorPending) return;
+    final date = firstCourseDate(shells);
+    if (date == null) {
+      // No date yet. Keep waiting only while the cache is still empty — once
+      // the semester's courses are in and simply carry no usable dates, stop
+      // re-reading the cache on every calendar write.
+      if (shells.any((s) => !s.isManual)) _semesterAnchorPending = false;
+      return;
+    }
+    _semesterAnchorPending = false;
+    if (date == _today) return;
+    _drillToDay(date);
   }
 
   /// Kicks off a reload when the focused day has moved. Called from build:

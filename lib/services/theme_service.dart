@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'semester.dart';
+
 class ThemeService {
   ThemeService._();
   static final ThemeService instance = ThemeService._();
@@ -9,6 +11,7 @@ class ThemeService {
   static const _glassKey         = 'kisd_glass';
   static const _roundedBarsKey   = 'kisd_rounded_bars';
   static const _showKisdEventsKey = 'show_kisd_events_v2';
+  static const _semesterKey      = 'kisd_semester_override';
 
   // Accepts 'light' or 'dark' only.
   // A persisted 'pastel' value migrates to 'dark' on first read.
@@ -26,6 +29,24 @@ class ThemeService {
     glassEnabled.value   = prefs.getBool(_glassKey) ?? true;
     roundedBars.value    = prefs.getBool(_roundedBarsKey) ?? true;
     showKisdEvents.value = prefs.getBool(_showKisdEventsKey) ?? true;
+    // Read straight into the resolver's notifier — `Semester` is the read
+    // model for the override, this class is its only writer.
+    final semester = prefs.getString(_semesterKey);
+    Semester.overrideId.value = isSemesterId(semester) ? semester : null;
+  }
+
+  /// The semester the user picked in Settings; `null` = Automatic. Survives
+  /// restarts and is never cleared except by the user choosing Automatic.
+  Future<void> setSemesterOverride(String? semesterId) async {
+    final value = isSemesterId(semesterId) ? semesterId : null;
+    if (Semester.overrideId.value == value) return;
+    Semester.overrideId.value = value;
+    final prefs = await SharedPreferences.getInstance();
+    if (value == null) {
+      await prefs.remove(_semesterKey);
+    } else {
+      await prefs.setString(_semesterKey, value);
+    }
   }
 
   Future<void> setColor(String color) async {

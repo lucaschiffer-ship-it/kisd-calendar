@@ -63,6 +63,10 @@ class MailService extends ChangeNotifier {
   Stream<int> get unreadCountStream => _unreadController.stream;
 
   Future<void> connect() async {
+    // Must run BEFORE the guard below: on an account switch the old session is
+    // still alive, so `_isConnected` is true and every early return downstream
+    // would hand the new user the previous account's mailbox.
+    await _resetIfAccountChanged();
     if (_isConnecting || _isConnected) return;
     _isConnecting = true;
     _connectionError = null;
@@ -80,6 +84,9 @@ class MailService extends ChangeNotifier {
   }
 
   Future<bool> _ensureConnected() async {
+    // Above the early return for the same reason as in `connect()` — folder
+    // fetches reach here without ever going through `connect()`.
+    await _resetIfAccountChanged();
     if (_isConnected && _imap != null) return true;
     try {
       final username = await _storage.read(key: 'kisd_username');
@@ -107,6 +114,51 @@ class MailService extends ChangeNotifier {
       _connectionError = 'Could not connect: $e';
       return false;
     }
+  }
+
+  /// Clears every trace of the previously signed-in account when the stored
+  /// Campus ID no longer matches the one this session authenticated as.
+  ///
+  /// `MailService` is a process-lifetime singleton (`service_locator.dart`)
+  /// that nothing disposes, so without this a sign-out leaves a live IMAP
+  /// socket still authenticated as the old user — and every `_isConnected`
+  /// short-circuit then serves the new user that mailbox.
+  Future<void> _resetIfAccountChanged() async {
+    if (_cachedUsername == null) return; // never connected — nothing to compare
+    final stored = await _storage.read(key: 'kisd_username');
+    if (stored == _cachedUsername) return;
+    _log('[mail] signed-in account changed — clearing mail state');
+    await resetForAccountSwitch();
+  }
+
+  /// Drops the connection and all cached mail for the previous account. Safe
+  /// to call when nothing is connected.
+  Future<void> resetForAccountSwitch() async {
+    _imap?.disconnect();
+    _imap = null;
+    _isConnected = false;
+    _isConnecting = false;
+    _isFetching = false;
+    _isFetchingTrash = false;
+    _isFetchingSent = false;
+    _isFetchingDrafts = false;
+    _connectionError = null;
+    _messages = [];
+    _trashedMessages = [];
+    _sentMessages = [];
+    _draftMessages = [];
+    // Mailbox handles are bound to the old session (and memoised), so they
+    // have to go with it.
+    _trashMailbox = null;
+    _sentMailbox = null;
+    _draftsMailbox = null;
+    _cachedUsername = null;
+    // The confirmed sender belongs to the old account. `LoginService.logout()`
+    // deletes this key too, but a direct re-login from LoginScreen does not —
+    // clearing it here covers both switch paths from one place.
+    await _storage.delete(key: _emailStorageKey);
+    _unreadController.add(0);
+    notifyListeners();
   }
 
   Future<void> reloadInbox() async {
@@ -197,8 +249,9 @@ class MailService extends ChangeNotifier {
 
   Future<void> sendEmail(String to, String subject, String body,
       {String? from}) async {
-    final username =
-        _cachedUsername ?? await _storage.read(key: 'kisd_username');
+    // Storage, not `_cachedUsername`: the field is the account this session
+    // connected as, which after a switch is the *previous* user.
+    final username = await _storage.read(key: 'kisd_username');
     final password = await _storage.read(key: 'kisd_password');
     if (username == null || password == null) return;
 
@@ -266,8 +319,12 @@ class MailService extends ChangeNotifier {
   /// a plausible-but-wrong sender is accepted by the relay and then dropped
   /// silently, which is worse than asking the user once.
   Future<String?> accountEmail() async {
-    final username =
-        _cachedUsername ?? await _storage.read(key: 'kisd_username');
+    // Before the cached-address read below: that read returns early, so it
+    // never reaches the heal inside `_ensureConnected()` further down — and a
+    // previous account's real address passes both validity checks here, which
+    // would make the new user compose with the old user's From.
+    await _resetIfAccountChanged();
+    final username = await _storage.read(key: 'kisd_username');
     final cached = await _storage.read(key: _emailStorageKey);
     if (cached != null && cached.contains('@')) {
       if (!isCampusIdAddress(cached, username) && !isRoleAddress(cached)) {

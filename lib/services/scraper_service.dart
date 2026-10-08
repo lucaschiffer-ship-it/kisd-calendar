@@ -782,12 +782,20 @@ class ScraperService extends ChangeNotifier {
         label: cleanText(a),
       }));
 
-      // Spaces URL: deeplink to the course page itself
+      // Spaces URL: the card's own "Space" field (<!-- url_spaces -->) links
+      // the course's single-segment Spaces page.
+      let spaceFieldUrl = '';
+      card.querySelectorAll('.info-label').forEach(function(label) {
+        if (spaceFieldUrl || !/^\s*space(\s*url)?\s*$/i.test(label.textContent)) return;
+        const a = label.parentElement &&
+          label.parentElement.querySelector('.info-content a[href]');
+        if (a) spaceFieldUrl = a.href;
+      });
       const spacesLink = links.find(l =>
         l.url.includes('spaces.kisd.de') &&
         /\/(courses?|lernraum)\//.test(l.url)
       );
-      const spacesUrl = spacesLink ? spacesLink.url : '';
+      const spacesUrl = spaceFieldUrl || (spacesLink ? spacesLink.url : '');
 
       // Detail / course-selection URL for fetching missing location
       const detailAttr =
@@ -881,7 +889,8 @@ class ScraperService extends ChangeNotifier {
       }
 
       const location  = valForLabel(/meeting.?location/i);
-      const spaceSlug = valForLabel(/space\s*url/i);
+      // Label was "Space URL"; KISD renamed it to "Space" (Oct 2026).
+      const spaceSlug = valForLabel(/^\s*space(\s*url)?\s*$/i);
 
       // Description: the page has a "Description - EN" accordion/collapsible.
       // Search heading-like elements (h1-h6, summary, .info-label, etc.) for
@@ -1199,14 +1208,17 @@ class ScraperService extends ChangeNotifier {
 
     // Priority 2: course-selection ?course= URL
     if (detailUrl.isNotEmpty && detailUrl != effectiveSpaceUrl) {
-      final label = effectiveSpaceUrl == null ? 'Spaces page' : 'Course selection';
       links.add(const CourseLink(url: '', label: '').copyWithValues(
         url: detailUrl,
-        label: label,
+        label: 'Course selection',
       ));
     }
 
-    final id = _makeId(effectiveSpaceUrl ?? detailUrl, title);
+    // Keyed on the course-selection slug, not the Space URL: scrapeMyCourses
+    // matches cached hearts/edits/events by id, so the id must not flip when
+    // the site's Space field appears, disappears or gets renamed.
+    final id = _makeId(
+        detailUrl.isNotEmpty ? detailUrl : (effectiveSpaceUrl ?? ''), title);
 
     return CourseShell(
       id: id,

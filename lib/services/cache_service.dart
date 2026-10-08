@@ -14,7 +14,7 @@ class CacheService {
 
   // Bump this whenever the scraper output format changes so that stale
   // cached data is automatically discarded on the next app launch.
-  static const _currentVersion = 13;
+  static const _currentVersion = 14;
 
   Future<bool> isCurrentVersion() async {
     final prefs = await SharedPreferences.getInstance();

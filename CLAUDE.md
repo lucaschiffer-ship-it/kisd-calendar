@@ -171,7 +171,7 @@ Both paths fetch per-course detail pages for location and Spaces URL via a separ
 
 ### Cache (`CacheService`)
 
-`SharedPreferences`, key `kisd_courses`, JSON array. Bump `_currentVersion` (currently `11`) whenever the stored schema changes — the app clears and re-scrapes on version mismatch.
+`SharedPreferences`, key `kisd_courses`, JSON array. Bump `_currentVersion` (currently `14`) whenever the stored schema changes — the app clears and re-scrapes on version mismatch.
 
 `isFavourite` is persisted per course. The list screen writes cache via `scraperService.saveToCache(_shells)` when the user toggles a heart; the card widget itself does **not** write to cache directly.
 

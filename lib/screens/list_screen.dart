@@ -1247,8 +1247,10 @@ class _ListScreenState extends State<ListScreen>
             SliverPadding(
               // Bottom: 40 of breathing room, plus clearance for the floating
               // bottom cluster the list now scrolls behind.
+              // Top: the 12 card gap, plus the header's painted overhang that
+              // sits on top of the list — so the visible gap matches.
               padding: EdgeInsets.fromLTRB(
-                AppSpacing.screenPadding, 12,
+                AppSpacing.screenPadding, 12 + AppGlass.headerOverhang,
                 AppSpacing.screenPadding, 40 + bottomClusterHeight(context),
               ),
               sliver: SliverList.builder(

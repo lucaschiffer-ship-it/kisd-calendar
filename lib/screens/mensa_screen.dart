@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_theme.dart' as tokens;
 import '../services/mensa_service.dart';
@@ -47,6 +48,9 @@ class _MensaScreenState extends State<MensaScreen>
   DateTime _selectedDate = DateTime.now();
   bool _translate = false;
 
+  /// Persists the translate toggle so the menu stays English across launches.
+  static const _translatePrefKey = 'mensa_translate';
+
   /// Bumped by [_onReload] to force the visible day page to remount and refetch
   /// — the parent has no other handle on [_MensaDayPage]'s state.
   int _reloadToken = 0;
@@ -58,6 +62,16 @@ class _MensaScreenState extends State<MensaScreen>
     _baseDate = DateTime.now();
     _pageController = PageController(initialPage: _initialPage);
     widget.actions.handler = _onReload;
+    _restoreTranslate();
+  }
+
+  /// Restores the saved toggle. The day page picks it up either way: before its
+  /// meals land via `_fetchMeals`, after via `didUpdateWidget`.
+  Future<void> _restoreTranslate() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!(prefs.getBool(_translatePrefKey) ?? false)) return;
+    if (!await translationService.isSupported()) return;
+    if (mounted) setState(() => _translate = true);
   }
 
   @override
@@ -161,7 +175,10 @@ class _MensaScreenState extends State<MensaScreen>
       ));
       return;
     }
-    if (mounted) setState(() => _translate = !_translate);
+    if (!mounted) return;
+    setState(() => _translate = !_translate);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_translatePrefKey, _translate);
   }
 
   @override

@@ -337,19 +337,18 @@ class MailService extends ChangeNotifier {
       await _storage.delete(key: _emailStorageKey);
     }
 
+    final receivedHeaders = <String>[];
     final sentFrom = <MailAddress>[];
-    final inboxRecipients = <MailAddress>[];
     if (await _ensureConnected()) {
+      try {
+        receivedHeaders.addAll(await _inboxReceivedHeaders());
+      } catch (e) {
+        _log('[mail] received-header lookup failed: $e');
+      }
       try {
         if (_sentMessages.isEmpty) await fetchSent(limit: 10);
         for (final m in _sentMessages) {
           sentFrom.addAll(m.from ?? const []);
-        }
-        if (_messages.isEmpty) await fetchInbox();
-        for (final m in _messages) {
-          inboxRecipients
-            ..addAll(m.to ?? const [])
-            ..addAll(m.cc ?? const []);
         }
       } catch (e) {
         _log('[mail] account email lookup failed: $e');
@@ -357,8 +356,8 @@ class MailService extends ChangeNotifier {
     }
 
     final email = pickAccountEmail(
+        receivedHeaders: receivedHeaders,
         sentFrom: sentFrom,
-        inboxRecipients: inboxRecipients,
         username: username);
     if (email != null) _log('[mail] detected account email: $email');
     // Not persisted here: detection is only a prefill. The address is stored
@@ -406,16 +405,19 @@ class MailService extends ChangeNotifier {
   }
 
   /// Picks the account's own address from mailbox data. Campus-ID identities
-  /// and role addresses (noreply@… etc.) are excluded everywhere — mass
-  /// mails are often addressed To: a no-reply alias with the students in
-  /// Bcc, so those dominate inbox recipients without being anyone's
-  /// identity. Priority: th-koeln From of sent messages, then smail (the
-  /// student domain) inbox recipients, then other th-koeln recipients, then
-  /// any remaining sent From as a last resort.
+  /// and role addresses (noreply@… etc.) are excluded everywhere.
+  ///
+  /// Priority: the envelope recipient the TH servers stamp into inbox
+  /// `Received: … for <addr>` lines (smail first), then th-koeln From of sent
+  /// messages, then any remaining sent From as a last resort. Otherwise null.
+  ///
+  /// Deliberately NOT inbox To/Cc: group and course mails list many students
+  /// there, so a popularity vote picked a classmate's address for an account
+  /// with an empty Sent folder — and a wrong sender is silently dropped.
   @visibleForTesting
   static String? pickAccountEmail({
+    required List<String> receivedHeaders,
     required List<MailAddress> sentFrom,
-    required List<MailAddress> inboxRecipients,
     String? username,
   }) {
     bool isThKoeln(String email) {
@@ -442,31 +444,55 @@ class MailService extends ChangeNotifier {
       return best;
     }
 
+    bool isOwnCandidate(String e) =>
+        e.contains('@') &&
+        !isCampusIdAddress(e, username) &&
+        !isRoleAddress(e);
+
+    // A server only writes `for <addr>` when that copy has exactly one
+    // envelope recipient, so it names this mailbox even for Bcc'd mass
+    // mail. The final hop names the internal Campus-ID mailbox
+    // (campusid@imap.intranet.fh-koeln.de), which isCampusIdAddress drops.
+    final receivedAddresses = receivedHeaders
+        .expand((h) => _receivedForPattern.allMatches(h))
+        .map((m) => m.group(1)!.trim().toLowerCase())
+        .where((e) => isThKoeln(e) && isOwnCandidate(e))
+        .toList();
+    final receivedPick = mostFrequent(receivedAddresses.where(isSmail)) ??
+        mostFrequent(receivedAddresses);
+    if (receivedPick != null) return receivedPick;
+
     final sentAddresses = sentFrom
         .map((a) => a.email.trim().toLowerCase())
-        .where((e) =>
-            e.contains('@') &&
-            !isCampusIdAddress(e, username) &&
-            !isRoleAddress(e))
+        .where(isOwnCandidate)
         .toList();
     final sentPick = mostFrequent(sentAddresses.where(isThKoeln));
     if (sentPick != null) return sentPick;
 
-    final recipientAddresses = inboxRecipients
-        .map((a) => a.email.trim().toLowerCase())
-        .where((e) =>
-            e.contains('@') &&
-            isThKoeln(e) &&
-            !isCampusIdAddress(e, username) &&
-            !isRoleAddress(e))
-        .toList();
-    final recipientPick = mostFrequent(recipientAddresses.where(isSmail)) ??
-        mostFrequent(recipientAddresses);
-    if (recipientPick != null) return recipientPick;
-
     // Last resort: a foreign sent address — only when the mailbox offers no
     // th-koeln evidence at all (already campus-id filtered above).
     return mostFrequent(sentAddresses);
+  }
+
+  // `for <addr>` (Postfix) or `for addr` (Exim) in a Received header.
+  static final _receivedForPattern = RegExp(
+      r'\bfor\s+<?([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+)>?',
+      caseSensitive: false);
+
+  /// Raw `Received:` header values of the newest inbox messages. Header-only
+  /// fetch with PEEK, so nothing is marked read and no bodies are loaded.
+  Future<List<String>> _inboxReceivedHeaders({int limit = 30}) async {
+    await _imap!.selectInbox();
+    final result = await _imap!.fetchRecentMessages(
+      messageCount: limit,
+      criteria: '(BODY.PEEK[HEADER.FIELDS (RECEIVED)])',
+      responseTimeout: const Duration(seconds: 30),
+    );
+    return [
+      for (final m in result.messages)
+        for (final h in m.getHeader('received') ?? const <Header>[])
+          if (h.value != null) h.value!,
+    ];
   }
 
   // Webmail parity: SMTP delivery alone stores no copy — webmail APPENDs one

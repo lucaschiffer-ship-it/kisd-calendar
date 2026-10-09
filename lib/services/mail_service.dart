@@ -4,6 +4,8 @@ import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'service_locator.dart';
+
 /// Which IMAP folder a message lives in — used for folder-aware operations.
 enum MailFolder { inbox, drafts, sent, trash }
 
@@ -314,9 +316,11 @@ class MailService extends ChangeNotifier {
     }
   }
 
-  /// The account's email address: the stored/confirmed one, else detected
-  /// from mailbox data. Returns null when unknown — deliberately no guessing;
-  /// a plausible-but-wrong sender is accepted by the relay and then dropped
+  /// The account's email address: the stored/confirmed one, else the
+  /// official address from the Spaces account (filled from the TH login, the
+  /// same one the campusID-Center lists), else detected from mailbox data as
+  /// a fallback. Returns null when unknown — deliberately no guessing; a
+  /// plausible-but-wrong sender is accepted by the relay and then dropped
   /// silently, which is worse than asking the user once.
   Future<String?> accountEmail() async {
     // Before the cached-address read below: that read returns early, so it
@@ -337,6 +341,22 @@ class MailService extends ChangeNotifier {
       await _storage.delete(key: _emailStorageKey);
     }
 
+    // Authoritative: Spaces stores exactly one address per account, synced
+    // from IDM. Official, so it is persisted like a confirmed address.
+    try {
+      final spaces = await scraperService.fetchAccountEmail();
+      final official =
+          acceptSpacesEmail(spaces?.email, spaces?.username, username);
+      if (official != null) {
+        _log('[mail] spaces account email: $official');
+        await setAccountEmail(official);
+        return official;
+      }
+    } catch (e) {
+      _log('[mail] spaces account lookup failed: $e');
+    }
+
+    // Fallback when Spaces is unreachable (offline, expired session).
     final receivedHeaders = <String>[];
     final sentFrom = <MailAddress>[];
     if (await _ensureConnected()) {
@@ -374,6 +394,28 @@ class MailService extends ChangeNotifier {
     _log('[mail] account email set to $normalized');
   }
 
+  /// The Spaces account [email] if it can be this account's sender: the
+  /// Spaces login must be the Campus ID this app is signed in as (a leftover
+  /// session of the previous account must not leak its address), and the
+  /// address must be a th-koeln one that is neither the Campus ID nor a role.
+  @visibleForTesting
+  static String? acceptSpacesEmail(
+      String? email, String? spacesUsername, String? loginUsername) {
+    final normalized = email?.trim().toLowerCase();
+    final spacesLogin = spacesUsername?.trim().toLowerCase();
+    final login = loginUsername?.trim().toLowerCase();
+    if (normalized == null || !normalized.contains('@')) return null;
+    if (login == null || login.isEmpty || spacesLogin != login) return null;
+    final domain = normalized.split('@').last;
+    if (domain != 'th-koeln.de' && !domain.endsWith('.th-koeln.de')) {
+      return null;
+    }
+    if (isCampusIdAddress(normalized, login) || isRoleAddress(normalized)) {
+      return null;
+    }
+    return normalized;
+  }
+
   /// True when [email]'s local part is the login's Campus ID — webmail's
   /// default identity (campusid@fh-koeln.de), which is not a deliverable
   /// mailbox: the relay accepts mail from it and drops it downstream.
@@ -404,7 +446,8 @@ class MailService extends ChangeNotifier {
     }.contains(local);
   }
 
-  /// Picks the account's own address from mailbox data. Campus-ID identities
+  /// Fallback for when the Spaces lookup ([acceptSpacesEmail]) is unavailable:
+  /// picks the account's own address from mailbox data. Campus-ID identities
   /// and role addresses (noreply@… etc.) are excluded everywhere.
   ///
   /// Priority: the envelope recipient the TH servers stamp into inbox

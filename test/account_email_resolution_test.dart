@@ -164,6 +164,56 @@ void main() {
     });
   });
 
+  group('MailService.acceptSpacesEmail', () {
+    const login = 'mmuster1';
+    const official = 'max_m.mustermann@smail.th-koeln.de';
+
+    test('accepts the official address when the Spaces login matches', () {
+      expect(MailService.acceptSpacesEmail(official, login, login), official);
+    });
+
+    test('rejects a leftover Spaces session of the previous account', () {
+      expect(
+          MailService.acceptSpacesEmail(official, 'emuster2', login), isNull);
+    });
+
+    test('rejects when the signed-in login is unknown', () {
+      expect(MailService.acceptSpacesEmail(official, login, null), isNull);
+      expect(MailService.acceptSpacesEmail(official, login, ''), isNull);
+    });
+
+    test('rejects Campus-ID and role addresses', () {
+      expect(
+          MailService.acceptSpacesEmail('mmuster1@fh-koeln.de', login, login),
+          isNull);
+      expect(
+          MailService.acceptSpacesEmail(
+              'noreply@f02.th-koeln.de', login, login),
+          isNull);
+    });
+
+    test('rejects non-th and look-alike domains', () {
+      expect(MailService.acceptSpacesEmail('max@gmail.com', login, login),
+          isNull);
+      expect(
+          MailService.acceptSpacesEmail('max@nth-koeln.de', login, login),
+          isNull);
+    });
+
+    test('rejects missing or malformed input', () {
+      expect(MailService.acceptSpacesEmail(null, login, login), isNull);
+      expect(MailService.acceptSpacesEmail('', login, login), isNull);
+      expect(MailService.acceptSpacesEmail(official, null, login), isNull);
+    });
+
+    test('normalises case and whitespace', () {
+      expect(
+          MailService.acceptSpacesEmail(
+              '  Max_M.Mustermann@SMAIL.th-koeln.de ', ' MMuster1', login),
+          official);
+    });
+  });
+
   group('MailService.isCampusIdAddress', () {
     test('matches the login Campus ID on any domain, case-insensitively', () {
       expect(

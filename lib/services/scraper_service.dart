@@ -268,6 +268,105 @@ class ScraperService extends ChangeNotifier {
     );
   }
 
+  /// The signed-in account's email and login as Spaces stores them — filled
+  /// from the TH login (IDM), so this is the official address, the same one
+  /// the campusID-Center lists. Read via WordPress's own REST endpoint, which
+  /// needs the page's `wpApiSettings.nonce`. Null whenever the session is
+  /// missing or anything fails; never triggers a re-login.
+  Future<({String email, String username})?> fetchAccountEmail() async {
+    final completer = Completer<({String email, String username})?>();
+    HeadlessInAppWebView? view;
+    var processing = false;
+
+    void finish(({String email, String username})? result) {
+      if (!completer.isCompleted) completer.complete(result);
+      view?.dispose();
+      view = null;
+    }
+
+    view = HeadlessInAppWebView(
+      initialUrlRequest: URLRequest(url: WebUri('https://spaces.kisd.de/home/')),
+      initialSettings: InAppWebViewSettings(
+        javaScriptEnabled: true,
+        domStorageEnabled: true,
+        sharedCookiesEnabled: true,
+      ),
+      onLoadStop: (ctrl, pageUrl) async {
+        if (completer.isCompleted || processing) return;
+        final urlStr = pageUrl?.toString() ?? '';
+        // Logged out, /home/ bounces to the public landing page or the IdP.
+        if (urlStr.contains('login.th-koeln.de') ||
+            urlStr.contains('mfa.th-koeln.de') ||
+            urlStr.contains('wp-login.php') ||
+            urlStr.contains('redirect_to=') ||
+            urlStr.contains('spaces.kisd.de/public')) {
+          print('[account] no Spaces session: $urlStr');
+          finish(null);
+          return;
+        }
+        if (!urlStr.contains('spaces.kisd.de/home')) return;
+
+        processing = true;
+        try {
+          final raw = await ctrl.callAsyncJavaScript(functionBody: r"""
+            const s = window.wpApiSettings;
+            if (!s || !s.nonce || !s.root) return null;
+            const r = await fetch(s.root + 'wp/v2/users/me?context=edit', {
+              headers: { 'X-WP-Nonce': s.nonce },
+              credentials: 'include',
+            });
+            if (!r.ok) return null;
+            const j = await r.json();
+            return JSON.stringify({ email: j.email, username: j.username });
+          """);
+          final value = raw?.value;
+          if (value == null) {
+            finish(null);
+            return;
+          }
+          final m = json.decode(value.toString()) as Map<String, dynamic>;
+          final email = m['email'] as String?;
+          final username = m['username'] as String?;
+          finish(email == null || username == null
+              ? null
+              : (email: email, username: username));
+        } catch (e) {
+          print('[account] Spaces account lookup failed: $e');
+          finish(null);
+        }
+      },
+      onReceivedError: (ctrl, req, err) {
+        if (req.isForMainFrame == true) finish(null);
+      },
+    );
+
+    final sessionCookies = await loginService.getSavedCookies();
+    if (sessionCookies.isNotEmpty) {
+      final mgr = CookieManager.instance();
+      for (final c in sessionCookies) {
+        try {
+          await mgr.setCookie(
+            url: WebUri('https://spaces.kisd.de'),
+            name: c['name'] as String,
+            value: c['value'] as String,
+            domain: c['domain'] as String?,
+            path: (c['path'] as String?) ?? '/',
+            isSecure: c['isSecure'] as bool?,
+            isHttpOnly: c['isHttpOnly'] as bool?,
+          );
+        } catch (_) {}
+      }
+    }
+
+    await view!.run();
+    return completer.future.timeout(const Duration(seconds: 20),
+        onTimeout: () {
+      print('[account] Spaces account lookup timed out');
+      finish(null);
+      return null;
+    });
+  }
+
   static String? _nullIfEmpty(String? s) =>
       (s == null || s.isEmpty) ? null : s;
 

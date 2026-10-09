@@ -47,6 +47,7 @@ dependencies:
   html: ^0.15.0
   fuzzy: ^0.5.1
   flutter_local_notifications: ^18.0.1
+  flutter_svg: ^2.3.0
 
 dev_dependencies:
   flutter_test:
@@ -80,6 +81,7 @@ flutter:
   assets:
     - assets/clock.html
     - assets/images/
+    - assets/icons/
     # Bundled Inter + Space Grotesk (OFL). google_fonts loads these instead of
     # fetching from Google's CDN — runtime fetching is disabled in main().
     - google_fonts/

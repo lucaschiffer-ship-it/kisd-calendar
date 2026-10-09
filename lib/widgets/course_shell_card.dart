@@ -14,6 +14,7 @@ import '../services/service_locator.dart';
 import '../services/spaces_browser.dart';
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
+import 'like_icon.dart';
 
 // ─── sizing constants used by both the page and the menu ─────────────────────
 const double _kMenuWidth = 240.0;
@@ -251,15 +252,7 @@ class _CourseShellCardState extends State<CourseShellCard>
                         padding: const EdgeInsets.only(left: 14, top: 3),
                         child: ScaleTransition(
                           scale: _heartScale,
-                          child: Icon(
-                            _liked
-                                ? CupertinoIcons.heart_fill
-                                : CupertinoIcons.heart,
-                            size: 22,
-                            color: _liked
-                                ? AppColors.heartActive
-                                : tokens.AppThemeTokens.secondaryTextColor,
-                          ),
+                          child: LikeIcon(liked: _liked, size: 22),
                         ),
                       ),
                     ),
@@ -2567,20 +2560,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                                             left: 14, top: 3),
                                                     child: ScaleTransition(
                                                       scale: _heartScale,
-                                                      child: Icon(
-                                                        _liked
-                                                            ? CupertinoIcons
-                                                                .heart_fill
-                                                            : CupertinoIcons
-                                                                .heart,
-                                                        size: 22,
-                                                        color: _liked
-                                                            ? AppColors
-                                                                .heartActive
-                                                            : tokens
-                                                                .AppThemeTokens
-                                                                .secondaryTextColor,
-                                                      ),
+                                                      child: LikeIcon(liked: _liked, size: 22),
                                                     ),
                                                   ),
                                                 ),

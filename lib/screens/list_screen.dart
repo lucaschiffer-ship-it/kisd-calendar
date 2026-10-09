@@ -20,6 +20,7 @@ import '../services/service_locator.dart';
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/course_shell_card.dart';
+import '../widgets/like_icon.dart';
 import '../widgets/morphing_glass_header.dart';
 import '../widgets/page_floating_actions.dart';
 import 'course_shell_edit_screen.dart';
@@ -967,8 +968,7 @@ class _ListScreenState extends State<ListScreen>
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _buildFilterTab(_FilterMode.favourites,
-                icon: CupertinoIcons.heart_fill),
+            _buildFilterTab(_FilterMode.favourites, likeIcon: true),
             const SizedBox(width: 28),
             _buildFilterTab(_FilterMode.all, label: 'All'),
             const SizedBox(width: 28),
@@ -1027,7 +1027,8 @@ class _ListScreenState extends State<ListScreen>
   }
 
   // Subtle tab-style nav item: small icon/label, orange underline when active.
-  Widget _buildFilterTab(_FilterMode mode, {String? label, IconData? icon}) {
+  Widget _buildFilterTab(_FilterMode mode,
+      {String? label, bool likeIcon = false}) {
     final isSelected = _filterMode == mode;
     final color = isSelected
         ? tokens.AppThemeTokens.titleColor
@@ -1049,8 +1050,8 @@ class _ListScreenState extends State<ListScreen>
               SizedBox(
                 height: 18,
                 child: Center(
-                  child: icon != null
-                      ? Icon(icon, size: 15, color: color)
+                  child: likeIcon
+                      ? LikeIcon(liked: true, size: 15, color: color)
                       : Text(
                           label ?? '',
                           maxLines: 1,

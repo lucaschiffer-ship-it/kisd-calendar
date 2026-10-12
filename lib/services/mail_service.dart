@@ -5,6 +5,7 @@ import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'imap_preview_fix.dart';
 import 'mail_offline_cache.dart';
 import 'service_locator.dart';
 
@@ -119,7 +120,9 @@ class MailService extends ChangeNotifier {
 
       _log('[mail] connecting to $_imapHost...');
       _imap?.disconnect();
-      _imap = ImapClient(isLogEnabled: false);
+      // Same client, except that list previews keep their bytes — see
+      // PreviewFixImapClient.
+      _imap = PreviewFixImapClient(isLogEnabled: false);
       await _imap!.connectToServer(_imapHost, _imapPort, isSecure: true);
       await _imap!.login(username, password);
       _isConnected = true;
@@ -752,6 +755,69 @@ class MailService extends ChangeNotifier {
       _log('[mail] appended sent copy to ${sent.path}');
     } catch (e) {
       _log('[mail] could not append to sent folder: $e');
+    }
+  }
+
+  // ── Drafts ───────────────────────────────────────────────────────────────
+  // The only additions the mail UI rework made to this service (explicitly
+  // allowed): saving a compose sheet as a draft, and removing a draft once it
+  // is sent, saved again or deleted. Nothing above was changed for them.
+
+  /// Appends a draft to the Drafts folder over IMAP, the way [_appendToSent]
+  /// stores a sent copy. Returns false when it didn't land, so compose can
+  /// stay open rather than lose what was typed.
+  Future<bool> saveDraft({
+    required String from,
+    required String to,
+    required String subject,
+    required String body,
+  }) async {
+    try {
+      if (!await _ensureConnected()) return false;
+      final drafts = await _resolveDraftsMailbox();
+      if (drafts == null) return false;
+      final sender =
+          from.contains('@') ? from.trim() : (await accountEmail() ?? from);
+      final message = MessageBuilder.buildSimpleTextMessage(
+        MailAddress(null, sender),
+        [if (to.trim().isNotEmpty) MailAddress(null, to.trim())],
+        body,
+        subject: subject,
+      );
+      await _imap!.appendMessage(message,
+          targetMailbox: drafts, flags: [r'\Draft', r'\Seen']);
+      _log('[mail] saved draft to ${drafts.path}');
+      unawaited(fetchDrafts());
+      return true;
+    } catch (e) {
+      _log('[mail] could not save draft: $e');
+      return false;
+    }
+  }
+
+  /// Permanently removes [draft] from the Drafts folder. Drafts are not moved
+  /// to Trash: a superseded draft is not a deleted mail.
+  Future<bool> discardDraft(MimeMessage draft) async {
+    final uid = draft.uid;
+    if (uid == null) return false;
+    if (!await _ensureConnected()) return false;
+    try {
+      if (!await _selectFolder(MailFolder.drafts)) return false;
+      final seq = MessageSequence.fromId(uid, isUid: true);
+      await _imap!.uidMarkDeleted(seq);
+      try {
+        await _imap!.uidExpunge(seq);
+      } catch (_) {
+        // No UIDPLUS: expunge the folder — only \Deleted drafts go.
+        await _imap!.expunge();
+      }
+      _draftMessages.removeWhere((m) => m.uid == uid);
+      notifyListeners();
+      _log('[mail] discarded draft $uid');
+      return true;
+    } catch (e) {
+      _log('[mail] discardDraft error: $e');
+      return false;
     }
   }
 

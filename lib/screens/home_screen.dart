@@ -20,6 +20,7 @@ import '../services/theme_service.dart';
 import '../services/course_link_attach.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass_pill.dart';
+import '../widgets/mail_route_layer.dart';
 import '../widgets/native_spaces_browser.dart';
 import '../widgets/page_floating_actions.dart';
 
@@ -486,80 +487,94 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     return Stack(
       children: [
-        // ── Main scaffold ────────────────────────────────────────────────
-        Scaffold(
-          backgroundColor: tokens.AppThemeTokens.backgroundColor,
-          extendBodyBehindAppBar: true,
-          // The bottom bar is a floating pill row with no surface of its own.
-          // Without this the Scaffold reserves its height, and the strip of
-          // background left behind reads as a footer the pills sit inside.
-          extendBody: true,
-          appBar: AppBar(
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            scrolledUnderElevation: 0,
-            surfaceTintColor: Colors.transparent,
-            forceMaterialTransparency: true,
-          ),
-          body: ValueListenableBuilder<double>(
-            valueListenable: _pagePos,
-            builder: (context, pos, _) => LayoutBuilder(
-              builder: (context, constraints) {
-                // The owner page paints last so its pinned header surface
-                // sits above (and blurs) both sliding bodies mid-transition.
-                final owner = pos.round() % _pages.length;
-                return Stack(
-                  children: [
-                    for (var i = 0; i < _pages.length; i++)
-                      if (i != owner)
-                        _buildPageSlot(i, pos, constraints.maxWidth),
-                    _buildPageSlot(owner, pos, constraints.maxWidth),
-                  ],
-                );
-              },
-            ),
-          ),
-          bottomNavigationBar: _BottomBar(
-            currentPage: _currentPage,
-            onPageSelected: _onPageSettled,
-            onPositionChanged: _onBarPosition,
-            actions: _pageActions,
-            mailUnread: mailService.unreadCount,
+        // The pages, the bottom bar and the mini bar — moved together, the
+        // way iOS moves the page behind a push, while a mail opens over them.
+        MailRouteParallax(
+          child: Stack(
+            children: [
+              // ── Main scaffold ────────────────────────────────────────────────
+              Scaffold(
+                backgroundColor: tokens.AppThemeTokens.backgroundColor,
+                extendBodyBehindAppBar: true,
+                // The bottom bar is a floating pill row with no surface of its own.
+                // Without this the Scaffold reserves its height, and the strip of
+                // background left behind reads as a footer the pills sit inside.
+                extendBody: true,
+                appBar: AppBar(
+                  backgroundColor: Colors.transparent,
+                  elevation: 0,
+                  scrolledUnderElevation: 0,
+                  surfaceTintColor: Colors.transparent,
+                  forceMaterialTransparency: true,
+                ),
+                body: ValueListenableBuilder<double>(
+                  valueListenable: _pagePos,
+                  builder: (context, pos, _) => LayoutBuilder(
+                    builder: (context, constraints) {
+                      // The owner page paints last so its pinned header surface
+                      // sits above (and blurs) both sliding bodies mid-transition.
+                      final owner = pos.round() % _pages.length;
+                      return Stack(
+                        children: [
+                          for (var i = 0; i < _pages.length; i++)
+                            if (i != owner)
+                              _buildPageSlot(i, pos, constraints.maxWidth),
+                          _buildPageSlot(owner, pos, constraints.maxWidth),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+                bottomNavigationBar: _BottomBar(
+                  currentPage: _currentPage,
+                  onPageSelected: _onPageSettled,
+                  onPositionChanged: _onBarPosition,
+                  actions: _pageActions,
+                  mailUnread: mailService.unreadCount,
+                ),
+              ),
+
+              // ── Persistent mini browser bar ───────────────────────────────────
+              // Full-width on the List page, morphing into a 50×50 square on the
+              // other pages, tracking the pager position live during swipes.
+              AnimatedBuilder(
+                animation: Listenable.merge([_sheetAnim, _pagePos]),
+                builder: (context, _) {
+                  final opacity = (1.0 - _sheetAnim.value * 4).clamp(0.0, 1.0);
+                  var d = (_pagePos.value - _initialPage) % 4.0;
+                  if (d > 2) d -= 4;
+                  final t = d.abs().clamp(0.0, 1.0).toDouble();
+                  final fullW = MediaQuery.of(context).size.width - 24;
+                  final w = lerpDouble(fullW, 50.0, t)!;
+                  return Positioned(
+                    bottom: navBarHeight + 8,
+                    left: 12,
+                    width: w,
+                    child: IgnorePointer(
+                      ignoring: opacity < 0.05,
+                      child: Opacity(
+                        opacity: opacity,
+                        child: _MiniBrowserBar(
+                          lastTabTitle: _lastTabTitle,
+                          onHomeTap: _openHomeTab,
+                          onLastTabTap: _openLastTab,
+                          morphT: t,
+                          fullWidth: fullW,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
         ),
 
-        // ── Persistent mini browser bar ───────────────────────────────────
-        // Full-width on the List page, morphing into a 50×50 square on the
-        // other pages, tracking the pager position live during swipes.
-        AnimatedBuilder(
-          animation: Listenable.merge([_sheetAnim, _pagePos]),
-          builder: (context, _) {
-            final opacity = (1.0 - _sheetAnim.value * 4).clamp(0.0, 1.0);
-            var d = (_pagePos.value - _initialPage) % 4.0;
-            if (d > 2) d -= 4;
-            final t = d.abs().clamp(0.0, 1.0).toDouble();
-            final fullW = MediaQuery.of(context).size.width - 24;
-            final w = lerpDouble(fullW, 50.0, t)!;
-            return Positioned(
-              bottom: navBarHeight + 8,
-              left: 12,
-              width: w,
-              child: IgnorePointer(
-                ignoring: opacity < 0.05,
-                child: Opacity(
-                  opacity: opacity,
-                  child: _MiniBrowserBar(
-                    lastTabTitle: _lastTabTitle,
-                    onHomeTap: _openHomeTab,
-                    onLastTabTap: _openLastTab,
-                    morphT: t,
-                    fullWidth: fullW,
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
+        // ── Mail route layer ──────────────────────────────────────────────
+        // An opened mail and its screens. Above the pages and the bottom
+        // cluster, but *below* the browser sheet: a link tapped inside a mail
+        // opens the browser over it, and closing the browser returns to it.
+        const MailRouteLayer(),
 
         // ── Full-screen browser overlay ───────────────────────────────────
         AnimatedBuilder(

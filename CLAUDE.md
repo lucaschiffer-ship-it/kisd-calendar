@@ -104,9 +104,12 @@ iOS-only Flutter app for KISD (Köln International School of Design) students. S
 
 ### Spaces browser (iOS platform view)
 
-The browser is **native Swift**, not Dart: a `UIVisualEffectView` only samples web
-content when it is a sibling of the `WKWebView` in the same UIView hierarchy, so
-Flutter's `BackdropFilter` can never blur a page. Three files:
+The browser is **native Swift**, not Dart: its chrome is real iOS 26 Liquid Glass
+(`UIGlassEffect`), which only samples web content when it is a sibling of the
+`WKWebView` in the same UIView hierarchy. (Flutter's own `BackdropFilter` *does*
+blur a platform view — the engine's `PlatformViewFilter` turns it into a native
+gaussian blur, verified on iOS 26.4 / Flutter 3.41 — but only plain blur, never
+Liquid Glass, and only a `ClipRRect`'s first corner radius.) Three files:
 
 | File | Role |
 |---|---|
@@ -135,8 +138,8 @@ Gotchas that will bite:
 
 The ≡ menu's `+` sends `onAddToCourse {url, title}` to Dart, which gates on
 `_isTrackablePage` and shows `AddToCourseSheet` (a Flutter overlay inside the
-sheet's `Stack` — deliberately **not** glass, since a `BackdropFilter` over a
-platform view samples nothing).
+sheet's `Stack` — deliberately **not** glass; the native chrome around it is
+Liquid Glass, which Flutter can't match).
 
 `lib/services/course_link_attach.dart` owns the rules, pinned by
 `test/course_link_attach_test.dart`:
@@ -206,6 +209,54 @@ IMAP via `enough_mail`. Credentials reused from `LoginService` (TH Köln email).
 - Bodies are downloaded on a **separate, EXAMINE'd `ImapClient` with `BODY.PEEK[]`** — the shared client's selected folder changes under any await, and plain `BODY[]` would mark 50 mails read.
 - Store bodies as **raw bytes** (`BinaryMimeData.data`), never via `renderMessage()` — it maps bytes to chars and mangles 8-bit umlauts.
 - `resetForAccountSwitch` bumps `_offlineGeneration` and clears the folder; every async cache step re-checks the generation so a sync in flight can't write the old account back.
+
+### Mail UI (list, message view, compose)
+
+Apple Mail–style, in the app's own tokens. The service logic stays as it was; the
+UI keeps its own optimistic state on top.
+
+- **Mail route layer** (`lib/widgets/mail_route_layer.dart`): an opened mail is
+  pushed on `mailNavigatorKey`, a `Navigator` HomeScreen layers **between the pages
+  and the browser sheet** — so `SpacesBrowser.open` from a mail shows the browser
+  *over* it, and closing returns to the same mail. Only the mail page pushes there
+  (`MailRouteLayer.push`); Settings and everything else stay on the root navigator.
+  `MailRouteParallax` moves HomeScreen's pages + bottom cluster like the page behind
+  an iOS push (a third left, dimmed) — its child structure must never change with
+  the animation, or the pages lose their state.
+- **Message view** (`email_detail_screen.dart` + `lib/services/mail_html.dart`,
+  pinned by `test/mail_html_test.dart`): one HTML document holds the header *and*
+  the body, so the header scrolls natively with the mail (`<details>` expands it —
+  JS stays off). Loaded under `kisd-mail://local/` so the bundled fonts it serves
+  via `resourceCustomSchemes` are same-origin (CORS); `cid:` inline images come
+  from the same handler. `classifyMailHtml` decides dark mode: `themed` (simple
+  mail, takes the theme), `darkNative` (its `prefers-color-scheme` queries are
+  rewritten to the *app's* theme — the web view follows the system), `original`
+  (designed newsletter: white rounded card in dark mode). Near-white backgrounds
+  count as neutral — simple mails often carry `bgcolor="#ffffff"`. Only main-frame,
+  link-activated navigations open anything. The web view mounts after the push and
+  fades in; a Flutter replica of the header shows meanwhile.
+- **Optimistic actions** (`lib/services/mail_actions.dart`): delete/restore hide the
+  row and read flags flip at once; a failed server call rolls back with a toast.
+  Calls per message are **serialised** — `markAsRead`/`markAsUnread` early-return on
+  the *current* `isSeen`, so never mutate `isSeen` from the UI.
+- **Swipe** (`lib/widgets/swipe_action_row.dart`, pinned by
+  `test/swipe_action_row_test.dart`): short swipe rests open (80 pt), past 55 % of
+  the width commits with a haptic; destructive actions collapse the row *before*
+  their callback runs.
+- **List previews** (`lib/services/mail_display.dart`, pinned by
+  `test/mail_display_test.dart`): the list fetches `BODY.PEEK[TEXT]<0.500>`, which
+  stock enough_mail drops (it splits `BODY[TEXT]<0>` and reads `0>` as the body).
+  `PreviewFixImapClient` (`lib/services/imap_preview_fix.dart`, private enough_mail
+  imports — re-check on any enough_mail upgrade) puts the bytes back, and
+  `mailPreviewText` parses the headerless fragment (boundaries, QP, base64, HTML).
+  HTML newsletters whose first 500 bytes are all `<head>`/CSS get their preview from
+  the offline copy instead (`lib/services/mail_previews.dart`, background isolate).
+- **Compose** (`compose_screen.dart`): `openComposeSheet` pushes a
+  `CupertinoSheetRoute` on the **root** navigator (the whole app scales back). It
+  can't be dragged away while dirty; ✕ offers Save Draft / Delete Draft. Drafts use
+  the only service additions of the rework: `saveDraft()` (IMAP APPEND, like
+  `_appendToSent`) and `discardDraft()` (expunge from Drafts). A reopened draft's old
+  copy is discarded only after the new save/send succeeds.
 
 ### Mensa (`MensaService`)
 

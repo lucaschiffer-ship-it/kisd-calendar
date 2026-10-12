@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' show lerpDouble;
 
 import 'package:enough_mail/enough_mail.dart';
@@ -10,6 +11,7 @@ import '../services/mail_service.dart' show MailFolder;
 import '../services/page_actions.dart';
 import '../services/service_locator.dart';
 import '../services/theme_service.dart';
+import '../theme/app_theme.dart' show AppColors, AppTextStyle;
 import '../theme/tokens.dart';
 import '../widgets/glass_pill.dart';
 import '../widgets/morphing_glass_header.dart';
@@ -222,8 +224,8 @@ class _MailScreenState extends State<MailScreen>
       animation: Listenable.merge([
         ThemeService.instance.currentColor,
         ThemeService.instance.glassEnabled,
-        // The header's chips and search field follow the bottom cluster's shape,
-        // so this page has to rebuild when "Rounded bars" flips.
+        // The filter strip's clip follows the bottom cluster's shape, so this
+        // page has to rebuild when "Rounded bars" flips.
         ThemeService.instance.roundedBars,
       ]),
       builder: (context, _) => _buildContent(),
@@ -257,25 +259,24 @@ class _MailScreenState extends State<MailScreen>
     }
 
     final filtered = _filtered;
-    // Shape comes from the bottom cluster, not the card scale: the header chrome
-    // reads as one system with the floating pills.
-    final barRadius = GlassPill.defaultRadius();
 
+    // The list page's header without its filter tabs: the same date/clock row
+    // and search bar, at the list's sizes. No folder headline: the bottom
+    // filter button's icon (accent off the inbox) says which folder is open.
     final view = View.of(context);
     final statusH = view.viewPadding.top / view.devicePixelRatio;
     const topGapH = 6.0;
-    const titleH = 36.0;
-    const searchH = 44.0;
-    const chromeH = titleH + searchH + 12.0;
-    final headerH = statusH + topGapH + chromeH;
+    const dateRowH = 52.0;
+    const searchH = 36.0;
+    // Above and below the search bar. On the list the filter tabs sit below
+    // it; here the header edge does.
+    const searchGapH = 10.0;
+    final headerH =
+        statusH + topGapH + dateRowH + searchGapH + searchH + searchGapH;
 
-    final glass = ThemeService.instance.glassEnabled.value;
-    final searchBorder = BorderSide(
-      color: glass
-          ? Colors.white.withValues(alpha: AppGlass.borderAlpha)
-          : tokens.AppThemeTokens.cardBorder,
-      width: 0.5,
-    );
+    final titleColor = tokens.AppThemeTokens.titleColor;
+    final secondaryColor = tokens.AppThemeTokens.secondaryTextColor;
+    final searchRadius = tokens.AppThemeTokens.cardBorderRadius;
 
     final header = MorphingGlassHeader(
       handle: widget.header,
@@ -284,41 +285,28 @@ class _MailScreenState extends State<MailScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(height: statusH + topGapH),
-          // ── Folder title ──────────────────────────────────────────────────
-          // The filter chips moved to the bottom strip, so this is what says
-          // which folder is showing. Styled like Mensa's date row.
           SizedBox(
-            height: titleH,
-            child: Center(
-              child: Text(
-                _filter.label,
-                style: AppTextStyles.body(
-                        color: tokens.AppThemeTokens.titleColor)
-                    .copyWith(fontWeight: FontWeight.w500),
-              ),
-            ),
+            height: dateRowH,
+            child: _DateClockRow(titleColor: titleColor),
           ),
           // ── Search ────────────────────────────────────────────────────────
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.fromLTRB(20, searchGapH, 20, searchGapH),
             child: SizedBox(
               height: searchH,
               child: TextField(
                 controller: _searchCtrl,
                 onChanged: (v) => setState(() => _searchQuery = v),
-                style: AppTextStyles.bodyLarge(
-                    color: tokens.AppThemeTokens.titleColor),
+                style: TextStyle(color: titleColor, fontSize: 14),
                 decoration: InputDecoration(
-                  hintText: 'Search mail...',
-                  hintStyle: AppTextStyles.bodyLarge(
-                      color: tokens.AppThemeTokens.secondaryTextColor),
+                  hintText: 'Search',
+                  hintStyle: TextStyle(
+                      color: secondaryColor.withValues(alpha: 0.45),
+                      fontSize: 14),
                   filled: true,
-                  fillColor: glass
-                      ? Colors.white.withValues(alpha: AppGlass.fillAlpha)
-                      : tokens.AppThemeTokens.cardBackground,
+                  fillColor: secondaryColor.withValues(alpha: 0.05),
                   prefixIcon: Icon(Icons.search,
-                      color: tokens.AppThemeTokens.secondaryTextColor,
-                      size: 20),
+                      color: secondaryColor.withValues(alpha: 0.5), size: 17),
                   suffixIcon: _searchQuery.isNotEmpty
                       ? GestureDetector(
                           onTap: () => setState(() {
@@ -326,28 +314,28 @@ class _MailScreenState extends State<MailScreen>
                             _searchQuery = '';
                           }),
                           child: Icon(Icons.close,
-                              color:
-                                  tokens.AppThemeTokens.secondaryTextColor,
-                              size: 18),
+                              color: secondaryColor, size: 16),
                         )
                       : null,
                   contentPadding: EdgeInsets.zero,
                   isDense: true,
                   border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(barRadius),
-                      borderSide: searchBorder),
+                    borderRadius: BorderRadius.circular(searchRadius),
+                    borderSide: BorderSide.none,
+                  ),
                   enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(barRadius),
-                      borderSide: searchBorder),
+                    borderRadius: BorderRadius.circular(searchRadius),
+                    borderSide: BorderSide.none,
+                  ),
                   focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(barRadius),
-                    borderSide: BorderSide(color: s.accent, width: 1),
+                    borderRadius: BorderRadius.circular(searchRadius),
+                    borderSide: BorderSide(
+                        color: tokens.AppThemeTokens.accentColor, width: 1),
                   ),
                 ),
               ),
             ),
           ),
-          const SizedBox(height: 12),
         ],
       ),
     );
@@ -474,6 +462,83 @@ class _MailScreenState extends State<MailScreen>
           ],
         ),
       ],
+    );
+  }
+}
+
+// ── Date/clock row ────────────────────────────────────────────────────────────
+
+const _kWeekdays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+const _kMonths   = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+                    'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+/// The list page's header date and clock, styled the same. Keeps its own
+/// clock so the minute tick only repaints this row, not the mail list.
+class _DateClockRow extends StatefulWidget {
+  const _DateClockRow({required this.titleColor});
+
+  final Color titleColor;
+
+  @override
+  State<_DateClockRow> createState() => _DateClockRowState();
+}
+
+class _DateClockRowState extends State<_DateClockRow> {
+  DateTime _now = DateTime.now();
+  late final Timer _clock;
+
+  @override
+  void initState() {
+    super.initState();
+    _clock = Timer.periodic(const Duration(seconds: 1), (_) {
+      final now = DateTime.now();
+      // Only HH:MM and the date are displayed — skip the rebuild until the
+      // shown minute actually changes.
+      if (now.minute == _now.minute &&
+          now.hour == _now.hour &&
+          now.day == _now.day) {
+        return;
+      }
+      setState(() => _now = now);
+    });
+  }
+
+  @override
+  void dispose() {
+    _clock.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final style =
+        AppTextStyle.cardTitle.copyWith(fontSize: 32, color: widget.titleColor);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.baseline,
+        textBaseline: TextBaseline.alphabetic,
+        children: [
+          RichText(
+            text: TextSpan(
+              style: style,
+              children: [
+                TextSpan(
+                  text: _kWeekdays[_now.weekday - 1],
+                  style: const TextStyle(color: AppColors.accent),
+                ),
+                TextSpan(text: ', ${_kMonths[_now.month - 1]} ${_now.day}'),
+              ],
+            ),
+          ),
+          Text(
+            '${_now.hour.toString().padLeft(2, '0')}:'
+            '${_now.minute.toString().padLeft(2, '0')}',
+            style: style,
+          ),
+        ],
+      ),
     );
   }
 }

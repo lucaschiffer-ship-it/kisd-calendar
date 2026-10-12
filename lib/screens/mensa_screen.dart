@@ -294,11 +294,11 @@ class _MensaScreenState extends State<MensaScreen>
 /// The calendar's week-strip height (`_kDayBarH` there).
 const double _kWeekStripH = 70.0;
 
-/// The calendar's week strip (`CalendarScreen._buildWeekStrip`), as it looks in
-/// the calendar's single-day view: Mensa only ever shows one day, so the pill
-/// marking the focused day spans just that day. Same behaviour otherwise —
-/// tap a day (number or letter) to go there, swipe the strip for the previous
-/// or next week. Keep the two in step when restyling either.
+/// The calendar's week strip (`CalendarScreen._buildWeekStrip`), minus the
+/// grey pill: Mensa only ever shows one day, so the focused day's circle is
+/// marker enough. Same behaviour otherwise — tap a day (number or letter) to
+/// go there, swipe the strip for the previous or next week. Keep the two in
+/// step when restyling either.
 class _WeekStrip extends StatefulWidget {
   const _WeekStrip({
     required this.focusedDay,
@@ -375,18 +375,7 @@ class _WeekStripState extends State<_WeekStrip>
       child: LayoutBuilder(builder: (context, constraints) {
         final stripW   = constraints.maxWidth;
         final cellW    = stripW / 7.0;
-        final glass    = ThemeService.instance.glassEnabled.value;
         final colorKey = ThemeService.instance.currentColor.value;
-        final pillColor = glass
-            ? switch (colorKey) {
-                'dark'   => Colors.white.withValues(alpha: 0.18),
-                'pastel' => Colors.black.withValues(alpha: 0.10),
-                _        => Colors.black.withValues(alpha: 0.12),
-              }
-            : switch (colorKey) {
-                'dark' => Colors.white.withValues(alpha: 0.22),
-                _      => const Color(0xFFC8C8C8),
-              };
 
         // Date-only throughout: the pager's dates carry the time of day the
         // app was opened, and Duration arithmetic drifts across DST.
@@ -395,7 +384,7 @@ class _WeekStripState extends State<_WeekStrip>
         final monday  = DateTime(
             focused.year, focused.month, focused.day - (focused.weekday - 1));
 
-        // One week's content. [current] enables the focus circle and pill.
+        // One week's content. [current] enables the focus circle.
         Widget buildWeek(DateTime mon, {required bool current}) {
           final days = List.generate(
               7, (i) => DateTime(mon.year, mon.month, mon.day + i));
@@ -404,26 +393,13 @@ class _WeekStripState extends State<_WeekStrip>
               : -1;
           final todayIndex =
               days.indexWhere((d) => DateUtils.isSameDay(d, today));
-          final focusLeft = focusIndex >= 0 ? focusIndex * cellW : 0.0;
 
-          Widget numberRow(double pillLeft, bool drawPill) => ClipRect(
+          final numberRow = ClipRect(
             child: SizedBox(
               height: _cellH,
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  if (drawPill)
-                    Positioned(
-                      left: pillLeft,
-                      width: cellW,
-                      top: (_cellH - 36) / 2, height: 36,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: pillColor,
-                          borderRadius: BorderRadius.circular(18),
-                        ),
-                      ),
-                    ),
                   // Filled circle behind the focused day's number.
                   if (focusIndex >= 0)
                     Positioned(
@@ -502,24 +478,13 @@ class _WeekStripState extends State<_WeekStrip>
                   )),
                 ),
                 const SizedBox(height: 4),
-                // Pill slides to the newly focused cell; absent in the
-                // neighbouring weeks.
-                current
-                    ? TweenAnimationBuilder<double>(
-                        tween: Tween<double>(begin: focusLeft, end: focusLeft),
-                        duration: const Duration(milliseconds: 220),
-                        curve: Curves.easeInOut,
-                        builder: (context, animLeft, _) =>
-                            numberRow(animLeft, true),
-                      )
-                    : numberRow(0.0, false),
+                numberRow,
               ],
             ),
           );
         }
 
-        // The current week always sits in the middle slot, so its pill
-        // animation survives week changes instead of remounting.
+        // The current week always sits in the middle slot.
         return GestureDetector(
           onHorizontalDragStart: (_) {
             _snap.stop();

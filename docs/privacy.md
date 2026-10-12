@@ -35,6 +35,8 @@ anywhere in the chain.
 | Confirmed sender email | **iOS Keychain** | |
 | Data owner (Campus ID the local data belongs to) | **iOS Keychain** | Lets a login with a different Campus ID wipe the previous account's data first |
 | Courses, favourites, theme | Local app storage | No personal data beyond course choices |
+| Newest 50 inbox mails (list + raw bodies ≤ 5 MB each) | App cache folder (`Library/Caches/mail_offline`) | Offline reading. Excluded from backups; iOS may purge it under storage pressure. Owner Campus ID stored alongside; wiped by the account-switch teardown (`MailService.resetForAccountSwitch`). Never leaves the device |
+| Mensa menu, current + next two weeks | Local app storage | Public data, offline reading |
 | TOTP / 2FA secret | ❌ **never stored** | The user types each one-time code |
 
 This is the same storage mechanism Apple Passwords uses. Signing out wipes all of it.
@@ -47,7 +49,7 @@ This is the same storage mechanism Apple Passwords uses. Signing out wipes all o
 |---|---|---|
 | `login.th-koeln.de`, `mfa.th-koeln.de` | HTTPS (SAML) | Credentials — into the official login form only |
 | `spaces.kisd.de` | HTTPS | Session cookies |
-| `imap.intranet.fh-koeln.de:993` | IMAP over TLS | Credentials, mail |
+| `imap.intranet.fh-koeln.de:993` | IMAP over TLS | Credentials, mail. After an inbox fetch, a second short read-only session (EXAMINE + `BODY.PEEK[]`) logs in with the same stored credentials to download the newest mails for offline reading (added 12 October 2026) |
 | `smtp.intranet.fh-koeln.de:587` | SMTP + STARTTLS | Credentials, mail (TLS established **before** auth) |
 | `openmensa.org` | HTTPS | Canteen number + date — nothing personal |
 

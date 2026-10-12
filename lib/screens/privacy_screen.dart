@@ -53,7 +53,11 @@ class PrivacyScreen extends StatelessWidget {
             _gap(),
             _body(s,
                 'Your course list, favourites and theme settings are kept in '
-                'local app storage.'),
+                'local app storage. So the app still has something to show '
+                'offline, your newest 50 inbox emails (up to 5 MB each) are '
+                'kept in the app\'s cache folder, which is excluded from '
+                'backups, and the mensa menu for this week and the next two '
+                'in local app storage.'),
             _gap(),
             _body(s,
                 'Your two-factor (TOTP) secret is never stored — you enter '
@@ -132,7 +136,10 @@ class PrivacyScreen extends StatelessWidget {
                 'Campus-ID, Sitzungs-Cookies und die Zuordnung der lokalen '
                 'Daten zur Campus-ID liegen im iOS-Schlüsselbund '
                 '(hardware-verschlüsselt, vom iCloud-Sync und von Backups '
-                'ausgeschlossen). Das TOTP-Geheimnis wird nie gespeichert. '
+                'ausgeschlossen). Für die Offline-Nutzung liegen die neuesten '
+                '50 E-Mails des Posteingangs (bis 5 MB je Mail) im '
+                'Cache-Ordner der App, von Backups ausgeschlossen. Das '
+                'TOTP-Geheimnis wird nie gespeichert. '
                 'Übertragen werden die Zugangsdaten ausschließlich '
                 'TLS-verschlüsselt an die offiziellen Server der TH Köln '
                 'bzw. der KISD — an niemanden sonst.\n\n'

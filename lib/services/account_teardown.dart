@@ -20,9 +20,9 @@ import 'service_locator.dart';
 ///
 /// Cleared: courses and their scrape/semester stamps, the whole EventStore
 /// (and with it the iOS "KISD" calendar mirror), pending course reminders,
-/// mail state, the favourites prefetch.
+/// mail state including the offline mail copy, the favourites prefetch.
 /// Kept, because they are device settings or public: theme, semester choice,
-/// reminder opt-in, KISD events, the semester list.
+/// reminder opt-in, KISD events, the semester list, the offline mensa menu.
 class AccountTeardown {
   AccountTeardown._();
 

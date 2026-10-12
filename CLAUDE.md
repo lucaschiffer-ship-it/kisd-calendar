@@ -200,6 +200,17 @@ The list search bar uses typo-tolerant fuzzy matching (`fuzzy` package, a Fuse.j
 
 IMAP via `enough_mail`. Credentials reused from `LoginService` (TH Köln email). Surfaces unread count to `HomeScreen` for the badge on the Mail tab.
 
+**Offline copy** (`lib/services/mail_offline_cache.dart`, pinned by `test/mail_offline_cache_test.dart`): the newest 50 inbox messages in `Library/Caches/mail_offline` — `index.json` holds the list rows (envelope, flags, size, preview), `<uid>.eml` the raw bodies (skipped above 5 MB). `connect()` shows it before going online; `fetchFullMessage` reads it first for the inbox. Gotchas:
+
+- **Inbox only.** UIDs are per mailbox; never read the cache for Sent/Trash/Drafts.
+- Bodies are downloaded on a **separate, EXAMINE'd `ImapClient` with `BODY.PEEK[]`** — the shared client's selected folder changes under any await, and plain `BODY[]` would mark 50 mails read.
+- Store bodies as **raw bytes** (`BinaryMimeData.data`), never via `renderMessage()` — it maps bytes to chars and mangles 8-bit umlauts.
+- `resetForAccountSwitch` bumps `_offlineGeneration` and clears the folder; every async cache step re-checks the generation so a sync in flight can't write the old account back.
+
+### Mensa (`MensaService`)
+
+openmensa.org, canteen 383. Network first; on failure falls back to an offline copy (SharedPreferences `mensa_offline_days`) of this week + the next two (Mon–Sun). `startOfflineSync()` (from `main.dart`) refreshes that window at launch and on resume, at most every 3 h after a complete pass. Pinned by `test/mensa_offline_test.dart`.
+
 ---
 
 ## Working Style

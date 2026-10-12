@@ -17,6 +17,8 @@ service.
 | Your confirmed sender email address | iOS Keychain | So sent mail carries your real address |
 | Which Campus ID the data on the device belongs to | iOS Keychain | So signing in with a different Campus ID clears the previous account's data |
 | Course list, schedule, favourites, theme settings | Local app storage on your device | App functionality |
+| Your newest 50 inbox emails (bodies up to 5 MB each) | The app's cache folder on your device (excluded from iCloud and device backups) | So recent mail can still be read offline |
+| The mensa menu for this week and the next two | Local app storage on your device | So the menu still opens offline |
 
 Your two-factor (TOTP) secret is **never** stored — you enter the one-time
 code yourself when TH Köln asks for it. Signing out — or signing in with a
@@ -80,7 +82,10 @@ Crash-Reporting, keine Telemetrie.
 -Passwort, Sitzungs-Cookies, die bestätigte Absenderadresse und die Angabe,
 zu welcher Campus-ID die Daten auf dem Gerät gehören, im iOS-Schlüsselbund
 (hardware-verschlüsselt, vom iCloud-Sync und von Backups ausgeschlossen), außerdem
-Kursliste, Favoriten und Einstellungen im lokalen App-Speicher. Das
+Kursliste, Favoriten und Einstellungen im lokalen App-Speicher. Für die
+Offline-Nutzung liegen zusätzlich die neuesten 50 E-Mails des Posteingangs
+(bis 5 MB je Mail) im Cache-Ordner der App (von Backups ausgeschlossen) und
+der Mensaplan dieser und der nächsten zwei Wochen im App-Speicher. Das
 TOTP-Geheimnis für die Zwei-Faktor-Authentifizierung wird **nie**
 gespeichert — den Einmalcode gibst du selbst ein.
 

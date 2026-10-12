@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:math' show min;
 
 import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'mail_offline_cache.dart';
 import 'service_locator.dart';
 
 /// Which IMAP folder a message lives in — used for folder-aware operations.
@@ -48,6 +50,18 @@ class MailService extends ChangeNotifier {
   Mailbox? _sentMailbox;
   Mailbox? _draftsMailbox;
 
+  final _offline = MailOfflineCache();
+  // The inbox UIDVALIDITY `_messages` belongs to — a cached UID only names
+  // the same mail while this is unchanged.
+  int? _inboxUidValidity;
+  // Bumped by resetForAccountSwitch, so a cache load or sync still in flight
+  // sees its account is gone and drops what it has instead of writing it.
+  int _offlineGeneration = 0;
+  bool _offlineSyncRunning = false;
+  bool _offlineSyncAgain = false;
+  bool _offlineFetchPending = false;
+  ImapClient? _offlineImap;
+
   final _unreadController = StreamController<int>.broadcast();
 
   bool get isConnected => _isConnected;
@@ -73,6 +87,10 @@ class MailService extends ChangeNotifier {
     _isConnecting = true;
     _connectionError = null;
     notifyListeners();
+
+    // The offline copy first, so the list is up before — or instead of —
+    // the server's answer.
+    if (_messages.isEmpty) await _loadOfflineInbox();
 
     final ok = await _ensureConnected();
     if (ok) {
@@ -136,6 +154,10 @@ class MailService extends ChangeNotifier {
   /// Drops the connection and all cached mail for the previous account. Safe
   /// to call when nothing is connected.
   Future<void> resetForAccountSwitch() async {
+    _offlineGeneration++;
+    _offlineImap?.disconnect();
+    _offlineImap = null;
+    _inboxUidValidity = null;
     _imap?.disconnect();
     _imap = null;
     _isConnected = false;
@@ -159,8 +181,155 @@ class MailService extends ChangeNotifier {
     // deletes this key too, but a direct re-login from LoginScreen does not —
     // clearing it here covers both switch paths from one place.
     await _storage.delete(key: _emailStorageKey);
+    try {
+      await _offline.clear();
+    } catch (e) {
+      _log('[mail] could not clear offline mail: $e');
+    }
     _unreadController.add(0);
     notifyListeners();
+  }
+
+  /// Shows the offline copy of the inbox. Only the signed-in account's: a
+  /// copy of someone else's is skipped, not deleted — deleting is the
+  /// account switch's job, which only runs once a login has succeeded.
+  Future<void> _loadOfflineInbox() async {
+    final generation = _offlineGeneration;
+    try {
+      final index = await _offline.readIndex();
+      final username = await _storage.read(key: 'kisd_username');
+      if (index == null || username == null) return;
+      if (generation != _offlineGeneration || _messages.isNotEmpty) return;
+      if (index.owner.trim().toLowerCase() != username.trim().toLowerCase()) {
+        return;
+      }
+      _messages = index.messages;
+      _inboxUidValidity = index.uidValidity;
+      // The account this mail belongs to — lets _resetIfAccountChanged clear
+      // it on a switch even if this session never got online.
+      _cachedUsername ??= username;
+      _log('[mail] showing ${_messages.length} offline messages');
+      _unreadController.add(unreadCount);
+      notifyListeners();
+    } catch (e) {
+      _log('[mail] could not load offline mail: $e');
+    }
+  }
+
+  /// Mirrors the inbox list into the offline copy and drops the full mails
+  /// that left it. With [fetchBodies], also downloads the ones it lacks — only
+  /// after an inbox fetch, so marking or deleting never opens a connection.
+  Future<void> _updateOfflineCopy({bool fetchBodies = false}) async {
+    final owner = _cachedUsername;
+    final uidValidity = _inboxUidValidity;
+    if (owner == null || uidValidity == null) return;
+    try {
+      await _offline.writeIndex(
+          owner: owner, uidValidity: uidValidity, messages: _messages);
+    } catch (e) {
+      _log('[mail] could not save offline list: $e');
+      return;
+    }
+    if (fetchBodies) _offlineFetchPending = true;
+    if (_offlineSyncRunning) {
+      _offlineSyncAgain = true;
+      return;
+    }
+    _offlineSyncRunning = true;
+    try {
+      do {
+        _offlineSyncAgain = false;
+        final fetch = _offlineFetchPending;
+        _offlineFetchPending = false;
+        await _syncOfflineBodies(fetch: fetch);
+      } while (_offlineSyncAgain);
+    } catch (e) {
+      _log('[mail] offline sync failed: $e');
+    } finally {
+      _offlineSyncRunning = false;
+    }
+  }
+
+  /// With [fetch], saves the full mails of the newest
+  /// [MailOfflineCache.maxMessages] inbox messages that aren't on disk yet —
+  /// a mail never changes under its UID, so each is downloaded once. Then
+  /// deletes the bodies of mails no longer in that list.
+  Future<void> _syncOfflineBodies({required bool fetch}) async {
+    final generation = _offlineGeneration;
+    final uidValidity = _inboxUidValidity;
+    final wanted = [
+      for (final m in _messages.take(MailOfflineCache.maxMessages))
+        if (m.uid != null) m,
+    ];
+    if (uidValidity == null) return;
+    final keep = {for (final m in wanted) m.uid!};
+
+    final have = await _offline.bodyUids();
+    final missing = [
+      for (final m in wanted)
+        if (!have.contains(m.uid) &&
+            (m.size ?? 0) <= MailOfflineCache.maxMessageBytes)
+          m.uid!,
+    ];
+    if (fetch && missing.isNotEmpty) {
+      await _fetchOfflineBodies(missing, keep, uidValidity, generation);
+    }
+    if (generation == _offlineGeneration) await _offline.prune(keep);
+  }
+
+  /// On a connection of its own, with the inbox EXAMINEd read-only: the shared
+  /// one's selected folder can change under any await (opening Sent mid-sync
+  /// would fetch Sent mails under inbox UIDs). BODY.PEEK so caching doesn't
+  /// mark 50 mails read.
+  Future<void> _fetchOfflineBodies(List<int> uids, Set<int> keep,
+      int uidValidity, int generation) async {
+    final username = await _storage.read(key: 'kisd_username');
+    final password = await _storage.read(key: 'kisd_password');
+    if (username == null || password == null) return;
+    if (generation != _offlineGeneration) return;
+
+    final imap = ImapClient(isLogEnabled: false);
+    _offlineImap = imap;
+    var saved = 0;
+    try {
+      await imap.connectToServer(_imapHost, _imapPort, isSecure: true);
+      await imap.login(username, password);
+      final inbox = await imap.examineMailbox(Mailbox(
+        encodedName: 'INBOX',
+        encodedPath: 'INBOX',
+        flags: [],
+        pathSeparator: '/',
+      ));
+      if (inbox.uidValidity != uidValidity) return;
+      for (var i = 0; i < uids.length; i += 10) {
+        if (generation != _offlineGeneration) return;
+        final chunk = uids.sublist(i, min(i + 10, uids.length));
+        final result = await imap.uidFetchMessages(
+          MessageSequence.fromIds(chunk, isUid: true),
+          'BODY.PEEK[]',
+          responseTimeout: const Duration(seconds: 90),
+        );
+        for (final m in result.messages) {
+          final uid = m.uid;
+          // Literal message bodies always arrive as bytes; keeping them
+          // byte-exact is what keeps 8-bit (umlaut) mail intact.
+          final data = m.mimeData;
+          if (uid == null || !keep.contains(uid) || data is! BinaryMimeData) {
+            continue;
+          }
+          if (data.data.length > MailOfflineCache.maxMessageBytes) continue;
+          if (generation != _offlineGeneration) return;
+          await _offline.writeBody(uid, data.data);
+          saved++;
+        }
+      }
+    } catch (e) {
+      _log('[mail] offline sync stopped: $e');
+    } finally {
+      if (identical(_offlineImap, imap)) _offlineImap = null;
+      imap.disconnect();
+      _log('[mail] saved $saved messages for offline reading');
+    }
   }
 
   Future<void> reloadInbox() async {
@@ -179,16 +348,19 @@ class MailService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _imap!.selectInbox();
+      final inbox = await _imap!.selectInbox();
       final result = await _imap!.fetchRecentMessages(
         messageCount: limit,
-        criteria: '(FLAGS ENVELOPE UID BODY.PEEK[TEXT]<0.500>)',
+        // RFC822.SIZE: lets the offline copy skip mails too big to keep.
+        criteria: '(FLAGS ENVELOPE UID RFC822.SIZE BODY.PEEK[TEXT]<0.500>)',
         responseTimeout: const Duration(seconds: 90),
       );
       _messages = result.messages.reversed.toList();
+      _inboxUidValidity = inbox.uidValidity;
       final unread = unreadCount;
       _log('[mail] fetched ${_messages.length} messages ($unread unread)');
       _unreadController.add(unread);
+      unawaited(_updateOfflineCopy(fetchBodies: true));
     } catch (e) {
       _log('[mail] error: $e');
       _isConnected = false;
@@ -234,6 +406,13 @@ class MailService extends ChangeNotifier {
 
   Future<MimeMessage?> fetchFullMessage(int uid,
       {MailFolder folder = MailFolder.inbox}) async {
+    // A mail never changes under its UID, so the offline copy is as good as
+    // the server's — and opens without a connection. Inbox only: UIDs are per
+    // mailbox, so a Sent or Trash UID can name an unrelated inbox mail.
+    if (folder == MailFolder.inbox) {
+      final cached = await _offlineBody(uid);
+      if (cached != null) return cached;
+    }
     final ok = await _ensureConnected();
     if (!ok) return null;
     try {
@@ -247,6 +426,29 @@ class MailService extends ChangeNotifier {
       _imap = null;
       return null;
     }
+  }
+
+  /// The saved full mail for [uid] when it is the inbox message listed under
+  /// that UID. The Message-ID comparison guards the narrow windows where the
+  /// saved bodies trail a UIDVALIDITY or account change.
+  Future<MimeMessage?> _offlineBody(int uid) async {
+    final listed = _messages.where((m) => m.uid == uid).firstOrNull;
+    if (listed == null) return null;
+    final MimeMessage? cached;
+    try {
+      cached = await _offline.readBody(uid);
+    } catch (_) {
+      return null;
+    }
+    if (cached == null) return null;
+    final listedId =
+        (listed.envelope?.messageId ?? listed.getHeaderValue('message-id'))
+            ?.trim();
+    final cachedId = cached.getHeaderValue('message-id')?.trim();
+    if (listedId != null && cachedId != null && listedId != cachedId) {
+      return null;
+    }
+    return cached;
   }
 
   Future<void> sendEmail(String to, String subject, String body,
@@ -585,6 +787,7 @@ class MailService extends ChangeNotifier {
       _mutableListFor(folder).removeWhere((m) => m.uid == uid);
       _unreadController.add(unreadCount);
       notifyListeners();
+      if (folder == MailFolder.inbox) unawaited(_updateOfflineCopy());
       // Refresh trash in background so the deleted message appears immediately.
       unawaited(fetchTrash());
     } catch (e) {
@@ -606,6 +809,7 @@ class MailService extends ChangeNotifier {
       if (idx >= 0) list[idx].isSeen = true;
       _unreadController.add(unreadCount);
       notifyListeners();
+      if (folder == MailFolder.inbox) unawaited(_updateOfflineCopy());
     } catch (e) {
       _log('[mail] error: $e');
     }
@@ -625,6 +829,7 @@ class MailService extends ChangeNotifier {
       if (idx >= 0) list[idx].isSeen = false;
       _unreadController.add(unreadCount);
       notifyListeners();
+      if (folder == MailFolder.inbox) unawaited(_updateOfflineCopy());
     } catch (e) {
       _log('[mail] error: $e');
     }
@@ -877,6 +1082,7 @@ class MailService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _offlineImap?.disconnect();
     _imap?.disconnect();
     _unreadController.close();
     super.dispose();

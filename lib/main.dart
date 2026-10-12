@@ -7,6 +7,7 @@ import 'screens/login_screen.dart';
 import 'services/account_teardown.dart';
 import 'services/calendar_service.dart';
 import 'services/course_reminder_scheduler.dart';
+import 'services/mensa_service.dart';
 import 'services/notification_service.dart';
 import 'services/service_locator.dart';
 import 'services/theme_service.dart';
@@ -26,6 +27,7 @@ void main() async {
   CalendarService.instance.performStartupCleanup().ignore();
   loginService.navigatorKey = navigatorKey;
   pagePrefetcher.start();
+  mensaService.startOfflineSync();
 
   // Keep AppColorScheme.current in sync with ThemeService so all AppThemeTokens
   // reads are mode-correct at widget build time.  The listener fires before any

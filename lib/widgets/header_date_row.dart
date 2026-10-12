@@ -20,10 +20,20 @@ const _kMonths = [
   'DEC',
 ];
 
-/// The list page's header date and clock (`MON, OCT 12 … 15:20`), styled the
-/// same, for the other pages' headers. Lay it out in a 52-tall box, like the
-/// list's date row. Keeps its own clock so the minute tick only repaints this
-/// row, not the page around it.
+/// Gap between the status bar and the date row, on every page that shows it.
+const double kHeaderDateRowTopGap = 6.0;
+
+/// Height of the date row's box, on every page that shows it.
+///
+/// Both constants are load-bearing: the row is a shared header element, and
+/// it only stands still across a page switch while every page places it
+/// identically.
+const double kHeaderDateRowH = 52.0;
+
+/// The header date and clock (`MON, OCT 12 … 15:20`) shared by the list, Mail
+/// and Mensa. Lay it out at [kHeaderDateRowTopGap] below the status bar in a
+/// [kHeaderDateRowH]-tall box. Keeps its own clock so the minute tick only
+/// repaints this row, not the page around it.
 ///
 /// [titleColor] is passed in rather than read here so a theme change, which
 /// rebuilds the page, re-renders the row with the new colour.

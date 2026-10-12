@@ -20,20 +20,16 @@ import '../services/service_locator.dart';
 import '../services/theme_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/course_shell_card.dart';
+import '../widgets/header_date_row.dart';
 import '../widgets/like_icon.dart';
 import '../widgets/morphing_glass_header.dart';
 import '../widgets/page_floating_actions.dart';
 import 'course_shell_edit_screen.dart';
 import 'settings_screen.dart';
 
-// ── Abbreviations ─────────────────────────────────────────────────────────────
-const _kWeekdays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
-const _kMonths   = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
-                    'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
-
 // ── Layout constants ──────────────────────────────────────────────────────────
-const double _kTitleRowH  = 6.0;   // gap below the status bar (title row moved to the bottom bar)
-const double _kDateRowH   = 52.0;  // date/time row + vertical padding
+const double _kTitleRowH  = kHeaderDateRowTopGap; // gap below the status bar (title row moved to the bottom bar)
+const double _kDateRowH   = kHeaderDateRowH;      // date/time row + vertical padding
 // Tab text is 18px; below it sit 6px gap + 2px underline + 8px padding = 16px
 // to the header bottom. Top padding matches that 16px so the tabs look evenly
 // spaced between the search bar and the header edge (underline ignored).
@@ -738,6 +734,7 @@ class _ListScreenState extends State<ListScreen>
     required double reveal,
     required double statusH,
     required Widget topSection,
+    required Widget dateRow,
     required Widget? eventsContent,
     required Widget searchBar,
     required Widget filterBar,
@@ -750,7 +747,8 @@ class _ListScreenState extends State<ListScreen>
       child: Stack(
         clipBehavior: Clip.hardEdge,
         children: [
-          // ── Top section: status bar + title + date/time (always visible) ──
+          // ── Top section: status bar gap + semester hint (always visible) ──
+          // The date/time row sitting in it is a shared element, below.
           Positioned(
             top: 0, left: 0, right: 0, height: topH,
             child: topSection,
@@ -760,45 +758,27 @@ class _ListScreenState extends State<ListScreen>
           // Two independently collapsing regions, each clipping its content
           // at its own top edge so it slides up behind whatever sits above:
           //  • events — height tracks scroll offset (back only at the top)
-          //  • search — height tracks the direction-based reveal
+          //  • search — height tracks the direction-based reveal; directly
+          //    below the events, as a shared element (see below)
+          // Always present, so the filter bar after it keeps its slot when
+          // the day's events arrive.
           Positioned(
             top: topH,
-            bottom: _kFilterBarH,
             left: 20,
             right: 20,
-            child: Column(
-              children: [
-                if (eventsContent != null)
-                  SizedBox(
-                    height: eventsH,
-                    width: double.infinity,
-                    child: Stack(
-                      clipBehavior: Clip.hardEdge,
-                      children: [
-                        Positioned(
-                          bottom: _kEventsGapH, left: 0, right: 0,
-                          height: _eventsContentH(_todayEvents.length),
-                          child: eventsContent,
-                        ),
-                      ],
-                    ),
-                  ),
-                SizedBox(
-                  height: _kSearchRevealRange * reveal,
-                  width: double.infinity,
-                  child: Stack(
+            height: eventsH,
+            child: eventsContent == null
+                ? const SizedBox.shrink()
+                : Stack(
                     clipBehavior: Clip.hardEdge,
                     children: [
                       Positioned(
-                        bottom: 0, left: 0, right: 0,
-                        height: _kSearchH,
-                        child: searchBar,
+                        bottom: _kEventsGapH, left: 0, right: 0,
+                        height: _eventsContentH(_todayEvents.length),
+                        child: eventsContent,
                       ),
                     ],
                   ),
-                ),
-              ],
-            ),
           ),
 
           // ── Bottom: filter chips + count (always visible) ─────────────────
@@ -810,9 +790,40 @@ class _ListScreenState extends State<ListScreen>
       ),
     );
 
+    // The date row (shared with Mail and Mensa) and the search bar (shared
+    // with Mail) stay put across a switch to those pages; see
+    // MorphingGlassHeader. The search box is 10 of gap above a bottom-aligned
+    // 36 bar, matching Mail's, so equal tops mean an identical position.
     return MorphingGlassHeader(
       handle: widget.header,
       height: currentH,
+      shared: [
+        HeaderSharedElement(
+          tag: 'date',
+          top: statusH + _kTitleRowH,
+          height: _kDateRowH,
+          child: dateRow,
+        ),
+        HeaderSharedElement(
+          tag: 'search',
+          top: topH + eventsH,
+          height: _kSearchRevealRange * reveal,
+          horizontalInset: 20,
+          // Only while it looks exactly like Mail's: fully revealed and
+          // empty. Otherwise it fades like the rest.
+          shareable: reveal > 0.999 && _searchQuery.isEmpty,
+          child: Stack(
+            clipBehavior: Clip.hardEdge,
+            children: [
+              Positioned(
+                bottom: 0, left: 0, right: 0,
+                height: _kSearchH,
+                child: searchBar,
+              ),
+            ],
+          ),
+        ),
+      ],
       child: body,
     );
   }
@@ -858,50 +869,13 @@ class _ListScreenState extends State<ListScreen>
     );
   }
 
-  Widget _buildTopSection(
-      double statusH, Color titleColor, Color secondaryColor) {
+  // Status bar gap, the date row's slot (the row itself is a shared header
+  // element) and, while a semester override is in force, its hint.
+  Widget _buildTopSection(double statusH) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(height: statusH + _kTitleRowH),
-        // Date + clock — scoped to the notifier so the minute tick only
-        // repaints this row, not the whole screen.
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-            child: ValueListenableBuilder<DateTime>(
-              valueListenable: _now,
-              builder: (context, now, _) => Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  RichText(
-                    text: TextSpan(
-                      style: AppTextStyle.cardTitle
-                          .copyWith(fontSize: 32, color: titleColor),
-                      children: [
-                        TextSpan(
-                          text: _kWeekdays[now.weekday - 1],
-                          style: const TextStyle(color: AppColors.accent),
-                        ),
-                        TextSpan(
-                            text:
-                                ', ${_kMonths[now.month - 1]} ${now.day}'),
-                      ],
-                    ),
-                  ),
-                  Text(
-                    '${now.hour.toString().padLeft(2, '0')}:'
-                    '${now.minute.toString().padLeft(2, '0')}',
-                    style: AppTextStyle.cardTitle
-                        .copyWith(fontSize: 32, color: titleColor),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
+        SizedBox(height: statusH + _kTitleRowH + _kDateRowH),
         if (Semester.isOverridden) _buildSemesterHint(),
       ],
     );
@@ -1106,8 +1080,8 @@ class _ListScreenState extends State<ListScreen>
         // Built once per setState/theme change; the scroll-driven overlay
         // rebuild below reuses these exact instances, so their subtrees are
         // skipped on every scroll frame.
-        final topSection =
-            _buildTopSection(statusH, titleColor, secondaryColor);
+        final topSection = _buildTopSection(statusH);
+        final dateRow = HeaderDateRow(titleColor: titleColor);
         final eventsContent =
             _todayEvents.isEmpty ? null : _buildEventsContent();
         final searchBar = _buildSearchBar(titleColor, secondaryColor);
@@ -1154,6 +1128,7 @@ class _ListScreenState extends State<ListScreen>
                     reveal: reveal,
                     statusH: statusH,
                     topSection: topSection,
+                    dateRow: dateRow,
                     eventsContent: eventsContent,
                     searchBar: searchBar,
                     filterBar: filterBar,

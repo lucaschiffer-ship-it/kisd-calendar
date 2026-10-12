@@ -264,8 +264,8 @@ class _MailScreenState extends State<MailScreen>
     // filter button's icon (accent off the inbox) says which folder is open.
     final view = View.of(context);
     final statusH = view.viewPadding.top / view.devicePixelRatio;
-    const topGapH = 6.0;
-    const dateRowH = 52.0;
+    const topGapH = kHeaderDateRowTopGap;
+    const dateRowH = kHeaderDateRowH;
     const searchH = 36.0;
     // Above and below the search bar. On the list the filter tabs sit below
     // it; here the header edge does.
@@ -277,66 +277,82 @@ class _MailScreenState extends State<MailScreen>
     final secondaryColor = tokens.AppThemeTokens.secondaryTextColor;
     final searchRadius = tokens.AppThemeTokens.cardBorderRadius;
 
+    // Both pieces are shared elements: the date row with Mensa and the list,
+    // the search bar with the list, so switching between those pages leaves
+    // them in place (see MorphingGlassHeader). The search box matches the
+    // list's: 10 of gap above a bottom-aligned 36 bar, so both report the
+    // same top.
+    final searchField = TextField(
+      controller: _searchCtrl,
+      onChanged: (v) => setState(() => _searchQuery = v),
+      style: TextStyle(color: titleColor, fontSize: 14),
+      decoration: InputDecoration(
+        hintText: 'Search',
+        hintStyle: TextStyle(
+            color: secondaryColor.withValues(alpha: 0.45),
+            fontSize: 14),
+        filled: true,
+        fillColor: secondaryColor.withValues(alpha: 0.05),
+        prefixIcon: Icon(Icons.search,
+            color: secondaryColor.withValues(alpha: 0.5), size: 17),
+        suffixIcon: _searchQuery.isNotEmpty
+            ? GestureDetector(
+                onTap: () => setState(() {
+                  _searchCtrl.clear();
+                  _searchQuery = '';
+                }),
+                child: Icon(Icons.close,
+                    color: secondaryColor, size: 16),
+              )
+            : null,
+        contentPadding: EdgeInsets.zero,
+        isDense: true,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(searchRadius),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(searchRadius),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(searchRadius),
+          borderSide: BorderSide(
+              color: tokens.AppThemeTokens.accentColor, width: 1),
+        ),
+      ),
+    );
+
     final header = MorphingGlassHeader(
       handle: widget.header,
       height: headerH,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(height: statusH + topGapH),
-          SizedBox(
-            height: dateRowH,
-            child: HeaderDateRow(titleColor: titleColor),
-          ),
-          // ── Search ────────────────────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, searchGapH, 20, searchGapH),
-            child: SizedBox(
-              height: searchH,
-              child: TextField(
-                controller: _searchCtrl,
-                onChanged: (v) => setState(() => _searchQuery = v),
-                style: TextStyle(color: titleColor, fontSize: 14),
-                decoration: InputDecoration(
-                  hintText: 'Search',
-                  hintStyle: TextStyle(
-                      color: secondaryColor.withValues(alpha: 0.45),
-                      fontSize: 14),
-                  filled: true,
-                  fillColor: secondaryColor.withValues(alpha: 0.05),
-                  prefixIcon: Icon(Icons.search,
-                      color: secondaryColor.withValues(alpha: 0.5), size: 17),
-                  suffixIcon: _searchQuery.isNotEmpty
-                      ? GestureDetector(
-                          onTap: () => setState(() {
-                            _searchCtrl.clear();
-                            _searchQuery = '';
-                          }),
-                          child: Icon(Icons.close,
-                              color: secondaryColor, size: 16),
-                        )
-                      : null,
-                  contentPadding: EdgeInsets.zero,
-                  isDense: true,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(searchRadius),
-                    borderSide: BorderSide.none,
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(searchRadius),
-                    borderSide: BorderSide.none,
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(searchRadius),
-                    borderSide: BorderSide(
-                        color: tokens.AppThemeTokens.accentColor, width: 1),
-                  ),
-                ),
+      shared: [
+        HeaderSharedElement(
+          tag: 'date',
+          top: statusH + topGapH,
+          height: dateRowH,
+          child: HeaderDateRow(titleColor: titleColor),
+        ),
+        HeaderSharedElement(
+          tag: 'search',
+          top: statusH + topGapH + dateRowH,
+          height: searchGapH + searchH,
+          horizontalInset: 20,
+          // A typed query wouldn't match the list's field; fade it instead.
+          shareable: _searchQuery.isEmpty,
+          child: Stack(
+            clipBehavior: Clip.hardEdge,
+            children: [
+              Positioned(
+                bottom: 0, left: 0, right: 0, height: searchH,
+                child: searchField,
               ),
-            ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
+      // Nothing of its own left to fade — both pieces are shared.
+      child: const SizedBox.shrink(),
     );
 
     return Stack(

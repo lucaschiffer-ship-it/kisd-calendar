@@ -38,6 +38,15 @@ class HeaderPagerController {
   /// Plain doubles, never notified: writes happen during build, and every
   /// read already occurs inside a [pagePos]-driven rebuild.
   late final List<double> heights = List.filled(pageCount, 0.0);
+
+  /// Per page, the header elements it currently offers to share with its
+  /// neighbours: tag → top offset within the header. Replaced wholesale on
+  /// every header build, so a tag that stops qualifying drops out. Same
+  /// never-notified contract as [heights].
+  late final List<Map<String, double>> sharedTops = List.generate(
+    pageCount,
+    (_) => const {},
+  );
 }
 
 /// One page's view onto the [HeaderPagerController].
@@ -48,4 +57,7 @@ class PageHeaderHandle {
   final HeaderPagerController controller;
 
   void reportHeight(double h) => controller.heights[index] = h;
+
+  void reportShared(Map<String, double> tops) =>
+      controller.sharedTops[index] = tops;
 }

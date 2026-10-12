@@ -208,21 +208,27 @@ class _MensaScreenState extends State<MensaScreen>
     final statusH = view.viewPadding.top / view.devicePixelRatio;
     // The list page's date/clock row, then the calendar's week strip in place
     // of the old ‹ date › row.
-    const topGapH  = 6.0;
-    const dateRowH = 52.0;
+    const topGapH  = kHeaderDateRowTopGap;
+    const dateRowH = kHeaderDateRowH;
     final headerH  = statusH + topGapH + dateRowH + _kWeekStripH;
 
     final header = MorphingGlassHeader(
       handle: widget.header,
       height: headerH,
+      // The date row is shared with Mail and the list, so it stays put when
+      // switching to Mail; only the week strip morphs.
+      shared: [
+        HeaderSharedElement(
+          tag: 'date',
+          top: statusH + topGapH,
+          height: dateRowH,
+          child: HeaderDateRow(titleColor: tokens.AppThemeTokens.titleColor),
+        ),
+      ],
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(height: statusH + topGapH),
-          SizedBox(
-            height: dateRowH,
-            child: HeaderDateRow(titleColor: tokens.AppThemeTokens.titleColor),
-          ),
+          SizedBox(height: statusH + topGapH + dateRowH),
           _WeekStrip(
             focusedDay: _selectedDate,
             onDayTap: (day) => _goToPage(_pageForDate(day)),

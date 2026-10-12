@@ -178,8 +178,13 @@ class CourseReminderScheduler {
   static String _hhmm(DateTime d) =>
       '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
 
+  static const _weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  static String _ddd(DateTime d) => _weekdays[d.weekday - 1];
+
   static String bodyFor(int slot, DateTime firstMeeting) => switch (slot) {
-    0 => 'First meeting will be next week at ${_hhmm(firstMeeting)}',
+    0 =>
+      'First meeting will be next week, ${_ddd(firstMeeting)} at ${_hhmm(firstMeeting)}',
     1 => 'First meeting will be tomorrow at ${_hhmm(firstMeeting)}',
     _ => 'First meeting will be in one hour',
   };

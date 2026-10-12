@@ -144,7 +144,7 @@ void main() {
         tz.TZDateTime(berlin, 2026, 10, 14, 9, 30),
       ]);
       expect(r.map((e) => e.body), [
-        'First meeting will be next week at 10:30',
+        'First meeting will be next week, Wed at 10:30',
         'First meeting will be tomorrow at 10:30',
         'First meeting will be in one hour',
       ]);

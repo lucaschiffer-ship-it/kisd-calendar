@@ -1,3 +1,5 @@
+import 'dart:ui' show lerpDouble;
+
 import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -17,6 +19,34 @@ import 'email_detail_screen.dart';
 
 enum _MailFilter { all, unread, drafts, sent, trash }
 
+extension on _MailFilter {
+  /// `all` reads "Inbox": it only ever shows the inbox, and Unread is a view of
+  /// that same folder rather than a mailbox of its own.
+  String get label => switch (this) {
+        _MailFilter.all    => 'Inbox',
+        _MailFilter.unread => 'Unread',
+        _MailFilter.drafts => 'Drafts',
+        _MailFilter.sent   => 'Sent',
+        _MailFilter.trash  => 'Trash',
+      };
+
+  /// Apple Mail's glyphs, except Unread. Apple's envelope-with-dot looked
+  /// just like the Mail tab icon right below the button, so Unread is the
+  /// list's own unread dot instead. Drafts is a document, not a pencil, so it
+  /// can't be mistaken for the compose button sitting right next to the strip.
+  IconData get icon => switch (this) {
+        _MailFilter.all    => CupertinoIcons.tray,
+        _MailFilter.unread => CupertinoIcons.circle_fill,
+        _MailFilter.drafts => CupertinoIcons.doc_text,
+        _MailFilter.sent   => CupertinoIcons.paperplane,
+        _MailFilter.trash  => CupertinoIcons.trash,
+      };
+
+  /// The unread dot is a solid disc: at full icon size it would outweigh the
+  /// line glyphs around it, so it renders at half size.
+  double get iconScale => this == _MailFilter.unread ? 0.5 : 1.0;
+}
+
 class MailScreen extends StatefulWidget {
   const MailScreen({super.key, required this.actions, required this.header});
 
@@ -28,7 +58,7 @@ class MailScreen extends StatefulWidget {
 }
 
 class _MailScreenState extends State<MailScreen>
-    with AutomaticKeepAliveClientMixin {
+    with AutomaticKeepAliveClientMixin, SingleTickerProviderStateMixin {
   @override
   bool get wantKeepAlive => true;
 
@@ -40,9 +70,23 @@ class _MailScreenState extends State<MailScreen>
   final _searchCtrl = TextEditingController();
   String _searchQuery = '';
 
+  late final AnimationController _filterMenuCtrl;
+  late final Animation<double> _filterMenuAnim;
+  bool _filterMenuOpen = false;
+
   @override
   void initState() {
     super.initState();
+    _filterMenuCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
+    );
+    _filterMenuAnim = CurvedAnimation(
+      parent: _filterMenuCtrl,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+    widget.header.controller.pagePos.addListener(_onPagePos);
     widget.actions.handler = _onReload;
     mailService.addListener(_onUpdate);
     // Unconditional: `connect()` guards on its own flags, and it now clears
@@ -56,8 +100,50 @@ class _MailScreenState extends State<MailScreen>
   @override
   void dispose() {
     mailService.removeListener(_onUpdate);
+    widget.header.controller.pagePos.removeListener(_onPagePos);
+    _filterMenuCtrl.dispose();
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  // The nav bar and the Spaces square can carry the user off this page, but
+  // they live outside this Stack, so the scrim never sees those taps. Fold the
+  // strip as soon as the pager leaves this page instead.
+  void _onPagePos() {
+    if (!_filterMenuOpen) return;
+    final n = widget.header.controller.pageCount;
+    // Signed shortest circular distance, matching PageFloatingActions.
+    var d = (widget.header.index - widget.header.controller.pagePos.value) % n;
+    if (d > n / 2) d -= n;
+    if (d.abs() > 0.01) _closeFilterMenu();
+  }
+
+  void _openFilterMenu() {
+    setState(() => _filterMenuOpen = true);
+    _filterMenuCtrl.forward();
+  }
+
+  void _closeFilterMenu() {
+    if (!_filterMenuOpen) return;
+    setState(() => _filterMenuOpen = false);
+    _filterMenuCtrl.reverse();
+  }
+
+  // Each folder is fetched the first time it's opened — the same guards the
+  // old header chips ran inline.
+  void _selectFilter(_MailFilter f) {
+    setState(() => _filter = f);
+    if (f == _MailFilter.drafts && !_draftsFetchTriggered) {
+      _draftsFetchTriggered = true;
+      mailService.fetchDrafts();
+    } else if (f == _MailFilter.sent && !_sentFetchTriggered) {
+      _sentFetchTriggered = true;
+      mailService.fetchSent();
+    } else if (f == _MailFilter.trash && !_trashFetchTriggered) {
+      _trashFetchTriggered = true;
+      mailService.fetchTrash();
+    }
+    _closeFilterMenu();
   }
 
   void _onUpdate() {
@@ -178,8 +264,10 @@ class _MailScreenState extends State<MailScreen>
     final view = View.of(context);
     final statusH = view.viewPadding.top / view.devicePixelRatio;
     const topGapH = 6.0;
-    const filterH = 110.0;
-    final headerH = statusH + topGapH + filterH;
+    const titleH = 36.0;
+    const searchH = 44.0;
+    const chromeH = titleH + searchH + 12.0;
+    final headerH = statusH + topGapH + chromeH;
 
     final glass = ThemeService.instance.glassEnabled.value;
     final searchBorder = BorderSide(
@@ -196,120 +284,67 @@ class _MailScreenState extends State<MailScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(height: statusH + topGapH),
-          // ── Search + filter chips ─────────────────────────────────────────
+          // ── Folder title ──────────────────────────────────────────────────
+          // The filter chips moved to the bottom strip, so this is what says
+          // which folder is showing. Styled like Mensa's date row.
+          SizedBox(
+            height: titleH,
+            child: Center(
+              child: Text(
+                _filter.label,
+                style: AppTextStyles.body(
+                        color: tokens.AppThemeTokens.titleColor)
+                    .copyWith(fontWeight: FontWeight.w500),
+              ),
+            ),
+          ),
+          // ── Search ────────────────────────────────────────────────────────
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(
-                  height: 44,
-                  child: TextField(
-                    controller: _searchCtrl,
-                    onChanged: (v) => setState(() => _searchQuery = v),
-                    style: AppTextStyles.bodyLarge(
-                        color: tokens.AppThemeTokens.titleColor),
-                    decoration: InputDecoration(
-                      hintText: 'Search mail...',
-                      hintStyle: AppTextStyles.bodyLarge(
-                          color: tokens.AppThemeTokens.secondaryTextColor),
-                      filled: true,
-                      fillColor: glass
-                          ? Colors.white.withValues(alpha: AppGlass.fillAlpha)
-                          : tokens.AppThemeTokens.cardBackground,
-                      prefixIcon: Icon(Icons.search,
-                          color: tokens.AppThemeTokens.secondaryTextColor,
-                          size: 20),
-                      suffixIcon: _searchQuery.isNotEmpty
-                          ? GestureDetector(
-                              onTap: () => setState(() {
-                                _searchCtrl.clear();
-                                _searchQuery = '';
-                              }),
-                              child: Icon(Icons.close,
-                                  color:
-                                      tokens.AppThemeTokens.secondaryTextColor,
-                                  size: 18),
-                            )
-                          : null,
-                      contentPadding: EdgeInsets.zero,
-                      isDense: true,
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(barRadius),
-                          borderSide: searchBorder),
-                      enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(barRadius),
-                          borderSide: searchBorder),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(barRadius),
-                        borderSide: BorderSide(color: s.accent, width: 1),
-                      ),
-                    ),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: SizedBox(
+              height: searchH,
+              child: TextField(
+                controller: _searchCtrl,
+                onChanged: (v) => setState(() => _searchQuery = v),
+                style: AppTextStyles.bodyLarge(
+                    color: tokens.AppThemeTokens.titleColor),
+                decoration: InputDecoration(
+                  hintText: 'Search mail...',
+                  hintStyle: AppTextStyles.bodyLarge(
+                      color: tokens.AppThemeTokens.secondaryTextColor),
+                  filled: true,
+                  fillColor: glass
+                      ? Colors.white.withValues(alpha: AppGlass.fillAlpha)
+                      : tokens.AppThemeTokens.cardBackground,
+                  prefixIcon: Icon(Icons.search,
+                      color: tokens.AppThemeTokens.secondaryTextColor,
+                      size: 20),
+                  suffixIcon: _searchQuery.isNotEmpty
+                      ? GestureDetector(
+                          onTap: () => setState(() {
+                            _searchCtrl.clear();
+                            _searchQuery = '';
+                          }),
+                          child: Icon(Icons.close,
+                              color:
+                                  tokens.AppThemeTokens.secondaryTextColor,
+                              size: 18),
+                        )
+                      : null,
+                  contentPadding: EdgeInsets.zero,
+                  isDense: true,
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(barRadius),
+                      borderSide: searchBorder),
+                  enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(barRadius),
+                      borderSide: searchBorder),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(barRadius),
+                    borderSide: BorderSide(color: s.accent, width: 1),
                   ),
                 ),
-                const SizedBox(height: 10),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _FilterChip(
-                        label: 'All',
-                        selected: _filter == _MailFilter.all,
-                        onTap: () => setState(() => _filter = _MailFilter.all),
-                        radius: barRadius,
-                      ),
-                      const SizedBox(width: 8),
-                      _FilterChip(
-                        label: 'Unread',
-                        selected: _filter == _MailFilter.unread,
-                        onTap: () =>
-                            setState(() => _filter = _MailFilter.unread),
-                        radius: barRadius,
-                      ),
-                      const SizedBox(width: 8),
-                      _FilterChip(
-                        label: 'Drafts',
-                        selected: _filter == _MailFilter.drafts,
-                        onTap: () {
-                          setState(() => _filter = _MailFilter.drafts);
-                          if (!_draftsFetchTriggered) {
-                            _draftsFetchTriggered = true;
-                            mailService.fetchDrafts();
-                          }
-                        },
-                        radius: barRadius,
-                      ),
-                      const SizedBox(width: 8),
-                      _FilterChip(
-                        label: 'Sent',
-                        selected: _filter == _MailFilter.sent,
-                        onTap: () {
-                          setState(() => _filter = _MailFilter.sent);
-                          if (!_sentFetchTriggered) {
-                            _sentFetchTriggered = true;
-                            mailService.fetchSent();
-                          }
-                        },
-                        radius: barRadius,
-                      ),
-                      const SizedBox(width: 8),
-                      _FilterChip(
-                        label: '',
-                        icon: Icons.delete_outline,
-                        selected: _filter == _MailFilter.trash,
-                        onTap: () {
-                          setState(() => _filter = _MailFilter.trash);
-                          if (!_trashFetchTriggered) {
-                            _trashFetchTriggered = true;
-                            mailService.fetchTrash();
-                          }
-                        },
-                        radius: barRadius,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
           const SizedBox(height: 12),
@@ -404,25 +439,37 @@ class _MailScreenState extends State<MailScreen>
         ),
         Positioned(top: 0, left: 0, right: 0, child: header),
 
-        // ── Compose button ────────────────────────────────────────────────
+        // Folds the filter strip on a tap anywhere outside it. Has to sit
+        // before PageFloatingActions: it's opaque while the strip is open and
+        // would swallow the strip's own taps from above.
+        Positioned.fill(
+          child: IgnorePointer(
+            ignoring: !_filterMenuOpen,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _closeFilterMenu,
+              child: FadeTransition(
+                opacity: _filterMenuAnim,
+                child: const ColoredBox(color: Color(0x26000000)),
+              ),
+            ),
+          ),
+        ),
+
+        // ── Compose + filter ──────────────────────────────────────────────
         // Same material, size and baseline as the Spaces mini bar's square,
-        // mirrored to the right-hand side.
+        // mirrored to the right-hand side. Must stay last in this Stack.
         PageFloatingActions(
           handle: widget.header,
           children: [
-            GestureDetector(
-              onTap: openCompose,
-              child: GlassPill(
-                child: SizedBox(
-                  width: kFloatingButtonSize,
-                  height: kFloatingButtonSize,
-                  child: Icon(
-                    Icons.edit_outlined,
-                    color: tokens.AppThemeTokens.navBarIcon,
-                    size: 24,
-                  ),
-                ),
-              ),
+            _FilterCluster(
+              progress: _filterMenuAnim,
+              active: _filter,
+              open: _filterMenuOpen,
+              onOpen: _openFilterMenu,
+              onClose: _closeFilterMenu,
+              onSelect: _selectFilter,
+              onCompose: openCompose,
             ),
           ],
         ),
@@ -431,78 +478,295 @@ class _MailScreenState extends State<MailScreen>
   }
 }
 
-// ── Filter chip ───────────────────────────────────────────────────────────────
+// ── Filter cluster ────────────────────────────────────────────────────────────
 
-/// Header-sized sibling of the bottom cluster's [GlassPill]: same shape, same
-/// hairline, no fill.
+/// Width of each folder slot in the open filter strip — the same nominal 48 as
+/// the bottom bar's reload/settings slots (`_utilSlotW`).
+const double _kStripSlotW = 48.0;
+
+/// Open width of the filter strip: five folder slots, plus the corner slot,
+/// which keeps the closed button's full 50 so its glyph never moves.
 ///
-/// A fill would be wasted here. These sit *on* the header's glass, not over live
-/// page content, so a tint at chip strength lands on a surface already tinted the
-/// same way and reads as nothing — which is why the old accent-filled version
-/// looked mushy. The border is the only shape signal the material leaves, so
-/// selection moves onto the label/icon instead.
-class _FilterChip extends StatelessWidget {
-  const _FilterChip({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-    required this.radius,
-    this.icon,
+/// Has to stay clear of the Spaces square, which HomeScreen paints *above*
+/// every page at `left: 12`, 50 wide. That leaves the strip W − 82 (12 + 50, an
+/// 8 gap, and the 12 right inset): 293 on a 375-pt iPhone, the narrowest one.
+/// Another slot, or a wider one, stops fitting there.
+const double _kStripW = kFloatingButtonSize + 5 * _kStripSlotW;
+
+/// Compose sits one button plus the cluster's usual 8 gap in from the corner.
+const double _kComposeRight = kFloatingButtonSize + 8;
+
+/// Folder order in the strip, left to right.
+const _kStripFilters = [
+  _MailFilter.all,
+  _MailFilter.unread,
+  _MailFilter.drafts,
+  _MailFilter.sent,
+  _MailFilter.trash,
+];
+
+/// Compose and the filter button, bottom-right.
+///
+/// Closed, the filter button shows the active folder's icon, in accent on any
+/// folder but the inbox. Tapped, it widens leftwards into a strip of
+/// folder icons over the compose button, with ✕ in the corner it started from.
+/// A caption above the strip names the active folder, or whichever icon is
+/// under the finger, so holding an icon reads its name and sliding off cancels.
+class _FilterCluster extends StatefulWidget {
+  const _FilterCluster({
+    required this.progress,
+    required this.active,
+    required this.open,
+    required this.onOpen,
+    required this.onClose,
+    required this.onSelect,
+    required this.onCompose,
   });
 
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-  final double radius;
-  final IconData? icon;
+  /// 0 = closed button, 1 = fully open strip.
+  final Animation<double> progress;
+  final _MailFilter active;
+  final bool open;
+  final VoidCallback onOpen;
+  final VoidCallback onClose;
+  final ValueChanged<_MailFilter> onSelect;
+  final VoidCallback onCompose;
 
   @override
-  Widget build(BuildContext context) {
+  State<_FilterCluster> createState() => _FilterClusterState();
+}
+
+class _FilterClusterState extends State<_FilterCluster> {
+  /// The folder under the finger, if any — the caption follows it.
+  _MailFilter? _pressed;
+
+  @override
+  void didUpdateWidget(covariant _FilterCluster oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.open) _pressed = null;
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: widget.progress,
+    builder: (context, _) => _buildCluster(widget.progress.value),
+  );
+
+  Widget _buildCluster(double t) {
     final s = AppColorScheme.current;
-    // GlassPill's rule verbatim (glass_pill.dart) — keyed on the color scheme,
-    // not on `glassEnabled`, so the hairline matches the floating pills in both.
-    final borderColor = ThemeService.instance.currentColor.value == 'dark'
-        ? AppGlass.dividerColor
-        : s.cardBorder;
-    final idleColor = tokens.AppThemeTokens.secondaryTextColor;
+    final iconColor = tokens.AppThemeTokens.navBarIcon;
+    final pillW = lerpDouble(kFloatingButtonSize, _kStripW, t)!;
 
-    return GestureDetector(
-      onTap: onTap,
-      // The chip paints nothing inside its border now, so the whole box has to
-      // be claimed explicitly — same as every other tappable in the chrome.
-      behavior: HitTestBehavior.opaque,
-      child: TweenAnimationBuilder<double>(
-        tween: Tween(end: selected ? 1.0 : 0.0),
-        duration: const Duration(milliseconds: 150),
-        curve: Curves.easeOut,
-        builder: (context, t, _) {
-          final fg = Color.lerp(idleColor, s.accent, t)!;
-          // Picked off `t` rather than left to TextStyle.lerp, which rounds
-          // FontWeight to the nearest step anyway.
-          final weight = t > 0.5 ? FontWeight.w600 : FontWeight.w400;
+    // Gone before the strip's edge is most of the way across it — the glass
+    // is translucent, so compose would otherwise show through.
+    final composeOpacity = (1 - (pillW - kFloatingButtonSize) / 30)
+        .clamp(0.0, 1.0)
+        .toDouble();
 
-          return Container(
-            height: 36,
-            // Square when it's icon-only, so pill radius yields a true circle
-            // like the bottom cluster's icon buttons.
-            width: icon != null ? 36 : null,
-            padding: icon != null
-                ? EdgeInsets.zero
-                : const EdgeInsets.symmetric(horizontal: 14),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(radius),
-              border: Border.all(color: borderColor, width: 0.5),
-            ),
-            alignment: Alignment.center,
-            child: icon != null
-                ? Icon(icon, size: 18, color: fg)
-                : Text(
-                    label,
-                    style: AppTextStyles.bodySmall(color: fg)
-                        .copyWith(fontWeight: weight),
+    final caption = _pressed ?? widget.active;
+    final captionX =
+        _kStripFilters.indexOf(caption) * _kStripSlotW + _kStripSlotW / 2;
+    final captionOpacity = ((t - 0.75) / 0.25).clamp(0.0, 1.0).toDouble();
+
+    final strip = ClipRRect(
+      borderRadius: BorderRadius.circular(GlassPill.defaultRadius()),
+      // Laid out at full width from the start and revealed by the pill's
+      // growing edge, so nothing reflows mid-morph.
+      child: OverflowBox(
+        alignment: Alignment.centerRight,
+        minWidth: _kStripW,
+        maxWidth: _kStripW,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < _kStripFilters.length; i++)
+              _buildSlot(
+                _kStripFilters[i],
+                // Each icon fades in as the edge sweeps across its slot, so
+                // they arrive right-to-left and leave in reverse.
+                reveal:
+                    ((pillW -
+                                kFloatingButtonSize -
+                                (_kStripFilters.length - 1 - i) *
+                                    _kStripSlotW) /
+                            _kStripSlotW)
+                        .clamp(0.0, 1.0)
+                        .toDouble(),
+                s: s,
+                iconColor: iconColor,
+              ),
+            _buildCorner(t, s, iconColor),
+          ],
+        ),
+      ),
+    );
+
+    return SizedBox(
+      width: _kStripW,
+      height: kFloatingButtonSize,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned(
+            right: _kComposeRight,
+            bottom: 0,
+            child: IgnorePointer(
+              ignoring: t > 0,
+              child: Opacity(
+                opacity: composeOpacity,
+                child: Semantics(
+                  container: true,
+                  button: true,
+                  label: 'New mail',
+                  child: GestureDetector(
+                    onTap: widget.onCompose,
+                    child: GlassPill(
+                      child: SizedBox(
+                        width: kFloatingButtonSize,
+                        height: kFloatingButtonSize,
+                        child: Icon(
+                          Icons.edit_outlined,
+                          color: iconColor,
+                          size: 24,
+                        ),
+                      ),
+                    ),
                   ),
-          );
-        },
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            right: 0,
+            bottom: 0,
+            width: pillW,
+            height: kFloatingButtonSize,
+            child: GlassPill(child: strip),
+          ),
+          if (t > 0)
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 140),
+              curve: Curves.easeOutCubic,
+              left: captionX,
+              bottom: kFloatingButtonSize + 8,
+              // A visual echo of the slot labels below — VoiceOver already
+              // reads those, so it shouldn't read this one twice.
+              child: ExcludeSemantics(
+                child: IgnorePointer(
+                  child: Opacity(
+                    opacity: captionOpacity,
+                    child: FractionalTranslation(
+                      translation: const Offset(-0.5, 0),
+                      child: GlassPill(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 5,
+                          ),
+                          child: Text(
+                            caption.label,
+                            style: AppTextStyles.bodySmall(
+                              color: caption == widget.active
+                                  ? s.accent
+                                  : tokens.AppThemeTokens.titleColor,
+                            ).copyWith(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSlot(
+    _MailFilter f, {
+    required double reveal,
+    required AppColorScheme s,
+    required Color iconColor,
+  }) {
+    return SizedBox(
+      width: _kStripSlotW,
+      // The clip only hides the slots while the strip is closed — they stay
+      // in the tree, so VoiceOver has to be told to skip them.
+      child: ExcludeSemantics(
+        excluding: !widget.open,
+        child: Semantics(
+          container: true,
+          button: true,
+          selected: f == widget.active,
+          label: f.label,
+          child: IgnorePointer(
+            ignoring: !widget.open,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapDown: (_) => setState(() => _pressed = f),
+              onTapUp: (_) {
+                setState(() => _pressed = null);
+                widget.onSelect(f);
+              },
+              onTapCancel: () => setState(() => _pressed = null),
+              child: Center(
+                child: Opacity(
+                  opacity: reveal,
+                  child: AnimatedScale(
+                    scale: _pressed == f ? 0.85 : 1.0,
+                    duration: const Duration(milliseconds: 100),
+                    child: Transform.scale(
+                      scale: 0.7 + 0.3 * reveal,
+                      child: Icon(
+                        f.icon,
+                        color: f == widget.active ? s.accent : iconColor,
+                        size: 22 * f.iconScale,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The closed button's glyph cross-fading into the strip's ✕.
+  Widget _buildCorner(double t, AppColorScheme s, Color iconColor) {
+    final active = widget.active;
+    return SizedBox(
+      width: kFloatingButtonSize,
+      child: Semantics(
+        container: true,
+        button: true,
+        label: widget.open ? 'Close folders' : 'Folders',
+        value: widget.open ? null : active.label,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.open ? widget.onClose : widget.onOpen,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Opacity(
+                opacity: (1 - 2 * t).clamp(0.0, 1.0).toDouble(),
+                child: Icon(
+                  active.icon,
+                  // Neutral on the inbox, the default view; accent anywhere
+                  // else, as a reminder that the list is not the inbox.
+                  color: active == _MailFilter.all ? iconColor : s.accent,
+                  size: 24 * active.iconScale,
+                ),
+              ),
+              Opacity(
+                opacity: (2 * t - 1).clamp(0.0, 1.0).toDouble(),
+                child: Icon(CupertinoIcons.xmark, color: iconColor, size: 20),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

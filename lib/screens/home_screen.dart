@@ -1230,14 +1230,18 @@ class _BottomBarState extends State<_BottomBar>
       builder: (context, _) {
         // Utility pill: the current page's action, then settings. No drag
         // recognizer here — it would swallow slightly sloppy taps.
+        //
+        // Expanded, not two fixed _utilSlotW boxes: GlassPill's 0.5 hairline
+        // insets its child on both sides, so the content is a pixel narrower
+        // than _utilPillW and two full slots overflowed it by exactly 1.
         final utilPill = SizedBox(
           width: _utilPillW,
           child: GlassPill(
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                SizedBox(width: _utilSlotW, child: _buildActionSlot(s)),
-                SizedBox(width: _utilSlotW, child: _buildSettingsSlot()),
+                Expanded(child: _buildActionSlot(s)),
+                Expanded(child: _buildSettingsSlot()),
               ],
             ),
           ),

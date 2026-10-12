@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -10,8 +12,10 @@ import '../services/mensa_service.dart';
 import '../services/page_actions.dart';
 import '../services/theme_service.dart';
 import '../services/translation_service.dart';
+import '../theme/app_theme.dart' show AppColors;
 import '../theme/tokens.dart';
 import '../widgets/glass_pill.dart';
+import '../widgets/header_date_row.dart';
 import '../widgets/morphing_glass_header.dart';
 import '../widgets/page_floating_actions.dart';
 
@@ -29,15 +33,6 @@ class _MensaScreenState extends State<MensaScreen>
     with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
-
-  static const _weekdays = [
-    'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag',
-    'Freitag', 'Samstag', 'Sonntag',
-  ];
-  static const _months = [
-    'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
-    'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
-  ];
 
   // Page index ↔ date mapping: _initialPage is "today", so days before
   // today are reachable down to page 0 (~13 years back).
@@ -85,29 +80,46 @@ class _MensaScreenState extends State<MensaScreen>
 
   /// The page showing *today*, which is only [_initialPage] until the app lives
   /// past midnight — [_baseDate] is captured once, in initState.
+  int get _todayPage => _pageForDate(DateTime.now());
+
+  /// The page showing [day]'s calendar date, whatever its time of day.
   ///
   /// Diffed through UTC so a DST boundary between the two dates can't shift the
   /// day count by one.
-  int get _todayPage {
-    final now = DateTime.now();
-    final today = DateTime.utc(now.year, now.month, now.day);
+  int _pageForDate(DateTime day) {
+    final d = DateTime.utc(day.year, day.month, day.day);
     final base = DateTime.utc(_baseDate.year, _baseDate.month, _baseDate.day);
-    return _initialPage + today.difference(base).inDays;
+    return _initialPage + d.difference(base).inDays;
   }
 
-  void _changeDay(int delta) {
+  /// Slides to [target] the way the calendar's day view does: one step away is
+  /// a plain page animation; further away jumps next to the target first and
+  /// slides only the last step. A long animateToPage would build every page in
+  /// between, and each one fetches its day's menu.
+  Future<void> _goToPage(int target) async {
+    if (!_pageController.hasClients) return;
     final current = _pageController.page?.round() ?? _initialPage;
-    _pageController.animateToPage(
-      current + delta,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
+    final delta = target - current;
+    if (delta == 0) return;
+    if (delta.abs() > 1) {
+      _pageController.jumpToPage(target - delta.sign);
+    }
+    await _pageController.animateToPage(
+      target,
+      duration: const Duration(milliseconds: 140),
+      curve: Curves.easeOutCubic,
     );
   }
 
-  String _formatDate(DateTime d) {
-    final weekday = _weekdays[d.weekday - 1];
-    final month   = _months[d.month - 1];
-    return '$weekday, ${d.day}. $month';
+  /// Week-strip swipe committed: same weekday, one week over. Sets the date
+  /// itself instead of waiting for onPageChanged, so the strip's new week and
+  /// its snap reset land in the same frame.
+  void _shiftWeek(int weeks) {
+    if (!_pageController.hasClients) return;
+    final target =
+        (_pageController.page?.round() ?? _initialPage) + 7 * weeks;
+    setState(() => _selectedDate = _dateForPage(target));
+    _pageController.jumpToPage(target);
   }
 
   // Mirrors the reload button's busy/done state into the bottom bar's slot.
@@ -139,11 +151,9 @@ class _MensaScreenState extends State<MensaScreen>
     final today = _dateForPage(target);
 
     _syncActionPhase(busy: true);
-    unawaited(_pageController.animateToPage(
-      target,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
-    ));
+    // Through _goToPage so travelling back from weeks away doesn't build (and
+    // fetch) every day in between.
+    unawaited(_goToPage(target));
 
     mensaService.clearCacheForDate(today);
     try {
@@ -196,9 +206,11 @@ class _MensaScreenState extends State<MensaScreen>
   Widget _buildContent(AppColorScheme s) {
     final view    = View.of(context);
     final statusH = view.viewPadding.top / view.devicePixelRatio;
+    // The list page's date/clock row, then the calendar's week strip in place
+    // of the old ‹ date › row.
     const topGapH  = 6.0;
-    const dateNavH = 52.0;
-    final headerH  = statusH + topGapH + dateNavH;
+    const dateRowH = 52.0;
+    final headerH  = statusH + topGapH + dateRowH + _kWeekStripH;
 
     final header = MorphingGlassHeader(
       handle: widget.header,
@@ -207,36 +219,14 @@ class _MensaScreenState extends State<MensaScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(height: statusH + topGapH),
-          // Date navigation row
           SizedBox(
-            height: dateNavH,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: Icon(CupertinoIcons.chevron_left,
-                        color: tokens.AppThemeTokens.navBarIcon, size: 18),
-                    onPressed: () => _changeDay(-1),
-                  ),
-                  Expanded(
-                    child: Center(
-                      child: Text(
-                        _formatDate(_selectedDate),
-                        style: AppTextStyles.body(
-                            color: tokens.AppThemeTokens.titleColor)
-                            .copyWith(fontWeight: FontWeight.w500),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    icon: Icon(CupertinoIcons.chevron_right,
-                        color: tokens.AppThemeTokens.navBarIcon, size: 18),
-                    onPressed: () => _changeDay(1),
-                  ),
-                ],
-              ),
-            ),
+            height: dateRowH,
+            child: HeaderDateRow(titleColor: tokens.AppThemeTokens.titleColor),
+          ),
+          _WeekStrip(
+            focusedDay: _selectedDate,
+            onDayTap: (day) => _goToPage(_pageForDate(day)),
+            onWeekSwipe: _shiftWeek,
           ),
         ],
       ),
@@ -289,6 +279,288 @@ class _MensaScreenState extends State<MensaScreen>
           ],
         ),
       ],
+    );
+  }
+}
+
+// ── Week strip ────────────────────────────────────────────────────────────────
+
+/// The calendar's week-strip height (`_kDayBarH` there).
+const double _kWeekStripH = 70.0;
+
+/// The calendar's week strip (`CalendarScreen._buildWeekStrip`), as it looks in
+/// the calendar's single-day view: Mensa only ever shows one day, so the pill
+/// marking the focused day spans just that day. Same behaviour otherwise —
+/// tap a day (number or letter) to go there, swipe the strip for the previous
+/// or next week. Keep the two in step when restyling either.
+class _WeekStrip extends StatefulWidget {
+  const _WeekStrip({
+    required this.focusedDay,
+    required this.onDayTap,
+    required this.onWeekSwipe,
+  });
+
+  final DateTime focusedDay;
+  final ValueChanged<DateTime> onDayTap;
+
+  /// Called once a swipe has carried a neighbouring week fully in: +1 = next
+  /// week, -1 = previous. The parent must move [focusedDay] by that many weeks
+  /// synchronously — the strip resets its offset in the same frame.
+  final ValueChanged<int> onWeekSwipe;
+
+  @override
+  State<_WeekStrip> createState() => _WeekStripState();
+}
+
+class _WeekStripState extends State<_WeekStrip>
+    with SingleTickerProviderStateMixin {
+  static const _letters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  static const double _cellH = 38.0;
+
+  // Swipe offset as a fraction of the strip width: −1 = next week fully in,
+  // +1 = previous week fully in.
+  double _fx = 0.0;
+
+  // One controller, re-aimed per snap.
+  late final AnimationController _snap;
+  double _snapFrom = 0.0;
+  double _snapTarget = 0.0;
+  int? _pendingWeeks;
+
+  @override
+  void initState() {
+    super.initState();
+    _snap = AnimationController(vsync: this)
+      ..addListener(() => setState(() => _fx = lerpDouble(
+          _snapFrom, _snapTarget, Curves.easeOut.transform(_snap.value))!))
+      ..addStatusListener((s) {
+        if (s != AnimationStatus.completed) return;
+        final weeks = _pendingWeeks;
+        _pendingWeeks = null;
+        if (weeks == null) return;
+        widget.onWeekSwipe(weeks);
+        setState(() => _fx = 0.0);
+      });
+  }
+
+  @override
+  void dispose() {
+    _snap.dispose();
+    super.dispose();
+  }
+
+  void _snapTo(double target, {int? weeks}) {
+    _snap.stop();
+    _snapFrom = _fx;
+    _snapTarget = target;
+    _pendingWeeks = weeks;
+    final ms = ((target - _fx).abs() * 180).clamp(80.0, 180.0).round();
+    _snap
+      ..duration = Duration(milliseconds: ms)
+      ..forward(from: 0.0);
+  }
+
+  static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: _kWeekStripH,
+      child: LayoutBuilder(builder: (context, constraints) {
+        final stripW   = constraints.maxWidth;
+        final cellW    = stripW / 7.0;
+        final glass    = ThemeService.instance.glassEnabled.value;
+        final colorKey = ThemeService.instance.currentColor.value;
+        final pillColor = glass
+            ? switch (colorKey) {
+                'dark'   => Colors.white.withValues(alpha: 0.18),
+                'pastel' => Colors.black.withValues(alpha: 0.10),
+                _        => Colors.black.withValues(alpha: 0.12),
+              }
+            : switch (colorKey) {
+                'dark' => Colors.white.withValues(alpha: 0.22),
+                _      => const Color(0xFFC8C8C8),
+              };
+
+        // Date-only throughout: the pager's dates carry the time of day the
+        // app was opened, and Duration arithmetic drifts across DST.
+        final today   = _dateOnly(DateTime.now());
+        final focused = _dateOnly(widget.focusedDay);
+        final monday  = DateTime(
+            focused.year, focused.month, focused.day - (focused.weekday - 1));
+
+        // One week's content. [current] enables the focus circle and pill.
+        Widget buildWeek(DateTime mon, {required bool current}) {
+          final days = List.generate(
+              7, (i) => DateTime(mon.year, mon.month, mon.day + i));
+          final focusIndex = current
+              ? days.indexWhere((d) => DateUtils.isSameDay(d, focused))
+              : -1;
+          final todayIndex =
+              days.indexWhere((d) => DateUtils.isSameDay(d, today));
+          final focusLeft = focusIndex >= 0 ? focusIndex * cellW : 0.0;
+
+          Widget numberRow(double pillLeft, bool drawPill) => ClipRect(
+            child: SizedBox(
+              height: _cellH,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  if (drawPill)
+                    Positioned(
+                      left: pillLeft,
+                      width: cellW,
+                      top: (_cellH - 36) / 2, height: 36,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: pillColor,
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                      ),
+                    ),
+                  // Filled circle behind the focused day's number.
+                  if (focusIndex >= 0)
+                    Positioned(
+                      left: focusIndex * cellW + (cellW - 36) / 2,
+                      top: (_cellH - 36) / 2,
+                      width: 36,
+                      height: 36,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: todayIndex == focusIndex
+                              ? AppColors.accent
+                              : (colorKey == 'dark' ? Colors.white : Colors.black),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                  Row(
+                    children: List.generate(7, (i) {
+                      final isToday   = todayIndex == i;
+                      final isWeekend = i >= 5;
+                      return Expanded(
+                        child: GestureDetector(
+                          onTap: () => widget.onDayTap(days[i]),
+                          behavior: HitTestBehavior.opaque,
+                          child: Center(
+                            child: Text(
+                              '${days[i].day}',
+                              style: GoogleFonts.inter(
+                                fontSize: 18,
+                                fontWeight: isToday ? FontWeight.w700 : FontWeight.w500,
+                                color: focusIndex == i
+                                    ? (todayIndex == i
+                                        ? Colors.white          // orange circle → white
+                                        : (colorKey == 'dark'
+                                            ? Colors.black      // white circle (dark) → black
+                                            : Colors.white))    // black circle (light) → white
+                                    : (isToday
+                                        ? AppColors.accent
+                                        : (isWeekend
+                                            ? tokens.AppThemeTokens.secondaryTextColor
+                                            : tokens.AppThemeTokens.titleColor)),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                ],
+              ),
+            ),
+          );
+
+          return SizedBox(
+            width: stripW,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Row(
+                  children: List.generate(7, (i) => Expanded(
+                    child: GestureDetector(
+                      onTap: () => widget.onDayTap(days[i]),
+                      behavior: HitTestBehavior.opaque,
+                      child: Center(
+                        child: Text(
+                          _letters[i],
+                          style: GoogleFonts.inter(
+                            fontSize: 13,
+                            fontWeight: i < 5 ? FontWeight.w600 : FontWeight.w500,
+                            letterSpacing: 0.6,
+                            color: tokens.AppThemeTokens.secondaryTextColor,
+                          ),
+                        ),
+                      ),
+                    ),
+                  )),
+                ),
+                const SizedBox(height: 4),
+                // Pill slides to the newly focused cell; absent in the
+                // neighbouring weeks.
+                current
+                    ? TweenAnimationBuilder<double>(
+                        tween: Tween<double>(begin: focusLeft, end: focusLeft),
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeInOut,
+                        builder: (context, animLeft, _) =>
+                            numberRow(animLeft, true),
+                      )
+                    : numberRow(0.0, false),
+              ],
+            ),
+          );
+        }
+
+        // The current week always sits in the middle slot, so its pill
+        // animation survives week changes instead of remounting.
+        return GestureDetector(
+          onHorizontalDragStart: (_) {
+            _snap.stop();
+            _pendingWeeks = null;
+          },
+          onHorizontalDragUpdate: (d) => setState(() {
+            _fx = (_fx + d.delta.dx / stripW).clamp(-1.0, 1.0);
+          }),
+          onHorizontalDragEnd: (d) {
+            final vel = d.primaryVelocity ?? 0;
+            if (_fx < -0.3 || vel < -500) {
+              HapticFeedback.selectionClick();
+              _snapTo(-1.0, weeks: 1);
+            } else if (_fx > 0.3 || vel > 500) {
+              HapticFeedback.selectionClick();
+              _snapTo(1.0, weeks: -1);
+            } else {
+              _snapTo(0.0);
+            }
+          },
+          child: ClipRect(
+            child: Stack(
+              children: [
+                Positioned(
+                  left: (-1 + _fx) * stripW,
+                  width: stripW, top: 0, bottom: 0,
+                  child: buildWeek(
+                      DateTime(monday.year, monday.month, monday.day - 7),
+                      current: false),
+                ),
+                Positioned(
+                  left: _fx * stripW,
+                  width: stripW, top: 0, bottom: 0,
+                  child: buildWeek(monday, current: true),
+                ),
+                Positioned(
+                  left: (1 + _fx) * stripW,
+                  width: stripW, top: 0, bottom: 0,
+                  child: buildWeek(
+                      DateTime(monday.year, monday.month, monday.day + 7),
+                      current: false),
+                ),
+              ],
+            ),
+          ),
+        );
+      }),
     );
   }
 }

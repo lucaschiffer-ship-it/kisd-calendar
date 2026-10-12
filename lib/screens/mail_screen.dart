@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:ui' show lerpDouble;
 
 import 'package:enough_mail/enough_mail.dart';
@@ -11,9 +10,9 @@ import '../services/mail_service.dart' show MailFolder;
 import '../services/page_actions.dart';
 import '../services/service_locator.dart';
 import '../services/theme_service.dart';
-import '../theme/app_theme.dart' show AppColors, AppTextStyle;
 import '../theme/tokens.dart';
 import '../widgets/glass_pill.dart';
+import '../widgets/header_date_row.dart';
 import '../widgets/morphing_glass_header.dart';
 import '../widgets/page_floating_actions.dart';
 import 'compose_screen.dart';
@@ -287,7 +286,7 @@ class _MailScreenState extends State<MailScreen>
           SizedBox(height: statusH + topGapH),
           SizedBox(
             height: dateRowH,
-            child: _DateClockRow(titleColor: titleColor),
+            child: HeaderDateRow(titleColor: titleColor),
           ),
           // ── Search ────────────────────────────────────────────────────────
           Padding(
@@ -462,83 +461,6 @@ class _MailScreenState extends State<MailScreen>
           ],
         ),
       ],
-    );
-  }
-}
-
-// ── Date/clock row ────────────────────────────────────────────────────────────
-
-const _kWeekdays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
-const _kMonths   = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
-                    'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
-
-/// The list page's header date and clock, styled the same. Keeps its own
-/// clock so the minute tick only repaints this row, not the mail list.
-class _DateClockRow extends StatefulWidget {
-  const _DateClockRow({required this.titleColor});
-
-  final Color titleColor;
-
-  @override
-  State<_DateClockRow> createState() => _DateClockRowState();
-}
-
-class _DateClockRowState extends State<_DateClockRow> {
-  DateTime _now = DateTime.now();
-  late final Timer _clock;
-
-  @override
-  void initState() {
-    super.initState();
-    _clock = Timer.periodic(const Duration(seconds: 1), (_) {
-      final now = DateTime.now();
-      // Only HH:MM and the date are displayed — skip the rebuild until the
-      // shown minute actually changes.
-      if (now.minute == _now.minute &&
-          now.hour == _now.hour &&
-          now.day == _now.day) {
-        return;
-      }
-      setState(() => _now = now);
-    });
-  }
-
-  @override
-  void dispose() {
-    _clock.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final style =
-        AppTextStyle.cardTitle.copyWith(fontSize: 32, color: widget.titleColor);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        crossAxisAlignment: CrossAxisAlignment.baseline,
-        textBaseline: TextBaseline.alphabetic,
-        children: [
-          RichText(
-            text: TextSpan(
-              style: style,
-              children: [
-                TextSpan(
-                  text: _kWeekdays[_now.weekday - 1],
-                  style: const TextStyle(color: AppColors.accent),
-                ),
-                TextSpan(text: ', ${_kMonths[_now.month - 1]} ${_now.day}'),
-              ],
-            ),
-          ),
-          Text(
-            '${_now.hour.toString().padLeft(2, '0')}:'
-            '${_now.minute.toString().padLeft(2, '0')}',
-            style: style,
-          ),
-        ],
-      ),
     );
   }
 }

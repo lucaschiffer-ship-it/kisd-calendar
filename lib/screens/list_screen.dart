@@ -9,6 +9,7 @@ import 'package:fuzzy/fuzzy.dart';
 import '../config/app_theme.dart' as tokens;
 import '../models/course_shell.dart';
 import '../services/cache_service.dart';
+import '../services/course_choices.dart';
 import '../services/calendar_service.dart';
 import '../services/account_teardown.dart';
 import '../services/course_reminder_scheduler.dart';
@@ -28,19 +29,20 @@ import 'course_shell_edit_screen.dart';
 import 'settings_screen.dart';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
-const double _kTitleRowH  = kHeaderDateRowTopGap; // gap below the status bar (title row moved to the bottom bar)
-const double _kDateRowH   = kHeaderDateRowH;      // date/time row + vertical padding
+const double _kTitleRowH =
+    kHeaderDateRowTopGap; // gap below the status bar (title row moved to the bottom bar)
+const double _kDateRowH = kHeaderDateRowH; // date/time row + vertical padding
 // Tab text is 18px; below it sit 6px gap + 2px underline + 8px padding = 16px
 // to the header bottom. Top padding matches that 16px so the tabs look evenly
 // spaced between the search bar and the header edge (underline ignored).
 // "Viewing <semester>" pill — only present while a manual semester override
 // is in force, so it is added to the header height dynamically.
-const double _kHintRowH   = 28.0;
-const double _kFilterBarH = 50.0;  // 16 + tabs (26) + 8
-const double _kEventRowH  = 51.0;  // per calendar event
-const double _kSearchH    = 36.0;  // search bar
-const double _kSearchGapH = 10.0;  // top + bottom padding around search bar
-const double _kEventsGapH = 6.0;   // gap between events block and search bar
+const double _kHintRowH = 28.0;
+const double _kFilterBarH = 50.0; // 16 + tabs (26) + 8
+const double _kEventRowH = 51.0; // per calendar event
+const double _kSearchH = 36.0; // search bar
+const double _kSearchGapH = 10.0; // top + bottom padding around search bar
+const double _kEventsGapH = 6.0; // gap between events block and search bar
 // Max appointment rows visible in the header; the rest scrolls.
 // 2.5 cuts the 3rd row in half to hint there is more.
 const double _kMaxEventRows = 2.5;
@@ -67,12 +69,18 @@ class _SpacerDelegate extends SliverPersistentHeaderDelegate {
   final double maxH;
   final double minH;
 
-  @override double get maxExtent => maxH;
-  @override double get minExtent => minH;
-  @override bool shouldRebuild(_SpacerDelegate o) =>
-      o.maxH != maxH || o.minH != minH;
-  @override Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) =>
-      const SizedBox.expand();
+  @override
+  double get maxExtent => maxH;
+  @override
+  double get minExtent => minH;
+  @override
+  bool shouldRebuild(_SpacerDelegate o) => o.maxH != maxH || o.minH != minH;
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) => const SizedBox.expand();
 }
 
 enum _FilterMode { myCourses, favourites, all, custom }
@@ -114,7 +122,7 @@ class _ListScreenState extends State<ListScreen>
 
   _FilterMode _filterMode = _FilterMode.favourites;
   bool _reloadDone = false;
-  final _searchCtrl  = TextEditingController();
+  final _searchCtrl = TextEditingController();
   String _searchQuery = '';
 
   final _now = ValueNotifier<DateTime>(DateTime.now());
@@ -128,8 +136,10 @@ class _ListScreenState extends State<ListScreen>
   final _pageCtrl = PageController();
   int _pageIndex = 0;
   // One scroll controller per filter page so each keeps its own position.
-  final _scrollCtrls =
-      List.generate(_kFilterOrder.length, (_) => ScrollController());
+  final _scrollCtrls = List.generate(
+    _kFilterOrder.length,
+    (_) => ScrollController(),
+  );
   // Scroll position of the appointments list in the header, drives the
   // edge fades that replace the hard cut-off.
   final _eventsScrollCtrl = ScrollController();
@@ -146,7 +156,7 @@ class _ListScreenState extends State<ListScreen>
   void _rebuildFilteredLists() {
     _updateAnchorDay();
     _scheduleReminderSync();
-    _myCourses  = _shells.where((s) => s.isMyCourse).toList();
+    _myCourses = _shells.where((s) => s.isMyCourse).toList();
     _favourites = _shells.where((s) => s.isFavourite).toList();
     // _shells has cached/enrolled courses first (merge order from the
     // scraper); sort alphabetically so favourites don't float to the top.
@@ -179,8 +189,7 @@ class _ListScreenState extends State<ListScreen>
   }
 
   Future<void> _loadTodayEvents() async {
-    final events =
-        await CalendarService.instance.getEventsForDay(_anchorDay);
+    final events = await CalendarService.instance.getEventsForDay(_anchorDay);
     if (!mounted) return;
     setState(() {
       _todayEvents = events
@@ -213,13 +222,20 @@ class _ListScreenState extends State<ListScreen>
     Semester.overrideId.addListener(_onSemesterChanged);
     CourseReminderScheduler.enabled.addListener(_scheduleReminderSync);
     AccountTeardown.wiped.addListener(_onAccountWiped);
-    NotificationService.instance
-        .registerTapHandler('course', _openCourseFromNotification);
+    NotificationService.instance.registerTapHandler(
+      'course',
+      _openCourseFromNotification,
+    );
     _revealSnap = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 180));
+      vsync: this,
+      duration: const Duration(milliseconds: 180),
+    );
     _revealSnap.addListener(() {
-      _searchReveal.value = lerpDouble(_snapFrom, _snapTo,
-          Curves.easeOut.transform(_revealSnap.value))!;
+      _searchReveal.value = lerpDouble(
+        _snapFrom,
+        _snapTo,
+        Curves.easeOut.transform(_revealSnap.value),
+      )!;
     });
     for (var i = 0; i < _scrollCtrls.length; i++) {
       _scrollCtrls[i].addListener(() => _onScroll(i));
@@ -238,8 +254,8 @@ class _ListScreenState extends State<ListScreen>
     _lastOffsets[i] = offset;
     if (i != _pageIndex || delta == 0) return;
     _revealSnap.stop();
-    _searchReveal.value =
-        (_searchReveal.value - delta / _kSearchRevealRange).clamp(0.0, 1.0);
+    _searchReveal.value = (_searchReveal.value - delta / _kSearchRevealRange)
+        .clamp(0.0, 1.0);
   }
 
   // When a scroll ends mid-reveal, settle the search bar fully open or fully
@@ -258,6 +274,9 @@ class _ListScreenState extends State<ListScreen>
   Future<void> _init() async {
     print('[list] _init started');
     final cache = CacheService();
+    // Before the schema check below may clear the cache: the first run of
+    // the likes record takes the existing hearts from it.
+    await CourseChoices.instance.load();
 
     if (!await cache.isCurrentVersion()) {
       print('[list] cache schema outdated — clearing');
@@ -275,8 +294,10 @@ class _ListScreenState extends State<ListScreen>
       override: Semester.overrideId.value,
     );
     if (semesterChanged) {
-      print('[list] cache semester ${cachedSemester ?? 'unset'} != '
-          '${Semester.activeId} — clearing scraped courses');
+      print(
+        '[list] cache semester ${cachedSemester ?? 'unset'} != '
+        '${Semester.activeId} — clearing scraped courses',
+      );
       await cache.clearScrapedCourses();
     }
 
@@ -293,7 +314,9 @@ class _ListScreenState extends State<ListScreen>
     }
     print('[list] cache loaded: ${_shells.length} shells');
     _tryOpenPending();
-    print('[list] loaded ${_shells.length}, favourited=${_shells.where((s) => s.isFavourite).length}');
+    print(
+      '[list] loaded ${_shells.length}, favourited=${_shells.where((s) => s.isFavourite).length}',
+    );
 
     if (_shells.isEmpty) {
       await _scrape();
@@ -303,7 +326,8 @@ class _ListScreenState extends State<ListScreen>
     // A semester switch is always stale, even with manual courses left in the
     // cache keeping `_shells` non-empty and a fresh scrape timestamp.
     final lastScrape = await cache.lastScrapeTimestamp();
-    final stale = semesterChanged ||
+    final stale =
+        semesterChanged ||
         lastScrape == null ||
         DateTime.now().difference(lastScrape) > const Duration(hours: 24);
     if (stale) _scrapeBackground();
@@ -363,7 +387,8 @@ class _ListScreenState extends State<ListScreen>
 
   Future<void> _maybeScrapeEvents() async {
     final last = await CacheService().getKisdEventsLastScrape();
-    final stale = last == null ||
+    final stale =
+        last == null ||
         DateTime.now().difference(last) > const Duration(hours: 24);
     if (stale) _scrapeEventsBackground();
   }
@@ -385,7 +410,12 @@ class _ListScreenState extends State<ListScreen>
   Future<void> _scrapeBackground() async {
     try {
       final shells = await scraperService.scrapeMyCourses();
-      if (mounted) setState(() { _shells = shells; _rebuildFilteredLists(); });
+      if (mounted) {
+        setState(() {
+          _shells = shells;
+          _rebuildFilteredLists();
+        });
+      }
     } catch (e) {
       print('[list] background scrape failed: $e');
       if (e.toString().contains('auth_required')) {
@@ -400,7 +430,12 @@ class _ListScreenState extends State<ListScreen>
   Future<void> _runAllCoursesBackground() async {
     try {
       final shells = await scraperService.scrapeAllCourses();
-      if (mounted) setState(() { _shells = shells; _rebuildFilteredLists(); });
+      if (mounted) {
+        setState(() {
+          _shells = shells;
+          _rebuildFilteredLists();
+        });
+      }
     } catch (e) {
       print('[list] all-courses background scrape failed: $e');
     }
@@ -408,7 +443,10 @@ class _ListScreenState extends State<ListScreen>
 
   Future<void> _scrape() async {
     if (!mounted) return;
-    setState(() { _loading = true; _error = null; });
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     _scrapeEventsBackground();
 
     if (loginService.isLoading && !loginService.isLoggedIn) {
@@ -419,10 +457,14 @@ class _ListScreenState extends State<ListScreen>
           if (!waitCompleter.isCompleted) waitCompleter.complete();
         }
       }
+
       loginService.addListener(loginListener);
       await waitCompleter.future;
       if (!mounted || !loginService.isLoggedIn) {
-        setState(() { _error = 'Login failed.'; _loading = false; });
+        setState(() {
+          _error = 'Login failed.';
+          _loading = false;
+        });
         return;
       }
     }
@@ -460,7 +502,12 @@ class _ListScreenState extends State<ListScreen>
         }
         return;
       }
-      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _loading = false;
+        });
+      }
       return;
     }
     await _runAllCoursesBackground();
@@ -472,10 +519,7 @@ class _ListScreenState extends State<ListScreen>
   // complete new list, so the page never empties mid-refresh.
   List<CourseShell> _mergeWithExisting(List<CourseShell> fresh) {
     final freshIds = {for (final s in fresh) s.id};
-    return [
-      ...fresh,
-      ..._shells.where((s) => !freshIds.contains(s.id)),
-    ];
+    return [...fresh, ..._shells.where((s) => !freshIds.contains(s.id))];
   }
 
   @override
@@ -510,8 +554,8 @@ class _ListScreenState extends State<ListScreen>
     widget.actions.phase.value = _loading
         ? ActionPhase.busy
         : _reloadDone
-            ? ActionPhase.done
-            : ActionPhase.idle;
+        ? ActionPhase.done
+        : ActionPhase.idle;
   }
 
   void _onReload() {
@@ -563,6 +607,9 @@ class _ListScreenState extends State<ListScreen>
   }
 
   void _onFavouriteChanged(CourseShell shell, bool isFav) {
+    // The record every scrape respects — the cache below is rewritten by
+    // scrapes and alone used to lose the heart.
+    CourseChoices.instance.set(shell, isFav);
     setState(() {
       final i = _shells.indexWhere((s) => s.id == shell.id);
       if (i >= 0) _shells[i] = _shells[i].copyWith(isFavourite: isFav);
@@ -603,8 +650,10 @@ class _ListScreenState extends State<ListScreen>
       context: context,
       builder: (ctx) => CupertinoAlertDialog(
         title: const Text('Get notified for first meetings?'),
-        content: const Text('Reminders a week, a day and an hour before '
-            'your liked courses start.'),
+        content: const Text(
+          'Reminders a week, a day and an hour before '
+          'your liked courses start.',
+        ),
         actions: [
           CupertinoDialogAction(
             onPressed: () => Navigator.pop(ctx, false),
@@ -652,8 +701,9 @@ class _ListScreenState extends State<ListScreen>
     final range = _eventsRange(_todayEvents.length);
     final oldCtrl = _scrollCtrls[_pageIndex];
     final newCtrl = _scrollCtrls[index];
-    final headerOffset =
-        oldCtrl.hasClients ? oldCtrl.offset.clamp(0.0, range) : 0.0;
+    final headerOffset = oldCtrl.hasClients
+        ? oldCtrl.offset.clamp(0.0, range)
+        : 0.0;
     if (newCtrl.hasClients &&
         newCtrl.offset.clamp(0.0, range) != headerOffset) {
       newCtrl.jumpTo(headerOffset);
@@ -667,10 +717,10 @@ class _ListScreenState extends State<ListScreen>
 
   List<CourseShell> _listFor(_FilterMode mode) {
     var list = switch (mode) {
-      _FilterMode.myCourses  => _myCourses,
+      _FilterMode.myCourses => _myCourses,
       _FilterMode.favourites => _favourites,
-      _FilterMode.all        => _allCourses,
-      _FilterMode.custom     => _customCourses,
+      _FilterMode.all => _allCourses,
+      _FilterMode.custom => _customCourses,
     };
     if (_searchQuery.isNotEmpty) {
       list = _fuzzySearch(list, _searchQuery);
@@ -699,7 +749,10 @@ class _ListScreenState extends State<ListScreen>
         keys: [
           WeightedKey(name: 'title', getter: (s) => s.title, weight: 1.0),
           WeightedKey(
-              name: 'lecturer', getter: (s) => s.lecturer ?? '', weight: 0.4),
+            name: 'lecturer',
+            getter: (s) => s.lecturer ?? '',
+            weight: 0.4,
+          ),
         ],
         threshold: 0.35,
         tokenize: true,
@@ -750,7 +803,10 @@ class _ListScreenState extends State<ListScreen>
           // ── Top section: status bar gap + semester hint (always visible) ──
           // The date/time row sitting in it is a shared element, below.
           Positioned(
-            top: 0, left: 0, right: 0, height: topH,
+            top: 0,
+            left: 0,
+            right: 0,
+            height: topH,
             child: topSection,
           ),
 
@@ -773,7 +829,9 @@ class _ListScreenState extends State<ListScreen>
                     clipBehavior: Clip.hardEdge,
                     children: [
                       Positioned(
-                        bottom: _kEventsGapH, left: 0, right: 0,
+                        bottom: _kEventsGapH,
+                        left: 0,
+                        right: 0,
                         height: _eventsContentH(_todayEvents.length),
                         child: eventsContent,
                       ),
@@ -783,7 +841,10 @@ class _ListScreenState extends State<ListScreen>
 
           // ── Bottom: filter chips + count (always visible) ─────────────────
           Positioned(
-            bottom: 0, left: 20, right: 20, height: _kFilterBarH,
+            bottom: 0,
+            left: 20,
+            right: 20,
+            height: _kFilterBarH,
             child: filterBar,
           ),
         ],
@@ -816,7 +877,9 @@ class _ListScreenState extends State<ListScreen>
             clipBehavior: Clip.hardEdge,
             children: [
               Positioned(
-                bottom: 0, left: 0, right: 0,
+                bottom: 0,
+                left: 0,
+                right: 0,
                 height: _kSearchH,
                 child: searchBar,
               ),
@@ -844,23 +907,31 @@ class _ListScreenState extends State<ListScreen>
         child: Padding(
           padding: const EdgeInsets.only(left: 20, right: 20, bottom: 6),
           child: GestureDetector(
-            onTap: () => Navigator.of(context).push(
-              CupertinoPageRoute(builder: (_) => const SettingsScreen()),
-            ),
+            onTap: () => Navigator.of(
+              context,
+            ).push(CupertinoPageRoute(builder: (_) => const SettingsScreen())),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(CupertinoIcons.calendar,
-                    size: 13, color: AppColors.accent),
+                const Icon(
+                  CupertinoIcons.calendar,
+                  size: 13,
+                  color: AppColors.accent,
+                ),
                 const SizedBox(width: 5),
                 Text(
                   'Viewing ${semesterLabel(Semester.activeId)}',
-                  style: AppTextStyle.label
-                      .copyWith(fontSize: 13, color: AppColors.accent),
+                  style: AppTextStyle.label.copyWith(
+                    fontSize: 13,
+                    color: AppColors.accent,
+                  ),
                 ),
                 const SizedBox(width: 2),
-                Icon(CupertinoIcons.chevron_right,
-                    size: 11, color: AppColors.accent.withValues(alpha: 0.7)),
+                Icon(
+                  CupertinoIcons.chevron_right,
+                  size: 11,
+                  color: AppColors.accent.withValues(alpha: 0.7),
+                ),
               ],
             ),
           ),
@@ -888,18 +959,23 @@ class _ListScreenState extends State<ListScreen>
         // Per-edge fade strength: 1 when rows are cut
         // off there, ramping over _kEventFadeH px of
         // scroll so the fade eases in/out at the ends.
-        final pos = _eventsScrollCtrl.hasClients &&
+        final pos =
+            _eventsScrollCtrl.hasClients &&
                 _eventsScrollCtrl.position.hasContentDimensions
             ? _eventsScrollCtrl.position
             : null;
-        final overflows = _todayEvents.length * _kEventRowH >
+        final overflows =
+            _todayEvents.length * _kEventRowH >
             _eventsContentH(_todayEvents.length);
-        final topT =
-            pos == null ? 0.0 : (pos.pixels / _kEventFadeH).clamp(0.0, 1.0);
+        final topT = pos == null
+            ? 0.0
+            : (pos.pixels / _kEventFadeH).clamp(0.0, 1.0);
         final bottomT = pos == null
             ? (overflows ? 1.0 : 0.0)
-            : ((pos.maxScrollExtent - pos.pixels) / _kEventFadeH)
-                .clamp(0.0, 1.0);
+            : ((pos.maxScrollExtent - pos.pixels) / _kEventFadeH).clamp(
+                0.0,
+                1.0,
+              );
         if (topT == 0.0 && bottomT == 0.0) {
           return child!;
         }
@@ -926,9 +1002,7 @@ class _ListScreenState extends State<ListScreen>
         controller: _eventsScrollCtrl,
         padding: EdgeInsets.zero,
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        children: [
-          for (final e in _todayEvents) _TodayEventRow(event: e),
-        ],
+        children: [for (final e in _todayEvents) _TodayEventRow(event: e)],
       ),
     );
   }
@@ -966,11 +1040,16 @@ class _ListScreenState extends State<ListScreen>
         decoration: InputDecoration(
           hintText: 'Search',
           hintStyle: TextStyle(
-              color: secondaryColor.withValues(alpha: 0.45), fontSize: 14),
+            color: secondaryColor.withValues(alpha: 0.45),
+            fontSize: 14,
+          ),
           filled: true,
           fillColor: secondaryColor.withValues(alpha: 0.05),
-          prefixIcon: Icon(Icons.search,
-              color: secondaryColor.withValues(alpha: 0.5), size: 17),
+          prefixIcon: Icon(
+            Icons.search,
+            color: secondaryColor.withValues(alpha: 0.5),
+            size: 17,
+          ),
           suffixIcon: _searchQuery.isNotEmpty
               ? GestureDetector(
                   onTap: () => setState(() {
@@ -992,8 +1071,10 @@ class _ListScreenState extends State<ListScreen>
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(radius),
-            borderSide:
-                BorderSide(color: tokens.AppThemeTokens.accentColor, width: 1),
+            borderSide: BorderSide(
+              color: tokens.AppThemeTokens.accentColor,
+              width: 1,
+            ),
           ),
         ),
       ),
@@ -1001,8 +1082,11 @@ class _ListScreenState extends State<ListScreen>
   }
 
   // Subtle tab-style nav item: small icon/label, orange underline when active.
-  Widget _buildFilterTab(_FilterMode mode,
-      {String? label, bool likeIcon = false}) {
+  Widget _buildFilterTab(
+    _FilterMode mode, {
+    String? label,
+    bool likeIcon = false,
+  }) {
     final isSelected = _filterMode == mode;
     final color = isSelected
         ? tokens.AppThemeTokens.titleColor
@@ -1031,8 +1115,10 @@ class _ListScreenState extends State<ListScreen>
                           maxLines: 1,
                           softWrap: false,
                           overflow: TextOverflow.visible,
-                          style: AppTextStyle.label
-                              .copyWith(fontSize: 13, color: color),
+                          style: AppTextStyle.label.copyWith(
+                            fontSize: 13,
+                            color: color,
+                          ),
                         ),
                 ),
               ),
@@ -1065,25 +1151,25 @@ class _ListScreenState extends State<ListScreen>
         Semester.overrideId,
       ]),
       builder: (context, _) {
-        final titleColor    = tokens.AppThemeTokens.titleColor;
+        final titleColor = tokens.AppThemeTokens.titleColor;
         final secondaryColor = tokens.AppThemeTokens.secondaryTextColor;
 
         // Status bar height (physical pixels → logical pixels)
-        final view    = View.of(context);
+        final view = View.of(context);
         final statusH = view.viewPadding.top / view.devicePixelRatio;
 
-        final minH =
-            statusH + _kTitleRowH + _kDateRowH + _hintH + _kFilterBarH;
+        final minH = statusH + _kTitleRowH + _kDateRowH + _hintH + _kFilterBarH;
         final range = _collapseRange(_todayEvents.length);
-        final maxH  = minH + range;
+        final maxH = minH + range;
 
         // Built once per setState/theme change; the scroll-driven overlay
         // rebuild below reuses these exact instances, so their subtrees are
         // skipped on every scroll frame.
         final topSection = _buildTopSection(statusH);
         final dateRow = HeaderDateRow(titleColor: titleColor);
-        final eventsContent =
-            _todayEvents.isEmpty ? null : _buildEventsContent();
+        final eventsContent = _todayEvents.isEmpty
+            ? null
+            : _buildEventsContent();
         final searchBar = _buildSearchBar(titleColor, secondaryColor);
         final filterBar = _buildFilterBar();
 
@@ -1094,14 +1180,15 @@ class _ListScreenState extends State<ListScreen>
               controller: _pageCtrl,
               onPageChanged: _onPageChanged,
               itemCount: _kFilterOrder.length,
-              itemBuilder: (_, i) => _KeepAlivePage(
-                child: _buildCoursePage(i, maxH, minH),
-              ),
+              itemBuilder: (_, i) =>
+                  _KeepAlivePage(child: _buildCoursePage(i, maxH, minH)),
             ),
 
             // ── Layer 2: glass overlay (on top of cards) ───────────────────────
             Positioned(
-              top: 0, left: 0, right: 0,
+              top: 0,
+              left: 0,
+              right: 0,
               child: AnimatedBuilder(
                 animation: Listenable.merge([..._scrollCtrls, _searchReveal]),
                 builder: (context, _) {
@@ -1114,8 +1201,10 @@ class _ListScreenState extends State<ListScreen>
                   // Near the top, the offset pins the search bar open so it
                   // never rests half-hidden at offset 0, regardless of what
                   // the direction-based reveal accumulated.
-                  final pin =
-                      (1.0 - offset / _kSearchRevealRange).clamp(0.0, 1.0);
+                  final pin = (1.0 - offset / _kSearchRevealRange).clamp(
+                    0.0,
+                    1.0,
+                  );
                   final reveal = _searchReveal.value > pin
                       ? _searchReveal.value
                       : pin;
@@ -1182,18 +1271,23 @@ class _ListScreenState extends State<ListScreen>
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text('Could not load courses',
-                          style: AppTextStyle.headline),
+                      Text(
+                        'Could not load courses',
+                        style: AppTextStyle.headline,
+                      ),
                       const SizedBox(height: 10),
-                      Text(_error!,
-                          style: AppTextStyle.body,
-                          textAlign: TextAlign.center,
-                          maxLines: 4,
-                          overflow: TextOverflow.ellipsis),
+                      Text(
+                        _error!,
+                        style: AppTextStyle.body,
+                        textAlign: TextAlign.center,
+                        maxLines: 4,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                       const SizedBox(height: 28),
                       FilledButton(
-                          onPressed: _scrape,
-                          child: const Text('Retry')),
+                        onPressed: _scrape,
+                        child: const Text('Retry'),
+                      ),
                     ],
                   ),
                 ),
@@ -1226,8 +1320,10 @@ class _ListScreenState extends State<ListScreen>
               // Top: the 12 card gap, plus the header's painted overhang that
               // sits on top of the list — so the visible gap matches.
               padding: EdgeInsets.fromLTRB(
-                AppSpacing.screenPadding, 12 + AppGlass.headerOverhang,
-                AppSpacing.screenPadding, 40 + bottomClusterHeight(context),
+                AppSpacing.screenPadding,
+                12 + AppGlass.headerOverhang,
+                AppSpacing.screenPadding,
+                40 + bottomClusterHeight(context),
               ),
               sliver: SliverList.builder(
                 itemCount: displayList.length + (isCustomPage ? 1 : 0),

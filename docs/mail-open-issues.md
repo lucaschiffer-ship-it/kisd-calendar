@@ -28,17 +28,14 @@ has its own note: [`photo-metadata.md`](photo-metadata.md).
 
 ## 2 · Issues that can persist
 
-1. **Save Draft can hang.** The Drafts `appendMessage` call in
-   `saveDraft` (`lib/services/mail_service.dart`) has no timeout. If the
-   connection goes silent without the server closing it, the spinner never
-   stops, ✕ stays disabled, and killing the app loses the draft. Big drafts make
-   this more likely. *Proposed fix:* a Dart `.timeout()` that returns `false`,
-   which shows the existing "Couldn't save the draft" banner. **Waiting for
-   your go**, since that code is shared with text drafts.
-2. **The liveness check only catches closed sockets.** `_ensureConnected` now
-   also checks enough_mail's `isConnected`. That notices a socket the
-   *server closed*, not one that just went quiet. Only the Sent copy has a
-   timeout for the quiet case.
+1. ~~**Save Draft can hang.**~~ Fixed 13 Oct 2026 (your go): every command
+   on the main connection runs through `ImapSession` with a timeout. Save
+   Draft's is size-scaled (30 s + 1 s per 32 KB); on timeout it returns
+   `false` and the "Couldn't save the draft" banner shows.
+2. ~~**The liveness check only catches closed sockets.**~~ Fixed 13 Oct 2026:
+   a connection unheard from for 60 s is probed with NOOP (4 s) before the
+   next command and replaced if it doesn't answer; after 10 min in the
+   background it is replaced without probing.
 3. **The Sent copy of an attachment mail can go missing silently.** It uploads
    in the background (`unawaited(_appendToSent(...))`). A failure is only
    logged, so the user isn't told. Leaving the app right after Send may also
@@ -52,12 +49,42 @@ has its own note: [`photo-metadata.md`](photo-metadata.md).
    soften the wording (`privacy_screen.dart`, `PRIVACY.md`, `docs/privacy.md`),
    or delete leftover folders at launch. **Your call.**
 
+## 1b · Mail sync rework (13 Oct 2026), to test on the iPhone
+
+- [ ] **Sent right after launch** shows mail without a reload, also on
+  cellular. Open it within the first seconds, while the inbox still loads.
+- [ ] **New mail without reload.** Keep the app open and have someone send
+  you a mail: it should appear within seconds. On Wi-Fi and on cellular. The
+  debug log shows `connected (IDLE)` or `(polling every 60 s)`.
+- [ ] **Resume.** Leave the app for 15+ min, come back: the inbox refreshes
+  by itself, with no stuck spinner.
+- [ ] **Scrolling past 50** loads older mail, in every folder.
+- [ ] **Offline launch** (flight mode): every folder still shows its last
+  list; opening a recent inbox mail works.
+- [x] **The first launch after the update** moves the old offline copy from
+  `Library/Caches`. Verified on the simulator on 13 Oct 2026: `index.json` became
+  `inbox.json`, all 49 bodies moved, the old folder is gone, and
+  `mail_store` carries `com_apple_backup_excludeItem`. The inbox showed
+  offline at once.
+- [x] **A refused login stops automatic retries.** Verified on the
+  simulator: there was exactly one login attempt. Opening Sent afterwards showed
+  "Could not connect: Login failed: authentication failure" with Try Again
+  rather than "No sent mail". The simulator's Keychain password was refused
+  (probably outdated, or the login limit from earlier that day). So **the
+  server side of the rework (delta sync, IDLE, paging, Sent refresh) has not
+  run against the real server yet.**
+
 ## 3 · Changes to existing mail behaviour
 
 If something old breaks, look here first:
 
-- `_ensureConnected` also checks enough_mail's `isConnected` and reconnects if
-  it's false. This affects **every** IMAP operation.
+- *(13 Oct 2026)* Every main-connection command goes through `ImapSession`
+  (`lib/services/imap_session.dart`): one op at a time, a timeout per op, a
+  probe of a quiet connection, one retry for read-only/flag ops. This
+  replaced `_ensureConnected`. Folder lists are synced by delta
+  (`lib/services/mail_sync.dart`) instead of refetched whole.
+- *(13 Oct 2026)* The offline copy moved to `Library/Application
+  Support/mail_store` and covers all four folders' lists.
 - A text mail's Sent copy now gives up after 30 s and resets the connection.
   Before, it could wait forever.
 - A reopened draft keeps Send disabled, and Save Draft waits, until the full

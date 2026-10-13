@@ -1,14 +1,17 @@
 import 'dart:async';
-import 'dart:math' show min;
+import 'dart:math' show min, max;
 
 import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleListener;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'imap_preview_fix.dart';
+import 'imap_session.dart';
 import 'mail_attachments.dart';
 import 'mail_offline_cache.dart';
+import 'mail_sync.dart';
 import 'mail_threads.dart';
 import 'service_locator.dart';
 
@@ -27,6 +30,73 @@ class ThreadMessage {
   final bool downloaded;
 }
 
+/// Opening the main connection failed — offline, or the server said no.
+class MailConnectException implements Exception {
+  const MailConnectException(this.cause, {required this.rejected});
+
+  final Object cause;
+
+  /// The server refused the login (or there are no credentials): retrying
+  /// on its own would only count against the server's login limit.
+  final bool rejected;
+
+  @override
+  String toString() => '$cause';
+}
+
+/// One folder's list and how it stands with the server.
+class _FolderState {
+  List<MimeMessage> messages = [];
+  int? uidValidity;
+  bool hasOlder = false;
+  DateTime? syncedAt;
+  bool failed = false;
+  String? error;
+  Future<void>? refreshing;
+  Future<void>? loadingOlder;
+  DateTime? olderFailedAt;
+
+  /// The folder's message count and next UID at the last sync — IDLE only
+  /// starts when the server still says the same.
+  int? exists;
+  int? uidNext;
+}
+
+/// What a folder fetch brought back — applied to the list after the op, so
+/// an op abandoned by its timeout changes nothing.
+class _FolderFetch {
+  const _FolderFetch({
+    required this.uidValidity,
+    required this.exists,
+    required this.uidNext,
+    required this.hasOlder,
+    this.replace,
+    this.fromUid,
+    this.flags = const {},
+    this.fetchedNew = const [],
+    this.older = const [],
+  });
+
+  final int? uidValidity;
+  final int exists;
+  final int? uidNext;
+
+  /// Whether the server has mail below the list's oldest.
+  final bool hasOlder;
+
+  /// The new list, when it starts over.
+  final List<MimeMessage>? replace;
+
+  /// Otherwise a delta: flags of every message from [fromUid] up, and the
+  /// list rows of the new ones.
+  final int? fromUid;
+  final Map<int, List<String>> flags;
+  final List<MimeMessage> fetchedNew;
+
+  /// The page just older than the list, when one was asked for.
+  final List<MimeMessage> older;
+}
+
 // Mail diagnostics include addresses and server responses — release builds
 // log nothing to the device console.
 void _log(String message) {
@@ -42,6 +112,25 @@ class MailService extends ChangeNotifier {
   static const _emailStorageKey = 'kisd_email';
   static const _smtpSizeLimitKey = 'mail_smtp_max_size';
 
+  // A folder fetch as a whole, and each of its commands.
+  static const _fetchTimeout = Duration(seconds: 90);
+  static const _commandTimeout = Duration(seconds: 75);
+
+  /// A folder synced this recently isn't fetched again just for being
+  /// opened.
+  static const _freshFor = Duration(seconds: 30);
+
+  /// Servers drop an IDLE after 30 min (RFC 2177), mobile networks often
+  /// sooner. Re-armed well before, which also proves the connection alive.
+  static const _idleRearmEvery = Duration(minutes: 8);
+
+  /// Without IDLE, the inbox is checked this often while the app is open.
+  static const _pollEvery = Duration(seconds: 60);
+
+  /// Away longer than this, the connection is replaced rather than probed:
+  /// it is almost certainly dead, and probing it costs seconds.
+  static const _replaceAfterBackground = Duration(minutes: 10);
+
   // Must match LoginService's options — both services share the credential
   // keys, and iOS Keychain lookups are scoped by these attributes.
   final _storage = const FlutterSecureStorage(
@@ -50,34 +139,52 @@ class MailService extends ChangeNotifier {
     ),
   );
 
-  ImapClient? _imap;
-  bool _isConnected = false;
+  // Every command on the main connection goes through this — see
+  // ImapSession for why. Replaced on an account switch.
+  late ImapSession<ImapClient> _session = _newSession();
+
+  Map<MailFolder, _FolderState> _folders = _emptyFolders();
   bool _isConnecting = false;
-  bool _isFetching = false;
-  bool _isFetchingTrash = false;
-  bool _isFetchingSent = false;
-  bool _isFetchingDrafts = false;
   String? _connectionError;
-  List<MimeMessage> _messages = [];
-  List<MimeMessage> _trashedMessages = [];
-  List<MimeMessage> _sentMessages = [];
-  List<MimeMessage> _draftMessages = [];
   String? _cachedUsername;
   Mailbox? _trashMailbox;
   Mailbox? _sentMailbox;
   Mailbox? _draftsMailbox;
 
+  // Automatic refreshes (IDLE, polling, resume) back off after a failed
+  // connect; a refused login stops them until the user asks.
+  DateTime _autoNotBefore = DateTime(0);
+  int _autoFailures = 0;
+  bool _loginRejected = false;
+
+  // New mail while the app is open: IDLE on the main connection.
+  bool _started = false;
+  bool? _idleSupported;
+  ImapClient? _idleOn;
+  StreamSubscription<ImapEvent>? _events;
+  Timer? _idleRearmTimer;
+  Timer? _pollTimer;
+  Timer? _eventTimer;
+  int _lostInARow = 0;
+  (int, int?)? _staleInboxState;
+  bool _foreground = true;
+  DateTime? _backgroundSince;
+  AppLifecycleListener? _lifecycle;
+
+  /// The folder the Mail tab shows — refreshed with the inbox on resume.
+  MailFolder activeFolder = MailFolder.inbox;
+
   final _offline = MailOfflineCache();
-  // The inbox UIDVALIDITY `_messages` belongs to — a cached UID only names
-  // the same mail while this is unchanged.
-  int? _inboxUidValidity;
-  // Bumped by resetForAccountSwitch, so a cache load or sync still in flight
-  // sees its account is gone and drops what it has instead of writing it.
-  int _offlineGeneration = 0;
+  // Bumped by resetForAccountSwitch, so a fetch, cache load or sync still in
+  // flight sees its account is gone and drops what it has instead of
+  // showing or writing it.
+  int _generation = 0;
   bool _offlineSyncRunning = false;
   bool _offlineSyncAgain = false;
   bool _offlineFetchPending = false;
   ImapClient? _offlineImap;
+  DateTime? _offlineImapUsed;
+  Timer? _offlineIdleTimer;
 
   // Conversations (see fetchThread): a connection of their own, one lookup
   // at a time, and the last few results by the opened mail's Message-ID.
@@ -95,85 +202,179 @@ class MailService extends ChangeNotifier {
 
   final _unreadController = StreamController<int>.broadcast();
 
-  bool get isConnected => _isConnected;
+  static Map<MailFolder, _FolderState> _emptyFolders() => {
+    for (final f in MailFolder.values) f: _FolderState(),
+  };
+
+  bool get isConnected => _session.current?.isConnected ?? false;
   bool get isConnecting => _isConnecting;
-  bool get isFetching => _isFetching;
-  bool get isFetchingTrash => _isFetchingTrash;
-  bool get isFetchingSent => _isFetchingSent;
-  bool get isFetchingDrafts => _isFetchingDrafts;
   String? get connectionError => _connectionError;
-  List<MimeMessage> get messages => List.unmodifiable(_messages);
-  List<MimeMessage> get trashedMessages => List.unmodifiable(_trashedMessages);
-  List<MimeMessage> get sentMessages => List.unmodifiable(_sentMessages);
-  List<MimeMessage> get draftMessages => List.unmodifiable(_draftMessages);
-  int get unreadCount => _messages.where((m) => !m.isSeen).length;
+  List<MimeMessage> get messages => messagesIn(MailFolder.inbox);
+  List<MimeMessage> get trashedMessages => messagesIn(MailFolder.trash);
+  List<MimeMessage> get sentMessages => messagesIn(MailFolder.sent);
+  List<MimeMessage> get draftMessages => messagesIn(MailFolder.drafts);
+  int get unreadCount => _inbox.where((m) => !m.isSeen).length;
   Stream<int> get unreadCountStream => _unreadController.stream;
 
-  Future<void> connect() async {
-    // Must run BEFORE the guard below: on an account switch the old session is
-    // still alive, so `_isConnected` is true and every early return downstream
-    // would hand the new user the previous account's mailbox.
+  List<MimeMessage> messagesIn(MailFolder folder) =>
+      List.unmodifiable(_folders[folder]!.messages);
+
+  /// True while [folder]'s list is being fetched.
+  bool isRefreshing(MailFolder folder) => _folders[folder]!.refreshing != null;
+
+  /// True while an older page of [folder] is being fetched.
+  bool isLoadingOlder(MailFolder folder) =>
+      _folders[folder]!.loadingOlder != null;
+
+  /// True when the server has mail older than [folder]'s list.
+  bool hasOlder(MailFolder folder) => _folders[folder]!.hasOlder;
+
+  /// Why [folder]'s last fetch failed; null after a successful one. A
+  /// folder never fetched because the connection fails says so too, rather
+  /// than looking empty.
+  String? errorFor(MailFolder folder) {
+    final s = _folders[folder]!;
+    if (s.failed) return s.error;
+    if (s.syncedAt == null) return _connectionError;
+    return null;
+  }
+
+  List<MimeMessage> get _inbox => _folders[MailFolder.inbox]!.messages;
+  // The inbox UIDVALIDITY the list belongs to — a cached UID only names the
+  // same mail while this is unchanged.
+  int? get _inboxUidValidity => _folders[MailFolder.inbox]!.uidValidity;
+
+  // ── Connection ───────────────────────────────────────────────────────────
+
+  ImapSession<ImapClient> _newSession() {
+    final generation = _generation;
+    return ImapSession<ImapClient>(
+      connect: () => _openMainConnection(generation),
+      isAlive: (c) => c.isConnected && c.isLoggedIn,
+      probe: (c) => c.noop(),
+      close: (c) {
+        if (identical(_idleOn, c)) _idleOn = null;
+        unawaited(c.disconnect().catchError((_) {}));
+      },
+      prepare: _leaveIdle,
+      onDrained: _onSessionDrained,
+      log: _log,
+    );
+  }
+
+  Future<ImapClient> _openMainConnection(int generation) async {
+    final username = await _storage.read(key: 'kisd_username');
+    final password = await _storage.read(key: 'kisd_password');
+    if (username == null || password == null) {
+      throw const MailConnectException(
+        'No stored credentials — please log in first.',
+        rejected: true,
+      );
+    }
+    _log('[mail] connecting to $_imapHost...');
+    // Same client, except that list previews keep their bytes — see
+    // PreviewFixImapClient.
+    final imap = PreviewFixImapClient(isLogEnabled: false);
+    try {
+      await imap.connectToServer(
+        _imapHost,
+        _imapPort,
+        isSecure: true,
+        timeout: const Duration(seconds: 15),
+      );
+    } catch (e) {
+      unawaited(imap.disconnect().catchError((_) {}));
+      throw MailConnectException(e, rejected: false);
+    }
+    try {
+      await imap.login(username, password).timeout(const Duration(seconds: 20));
+    } on ImapException catch (e) {
+      unawaited(imap.disconnect().catchError((_) {}));
+      throw MailConnectException(e, rejected: true);
+    } catch (e) {
+      unawaited(imap.disconnect().catchError((_) {}));
+      throw MailConnectException(e, rejected: false);
+    }
+    if (generation != _generation) {
+      unawaited(imap.disconnect().catchError((_) {}));
+      throw const MailConnectException('signed out', rejected: false);
+    }
+    _cachedUsername = username;
+    final idle = imap.serverInfo.supportsIdle;
+    if (_idleSupported == null) {
+      _log(
+        '[mail] server capabilities: '
+        '${imap.serverInfo.capabilities?.map((c) => c.name).join(' ')}',
+      );
+    }
+    _idleSupported = idle;
+    _updatePolling();
+    unawaited(_events?.cancel());
+    _events = imap.eventBus.on<ImapEvent>().listen(
+      (e) => _onImapEvent(imap, e),
+    );
+    _log(
+      '[mail] connected (${idle ? 'IDLE' : 'polling every '
+                '${_pollEvery.inSeconds} s'})',
+    );
+    return imap;
+  }
+
+  /// Runs [op] on the main connection, after checking the account is still
+  /// the one this state belongs to.
+  Future<T> _run<T>(
+    String label,
+    Future<T> Function(ImapClient c) op, {
+    Duration timeout = const Duration(seconds: 45),
+    bool idempotent = false,
+  }) async {
     await _resetIfAccountChanged();
-    if (_isConnecting || _isConnected) return;
-    _isConnecting = true;
+    return _session.run(label, op, timeout: timeout, idempotent: idempotent);
+  }
+
+  bool get _autoBlocked => DateTime.now().isBefore(_autoNotBefore);
+
+  void _noteSuccess() {
     _connectionError = null;
-    notifyListeners();
+    _autoFailures = 0;
+    _loginRejected = false;
+    _autoNotBefore = DateTime(0);
+  }
 
-    // The offline copy first, so the list is up before — or instead of —
-    // the server's answer.
-    if (_messages.isEmpty) await _loadOfflineInbox();
-
-    final ok = await _ensureConnected();
-    if (ok) {
-      _isConnecting = false;
-      notifyListeners();
-      await fetchInbox();
+  void _noteFailure(Object e) {
+    if (e is! MailConnectException) return;
+    _connectionError = 'Could not connect: ${e.cause}';
+    if (e.rejected) {
+      _loginRejected = true;
+      _autoNotBefore = DateTime(9999);
     } else {
-      _isConnecting = false;
-      notifyListeners();
+      _autoFailures++;
+      _autoNotBefore = DateTime.now().add(
+        Duration(seconds: min(300, 5 << min(_autoFailures, 6))),
+      );
     }
   }
 
-  Future<bool> _ensureConnected() async {
-    // Above the early return for the same reason as in `connect()` — folder
-    // fetches reach here without ever going through `connect()`.
+  /// Shows the offline copy, then fetches the inbox. Also starts keeping it
+  /// current: IDLE (or polling) while the app is open, a refresh on resume.
+  Future<void> connect() async {
+    // Must run first: on an account switch the old session is still alive,
+    // and it would hand the new user the previous account's mailbox.
     await _resetIfAccountChanged();
-    // `_isConnected` alone outlives the socket: the server drops an idle
-    // connection, and every command on it then waits for an answer that
-    // never comes (a Sent copy hung compose forever). enough_mail clears its
-    // own flag when the server closes the socket — reconnect then.
-    if (_isConnected && _imap != null) {
-      if (_imap!.isConnected) return true;
-      _log('[mail] connection was closed by the server — reconnecting');
-      _isConnected = false;
-    }
+    _started = true;
+    _lifecycle ??= AppLifecycleListener(onHide: _onHide, onShow: _onShow);
+    if (_isConnecting) return;
+    _isConnecting = true;
+    _connectionError = null;
+    notifyListeners();
     try {
-      final username = await _storage.read(key: 'kisd_username');
-      final password = await _storage.read(key: 'kisd_password');
-      if (username == null || password == null) {
-        _connectionError = 'No stored credentials — please log in first.';
-        return false;
-      }
-      _cachedUsername = username;
-
-      _log('[mail] connecting to $_imapHost...');
-      _imap?.disconnect();
-      // Same client, except that list previews keep their bytes — see
-      // PreviewFixImapClient.
-      _imap = PreviewFixImapClient(isLogEnabled: false);
-      await _imap!.connectToServer(_imapHost, _imapPort, isSecure: true);
-      await _imap!.login(username, password);
-      _isConnected = true;
-      _connectionError = null;
-      _log('[mail] connected — fetching inbox');
-      return true;
-    } catch (e) {
-      _log('[mail] error: $e');
-      _isConnected = false;
-      _imap?.disconnect();
-      _imap = null;
-      _connectionError = 'Could not connect: $e';
-      return false;
+      // The offline copy first, so the lists are up before — or instead
+      // of — the server's answer.
+      await _loadOfflineFolders();
+      await refreshFolder(MailFolder.inbox, force: true);
+    } finally {
+      _isConnecting = false;
+      notifyListeners();
     }
   }
 
@@ -182,8 +383,8 @@ class MailService extends ChangeNotifier {
   ///
   /// `MailService` is a process-lifetime singleton (`service_locator.dart`)
   /// that nothing disposes, so without this a sign-out leaves a live IMAP
-  /// socket still authenticated as the old user — and every `_isConnected`
-  /// short-circuit then serves the new user that mailbox.
+  /// socket still authenticated as the old user — and every early return
+  /// then serves the new user that mailbox.
   Future<void> _resetIfAccountChanged() async {
     if (_cachedUsername == null) return; // never connected — nothing to compare
     final stored = await _storage.read(key: 'kisd_username');
@@ -192,29 +393,35 @@ class MailService extends ChangeNotifier {
     await resetForAccountSwitch();
   }
 
-  /// Drops the connection and all cached mail for the previous account. Safe
-  /// to call when nothing is connected.
+  /// Drops the connections and all cached mail for the previous account.
+  /// Safe to call when nothing is connected.
   Future<void> resetForAccountSwitch() async {
-    _offlineGeneration++;
+    _generation++;
+    // `_started` stays: the lifecycle hooks serve the next account too.
+    _session.dispose();
+    _session = _newSession();
+    _idleOn = null;
+    _idleSupported = null;
+    unawaited(_events?.cancel());
+    _events = null;
+    _idleRearmTimer?.cancel();
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    _eventTimer?.cancel();
+    _lostInARow = 0;
+    _offlineIdleTimer?.cancel();
     _offlineImap?.disconnect();
     _offlineImap = null;
     _threadImap?.disconnect();
     _threadImap = null;
     _threadCache.clear();
-    _inboxUidValidity = null;
-    _imap?.disconnect();
-    _imap = null;
-    _isConnected = false;
     _isConnecting = false;
-    _isFetching = false;
-    _isFetchingTrash = false;
-    _isFetchingSent = false;
-    _isFetchingDrafts = false;
     _connectionError = null;
-    _messages = [];
-    _trashedMessages = [];
-    _sentMessages = [];
-    _draftMessages = [];
+    _folders = _emptyFolders();
+    activeFolder = MailFolder.inbox;
+    _autoNotBefore = DateTime(0);
+    _autoFailures = 0;
+    _loginRejected = false;
     // Mailbox handles are bound to the old session (and memoised), so they
     // have to go with it.
     _trashMailbox = null;
@@ -234,45 +441,510 @@ class MailService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Shows the offline copy of the inbox. Only the signed-in account's: a
-  /// copy of someone else's is skipped, not deleted — deleting is the
-  /// account switch's job, which only runs once a login has succeeded.
-  Future<void> _loadOfflineInbox() async {
-    final generation = _offlineGeneration;
+  // ── Keeping the lists current ────────────────────────────────────────────
+
+  /// Leaves IDLE before the session's next op. True: the server answered.
+  Future<bool> _leaveIdle(ImapClient c) async {
+    if (!identical(_idleOn, c)) return false;
+    _idleOn = null;
+    _idleRearmTimer?.cancel();
+    await c.idleDone();
+    return true;
+  }
+
+  /// Nothing queued on the main connection: wait in IDLE on the inbox. Only
+  /// on a connection that is already open — never a login just to idle.
+  void _onSessionDrained() {
+    if (!_started || !_foreground || _idleSupported != true) return;
+    final current = _session.current;
+    if (current == null || !current.isConnected) return;
+    if (identical(_idleOn, current)) return;
+    unawaited(
+      _session
+          .run('idle', (c) async {
+            if (!_foreground || identical(_idleOn, c)) return false;
+            final inbox = await c.selectInbox();
+            // Mail that came while no IDLE was running (during a mail open,
+            // a mark, the pause before this) was only announced in an
+            // answer nobody listened to — and IDLE won't announce it again.
+            final state = (inbox.messagesExists, inbox.uidNext);
+            final synced = _folders[MailFolder.inbox]!;
+            final moved = state != (synced.exists, synced.uidNext);
+            if (moved && state != _staleInboxState) {
+              _staleInboxState = state; // once per state: no refresh loop
+              return true;
+            }
+            await c.idleStart();
+            _idleOn = c;
+            return false;
+          }, timeout: const Duration(seconds: 20))
+          .then((stale) {
+            // Outside the op: these call back into the session.
+            if (stale) {
+              unawaited(_autoRefresh(MailFolder.inbox));
+            } else if (_idleOn != null) {
+              _armIdleRearm();
+            }
+          })
+          .catchError((Object e) {
+            _log('[mail] could not start IDLE: $e');
+          }),
+    );
+  }
+
+  void _armIdleRearm() {
+    _idleRearmTimer?.cancel();
+    _idleRearmTimer = Timer(_idleRearmEvery, () {
+      // IDLE held for minutes — the connection is a good one.
+      _lostInARow = 0;
+      // Leaving IDLE checks the connection; the delta sync catches
+      // anything a silently dead one missed.
+      if (_foreground) unawaited(_autoRefresh(MailFolder.inbox));
+    });
+  }
+
+  void _onImapEvent(ImapClient c, ImapEvent e) {
+    if (e is ImapConnectionLostEvent) {
+      if (!identical(_session.current, c)) return;
+      if (identical(_idleOn, c)) _idleOn = null;
+      _log('[mail] connection lost');
+      if (!_foreground || !_started) return;
+      // Back again soon, but not in a loop when the server keeps closing:
+      // 5 s, 10 s, 20 s … up to 8 min.
+      final delay = Duration(seconds: min(480, 5 << min(_lostInARow, 7)));
+      _lostInARow++;
+      _scheduleInboxRefresh(delay);
+      return;
+    }
+    // Our own commands' responses carry these too; only while idling are
+    // they news from the server.
+    if (!identical(_idleOn, c)) return;
+    if (e is ImapMessagesExistEvent ||
+        e is ImapExpungeEvent ||
+        e is ImapFetchEvent ||
+        e is ImapVanishedEvent) {
+      _scheduleInboxRefresh(const Duration(seconds: 1));
+    }
+  }
+
+  void _scheduleInboxRefresh(Duration delay) {
+    _eventTimer?.cancel();
+    _eventTimer = Timer(delay, () => unawaited(_autoRefresh(MailFolder.inbox)));
+  }
+
+  void _updatePolling() {
+    final want = _started && _foreground && _idleSupported == false;
+    if (want && _pollTimer == null) {
+      _pollTimer = Timer.periodic(_pollEvery, (_) {
+        unawaited(_autoRefresh(MailFolder.inbox));
+      });
+    } else if (!want) {
+      _pollTimer?.cancel();
+      _pollTimer = null;
+    }
+  }
+
+  void _onHide() {
+    if (!_foreground) return;
+    _foreground = false;
+    _backgroundSince = DateTime.now();
+    _updatePolling();
+    _idleRearmTimer?.cancel();
+    _eventTimer?.cancel();
+    final current = _session.current;
+    if (current != null && identical(_idleOn, current)) {
+      // Ends IDLE (the session's prepare step) while iOS still lets the app
+      // run.
+      unawaited(
+        _session
+            .run('pause', (_) async {}, timeout: const Duration(seconds: 5))
+            .catchError((_) {}),
+      );
+    }
+  }
+
+  void _onShow() {
+    if (_foreground) return;
+    _foreground = true;
+    final since = _backgroundSince;
+    _backgroundSince = null;
+    if (!_started) return;
+    if (since != null &&
+        DateTime.now().difference(since) > _replaceAfterBackground) {
+      _session.drop();
+    }
+    // The network may be back; a refused login stays refused.
+    if (!_loginRejected) {
+      _autoNotBefore = DateTime(0);
+      _autoFailures = 0;
+    }
+    for (final s in _folders.values) {
+      s.syncedAt = null;
+    }
+    unawaited(_autoRefresh(MailFolder.inbox));
+    if (activeFolder != MailFolder.inbox) unawaited(_autoRefresh(activeFolder));
+    _updatePolling();
+  }
+
+  // ── Folder lists ─────────────────────────────────────────────────────────
+
+  /// Brings [folder]'s list up to date: only what changed since the last
+  /// fetch (new mail, flags, deletions), or the newest page when it starts
+  /// over. Skipped while a fetch of it runs (that one is returned) and,
+  /// unless [force], when it was fetched in the last 30 s or the last
+  /// connect failed moments ago. Never throws: a failure shows in
+  /// [errorFor].
+  Future<void> refreshFolder(MailFolder folder, {bool force = false}) =>
+      _refresh(folder, ignoreFresh: force, ignoreBackoff: force);
+
+  /// IDLE, polling and resume: always fetches, but respects the backoff.
+  Future<void> _autoRefresh(MailFolder folder) =>
+      _refresh(folder, ignoreFresh: true, ignoreBackoff: false);
+
+  Future<void> _refresh(
+    MailFolder folder, {
+    required bool ignoreFresh,
+    required bool ignoreBackoff,
+  }) {
+    final s = _folders[folder]!;
+    final running = s.refreshing;
+    if (running != null) return running;
+    if (!ignoreFresh) {
+      final synced = s.syncedAt;
+      if (!s.failed &&
+          synced != null &&
+          DateTime.now().difference(synced) < _freshFor) {
+        return Future.value();
+      }
+    }
+    if (!ignoreBackoff && _autoBlocked) return Future.value();
+    final future = _fetchAndApply(folder, s, older: false);
+    s.refreshing = future;
+    notifyListeners();
+    return future.whenComplete(() {
+      if (identical(s.refreshing, future)) s.refreshing = null;
+      notifyListeners();
+    });
+  }
+
+  /// Fetches the page of [folder] just older than its list, as the list
+  /// scrolls to its end.
+  Future<void> loadOlder(MailFolder folder) {
+    final s = _folders[folder]!;
+    final running = s.loadingOlder;
+    if (running != null) return running;
+    if (!s.hasOlder || s.messages.isEmpty || _autoBlocked) {
+      return Future.value();
+    }
+    // A failed page isn't retried on every scroll event.
+    final failedAt = s.olderFailedAt;
+    if (failedAt != null &&
+        DateTime.now().difference(failedAt) < const Duration(seconds: 10)) {
+      return Future.value();
+    }
+    final future = _fetchAndApply(folder, s, older: true);
+    s.loadingOlder = future;
+    notifyListeners();
+    return future.whenComplete(() {
+      if (identical(s.loadingOlder, future)) s.loadingOlder = null;
+      notifyListeners();
+    });
+  }
+
+  Future<void> _fetchAndApply(
+    MailFolder folder,
+    _FolderState s, {
+    required bool older,
+  }) async {
+    final generation = _generation;
+    final current = List.of(s.messages);
+    final known = s.uidValidity;
     try {
-      final index = await _offline.readIndex();
-      final username = await _storage.read(key: 'kisd_username');
-      if (index == null || username == null) return;
-      if (generation != _offlineGeneration || _messages.isNotEmpty) return;
-      if (index.owner.trim().toLowerCase() != username.trim().toLowerCase()) {
+      final result = await _run(
+        '${older ? 'older' : 'refresh'} ${folder.name}',
+        (c) => _fetchFolder(
+          c,
+          folder,
+          current: current,
+          knownValidity: known,
+          older: older,
+        ),
+        timeout: _fetchTimeout,
+        idempotent: true,
+      );
+      if (generation != _generation) return;
+      _noteSuccess();
+      s.failed = false;
+      s.error = null;
+      s.olderFailedAt = null;
+      if (result == null) {
+        _log('[mail] no ${folder.name} folder on the server');
+        s.syncedAt = DateTime.now();
         return;
       }
-      _messages = index.messages;
-      _inboxUidValidity = index.uidValidity;
-      // The account this mail belongs to — lets _resetIfAccountChanged clear
-      // it on a switch even if this session never got online.
-      _cachedUsername ??= username;
-      _log('[mail] showing ${_messages.length} offline messages');
-      _unreadController.add(unreadCount);
-      notifyListeners();
+      _apply(folder, s, result);
     } catch (e) {
-      _log('[mail] could not load offline mail: $e');
+      if (generation != _generation) return;
+      _log(
+        '[mail] ${older ? 'older page' : 'refresh'} of ${folder.name} '
+        'failed: $e',
+      );
+      _noteFailure(e);
+      if (older) {
+        s.olderFailedAt = DateTime.now();
+      } else {
+        s.failed = true;
+        s.error = e is MailConnectException
+            ? 'Could not connect: ${e.cause}'
+            : 'Could not load mail: $e';
+      }
+    }
+  }
+
+  /// One session op: SELECT, then the newest page or the delta, then — for
+  /// [older] — the page below. Returns what to apply; null when the folder
+  /// doesn't exist.
+  Future<_FolderFetch?> _fetchFolder(
+    ImapClient c,
+    MailFolder folder, {
+    required List<MimeMessage> current,
+    required int? knownValidity,
+    required bool older,
+  }) async {
+    final box = await _selectOn(c, folder);
+    if (box == null) return null;
+    final exists = box.messagesExists;
+    final validity = box.uidValidity;
+    final uidNext = box.uidNext;
+    var kind = planRefresh(
+      exists: exists,
+      uidValidity: validity,
+      knownUidValidity: knownValidity,
+      current: current,
+    );
+
+    List<MimeMessage>? replace;
+    int? fromUid;
+    var flags = <int, List<String>>{};
+    var fetchedNew = <MimeMessage>[];
+    // The sequence number of the oldest listed message, where an older page
+    // ends. 0: nothing listed.
+    var lowestSeq = 0;
+    if (kind == RefreshKind.delta) {
+      final uids = [for (final m in current) m.uid!];
+      final lowest = uids.reduce(min);
+      final highest = uids.reduce(max);
+      // Small: UID and flags of every listed message, plus any newer ones.
+      final answer = await c.uidFetchMessages(
+        MessageSequence.fromRangeToLast(lowest, isUidSequence: true),
+        '(UID FLAGS)',
+        responseTimeout: _commandTimeout,
+      );
+      int? seqOfLowest;
+      for (final m in answer.messages) {
+        final uid = m.uid;
+        // `n:*` always includes the last message, even below n.
+        if (uid == null || uid < lowest) continue;
+        flags[uid] = [...?m.flags];
+        final seq = m.sequenceId;
+        if (seq != null && (seqOfLowest == null || seq < seqOfLowest)) {
+          seqOfLowest = seq;
+        }
+      }
+      final fresh = newUidsOf(flags, highest);
+      // Every listed mail gone (deleted elsewhere): start over too.
+      if (fresh.length > maxDeltaNewMessages || flags.isEmpty) {
+        kind = RefreshKind.full;
+      } else {
+        if (fresh.isNotEmpty) {
+          fetchedNew = (await c.uidFetchMessages(
+            MessageSequence.fromIds(fresh, isUid: true),
+            listFetchCriteria,
+            responseTimeout: _commandTimeout,
+          )).messages;
+        }
+        fromUid = lowest;
+        lowestSeq = seqOfLowest ?? exists - flags.length + 1;
+      }
+    }
+    if (kind == RefreshKind.full) {
+      final range = newestRange(exists)!;
+      replace = await _fetchRange(c, range);
+      fromUid = null;
+      flags = {};
+      fetchedNew = [];
+      lowestSeq = range.$1;
+    } else if (kind == RefreshKind.empty) {
+      replace = [];
+    }
+
+    var olderPage = const <MimeMessage>[];
+    if (older && lowestSeq > 1) {
+      final range = pageBelow(lowestSeq)!;
+      olderPage = await _fetchRange(c, range);
+      lowestSeq = range.$1;
+    }
+    return _FolderFetch(
+      uidValidity: validity,
+      exists: exists,
+      uidNext: uidNext,
+      hasOlder: lowestSeq > 1,
+      replace: replace,
+      fromUid: fromUid,
+      flags: flags,
+      fetchedNew: fetchedNew,
+      older: olderPage,
+    );
+  }
+
+  Future<List<MimeMessage>> _fetchRange(ImapClient c, (int, int) range) async {
+    final result = await c.fetchMessages(
+      MessageSequence.fromRange(range.$1, range.$2),
+      listFetchCriteria,
+      responseTimeout: _commandTimeout,
+    );
+    return sortNewestFirst(result.messages);
+  }
+
+  void _apply(MailFolder folder, _FolderState s, _FolderFetch r) {
+    final before = {for (final m in s.messages) ?m.uid};
+    final replace = r.replace;
+    // Read before applyDelta, which updates the flags in place.
+    final flagsChanged = s.messages.any((m) {
+      final flags = r.flags[m.uid];
+      return flags != null && !sameFlags(m.flags, flags);
+    });
+    var list = replace != null
+        ? sortNewestFirst(replace)
+        : applyDelta(
+            current: s.messages,
+            fromUid: r.fromUid!,
+            flagsByUid: r.flags,
+            fetchedNew: r.fetchedNew,
+          );
+    if (r.older.isNotEmpty) list = appendOlder(list, r.older);
+    final arrived = list.any((m) => !before.contains(m.uid));
+    final membership = arrived || list.length != before.length;
+    // Polling and IDLE refresh often; an unchanged list isn't rewritten.
+    final changed =
+        membership ||
+        flagsChanged ||
+        replace != null ||
+        s.uidValidity != r.uidValidity;
+    s.messages = list;
+    s.uidValidity = r.uidValidity;
+    s.hasOlder = r.hasOlder;
+    s.exists = r.exists;
+    s.uidNext = r.uidNext;
+    s.syncedAt = DateTime.now();
+    _log(
+      '[mail] ${folder.name}: ${list.length} of ${r.exists} listed'
+      '${replace != null
+          ? ' (new list)'
+          : changed
+          ? ''
+          : ' (no change)'}',
+    );
+    // Mail that came or went may belong to a conversation looked up before.
+    if (membership && folder != MailFolder.drafts) _threadCache.clear();
+    if (folder == MailFolder.inbox) {
+      _unreadController.add(unreadCount);
+      // Bodies even when nothing changed: a download cut short last time
+      // is finished now.
+      unawaited(_updateOfflineCopy(fetchBodies: true, saveList: changed));
+    } else if (changed) {
+      unawaited(_saveFolderIndex(folder));
+    }
+  }
+
+  // Selects the IMAP mailbox for [folder]; null if it cannot be resolved.
+  Future<Mailbox?> _selectOn(ImapClient c, MailFolder folder) async {
+    final Mailbox? box = switch (folder) {
+      MailFolder.inbox => null,
+      MailFolder.trash => await _resolveTrashMailbox(c),
+      MailFolder.sent => await _resolveSentMailbox(c),
+      MailFolder.drafts => await _resolveDraftsMailbox(c),
+    };
+    if (folder == MailFolder.inbox) return c.selectInbox();
+    if (box == null) return null;
+    return c.selectMailbox(box);
+  }
+
+  // ── Offline copy ─────────────────────────────────────────────────────────
+
+  /// Shows the offline copy of every folder. Only the signed-in account's:
+  /// a copy of someone else's is skipped, not deleted — deleting is the
+  /// account switch's job, which only runs once a login has succeeded.
+  Future<void> _loadOfflineFolders() async {
+    final generation = _generation;
+    final username = await _storage.read(key: 'kisd_username');
+    if (username == null) return;
+    var shown = 0;
+    for (final folder in MailFolder.values) {
+      final s = _folders[folder]!;
+      if (s.messages.isNotEmpty) continue;
+      try {
+        final index = await _offline.readIndex(folder: folder.name);
+        if (index == null || generation != _generation) continue;
+        if (s.messages.isNotEmpty) continue;
+        if (index.owner.trim().toLowerCase() != username.trim().toLowerCase()) {
+          continue;
+        }
+        s.messages = index.messages;
+        s.uidValidity = index.uidValidity;
+        s.hasOlder = index.messages.isNotEmpty;
+        // The account this mail belongs to — lets _resetIfAccountChanged
+        // clear it on a switch even if this session never got online.
+        _cachedUsername ??= username;
+        shown += index.messages.length;
+      } catch (e) {
+        _log('[mail] could not load offline ${folder.name}: $e');
+      }
+    }
+    if (shown == 0 || generation != _generation) return;
+    _log('[mail] showing $shown offline messages');
+    _unreadController.add(unreadCount);
+    notifyListeners();
+  }
+
+  /// Saves [folder]'s list rows (not the inbox — see [_updateOfflineCopy]).
+  Future<void> _saveFolderIndex(MailFolder folder) async {
+    final owner = _cachedUsername;
+    final uidValidity = _folders[folder]!.uidValidity;
+    if (owner == null || uidValidity == null) return;
+    try {
+      await _offline.writeIndex(
+        folder: folder.name,
+        owner: owner,
+        uidValidity: uidValidity,
+        messages: _folders[folder]!.messages,
+      );
+    } catch (e) {
+      _log('[mail] could not save offline ${folder.name}: $e');
     }
   }
 
   /// Mirrors the inbox list into the offline copy and drops the full mails
   /// that left it. With [fetchBodies], also downloads the ones it lacks — only
   /// after an inbox fetch, so marking or deleting never opens a connection.
-  Future<void> _updateOfflineCopy({bool fetchBodies = false}) async {
+  Future<void> _updateOfflineCopy({
+    bool fetchBodies = false,
+    bool saveList = true,
+  }) async {
     final owner = _cachedUsername;
     final uidValidity = _inboxUidValidity;
     if (owner == null || uidValidity == null) return;
-    try {
-      await _offline.writeIndex(
-          owner: owner, uidValidity: uidValidity, messages: _messages);
-    } catch (e) {
-      _log('[mail] could not save offline list: $e');
-      return;
+    if (saveList) {
+      try {
+        await _offline.writeIndex(
+          owner: owner,
+          uidValidity: uidValidity,
+          messages: _inbox,
+        );
+      } catch (e) {
+        _log('[mail] could not save offline list: $e');
+        return;
+      }
     }
     if (fetchBodies) _offlineFetchPending = true;
     if (_offlineSyncRunning) {
@@ -295,14 +967,14 @@ class MailService extends ChangeNotifier {
   }
 
   /// With [fetch], saves the full mails of the newest
-  /// [MailOfflineCache.maxMessages] inbox messages that aren't on disk yet —
+  /// [MailOfflineCache.maxBodies] inbox messages that aren't on disk yet —
   /// a mail never changes under its UID, so each is downloaded once. Then
   /// deletes the bodies of mails no longer in that list.
   Future<void> _syncOfflineBodies({required bool fetch}) async {
-    final generation = _offlineGeneration;
+    final generation = _generation;
     final uidValidity = _inboxUidValidity;
     final wanted = [
-      for (final m in _messages.take(MailOfflineCache.maxMessages))
+      for (final m in _inbox.take(MailOfflineCache.maxBodies))
         if (m.uid != null) m,
     ];
     if (uidValidity == null) return;
@@ -318,35 +990,67 @@ class MailService extends ChangeNotifier {
     if (fetch && missing.isNotEmpty) {
       await _fetchOfflineBodies(missing, keep, uidValidity, generation);
     }
-    if (generation == _offlineGeneration) await _offline.prune(keep);
+    if (generation == _generation) await _offline.prune(keep);
   }
 
-  /// On a connection of its own, with the inbox EXAMINEd read-only: the shared
-  /// one's selected folder can change under any await (opening Sent mid-sync
-  /// would fetch Sent mails under inbox UIDs). BODY.PEEK so caching doesn't
-  /// mark 50 mails read.
-  Future<void> _fetchOfflineBodies(List<int> uids, Set<int> keep,
-      int uidValidity, int generation) async {
+  /// The offline copy's own connection, kept for a few minutes: new mail
+  /// arriving one by one (IDLE) shouldn't cost a login each.
+  Future<ImapClient?> _offlineClient() async {
+    final current = _offlineImap;
+    final used = _offlineImapUsed;
+    final fresh = used != null && DateTime.now().difference(used).inMinutes < 4;
+    if (current != null && current.isConnected && fresh) return current;
+    current?.disconnect();
+    _offlineImap = null;
     final username = await _storage.read(key: 'kisd_username');
     final password = await _storage.read(key: 'kisd_password');
-    if (username == null || password == null) return;
-    if (generation != _offlineGeneration) return;
-
+    if (username == null || password == null) return null;
     final imap = ImapClient(isLogEnabled: false);
-    _offlineImap = imap;
-    var saved = 0;
     try {
-      await imap.connectToServer(_imapHost, _imapPort, isSecure: true);
+      await imap.connectToServer(
+        _imapHost,
+        _imapPort,
+        isSecure: true,
+        timeout: const Duration(seconds: 10),
+      );
       await imap.login(username, password);
-      final inbox = await imap.examineMailbox(Mailbox(
-        encodedName: 'INBOX',
-        encodedPath: 'INBOX',
-        flags: [],
-        pathSeparator: '/',
-      ));
+    } catch (_) {
+      imap.disconnect();
+      rethrow;
+    }
+    _offlineImap = imap;
+    return imap;
+  }
+
+  /// On a connection of its own, with the inbox EXAMINEd read-only: a body
+  /// download takes long enough that it would hold up the main connection's
+  /// ops. BODY.PEEK so caching doesn't mark 50 mails read.
+  Future<void> _fetchOfflineBodies(
+    List<int> uids,
+    Set<int> keep,
+    int uidValidity,
+    int generation,
+  ) async {
+    if (generation != _generation) return;
+    _offlineIdleTimer?.cancel();
+    var saved = 0;
+    ImapClient? imap;
+    try {
+      imap = await _offlineClient();
+      if (imap == null || generation != _generation) return;
+      final inbox = await imap
+          .examineMailbox(
+            Mailbox(
+              encodedName: 'INBOX',
+              encodedPath: 'INBOX',
+              flags: [],
+              pathSeparator: '/',
+            ),
+          )
+          .timeout(const Duration(seconds: 20));
       if (inbox.uidValidity != uidValidity) return;
       for (var i = 0; i < uids.length; i += 10) {
-        if (generation != _offlineGeneration) return;
+        if (generation != _generation) return;
         final chunk = uids.sublist(i, min(i + 10, uids.length));
         final result = await imap.uidFetchMessages(
           MessageSequence.fromIds(chunk, isUid: true),
@@ -362,96 +1066,31 @@ class MailService extends ChangeNotifier {
             continue;
           }
           if (data.data.length > MailOfflineCache.maxMessageBytes) continue;
-          if (generation != _offlineGeneration) return;
+          if (generation != _generation) return;
           await _offline.writeBody(uid, data.data);
           saved++;
         }
       }
     } catch (e) {
       _log('[mail] offline sync stopped: $e');
-    } finally {
       if (identical(_offlineImap, imap)) _offlineImap = null;
-      imap.disconnect();
+      imap?.disconnect();
+    } finally {
+      _offlineImapUsed = DateTime.now();
+      _offlineIdleTimer?.cancel();
+      _offlineIdleTimer = Timer(const Duration(minutes: 4), () {
+        if (_offlineSyncRunning) return;
+        _offlineImap?.disconnect();
+        _offlineImap = null;
+      });
       _log('[mail] saved $saved messages for offline reading');
     }
   }
 
-  Future<void> reloadInbox() async {
-    _log('[mail] manual reload triggered');
-    await fetchInbox();
-    _log('[mail] fetched ${_messages.length} messages after reload');
-  }
-
-  Future<List<MimeMessage>> fetchInbox({int limit = 50}) async {
-    if (!_isConnected) {
-      final ok = await _ensureConnected();
-      if (!ok) return _messages;
-    }
-
-    _isFetching = true;
-    notifyListeners();
-
-    try {
-      final inbox = await _imap!.selectInbox();
-      final result = await _imap!.fetchRecentMessages(
-        messageCount: limit,
-        // RFC822.SIZE: lets the offline copy skip mails too big to keep.
-        criteria: '(FLAGS ENVELOPE UID RFC822.SIZE BODY.PEEK[TEXT]<0.500>)',
-        responseTimeout: const Duration(seconds: 90),
-      );
-      _messages = result.messages.reversed.toList();
-      _inboxUidValidity = inbox.uidValidity;
-      // New mail may have joined a conversation looked up before.
-      _threadCache.clear();
-      final unread = unreadCount;
-      _log('[mail] fetched ${_messages.length} messages ($unread unread)');
-      _unreadController.add(unread);
-      unawaited(_updateOfflineCopy(fetchBodies: true));
-    } catch (e) {
-      _log('[mail] error: $e');
-      _isConnected = false;
-      _imap?.disconnect();
-      _imap = null;
-    } finally {
-      _isFetching = false;
-      notifyListeners();
-    }
-    return _messages;
-  }
-
-  // Selects the IMAP mailbox for [folder]; false if it cannot be resolved.
-  Future<bool> _selectFolder(MailFolder folder) async {
-    switch (folder) {
-      case MailFolder.inbox:
-        await _imap!.selectInbox();
-        return true;
-      case MailFolder.trash:
-        final mb = await _resolveTrashMailbox();
-        if (mb == null) return false;
-        await _imap!.selectMailbox(mb);
-        return true;
-      case MailFolder.sent:
-        final mb = await _resolveSentMailbox();
-        if (mb == null) return false;
-        await _imap!.selectMailbox(mb);
-        return true;
-      case MailFolder.drafts:
-        final mb = await _resolveDraftsMailbox();
-        if (mb == null) return false;
-        await _imap!.selectMailbox(mb);
-        return true;
-    }
-  }
-
-  List<MimeMessage> _mutableListFor(MailFolder folder) => switch (folder) {
-        MailFolder.inbox => _messages,
-        MailFolder.trash => _trashedMessages,
-        MailFolder.sent => _sentMessages,
-        MailFolder.drafts => _draftMessages,
-      };
-
-  Future<MimeMessage?> fetchFullMessage(int uid,
-      {MailFolder folder = MailFolder.inbox}) async {
+  Future<MimeMessage?> fetchFullMessage(
+    int uid, {
+    MailFolder folder = MailFolder.inbox,
+  }) async {
     // A mail never changes under its UID, so the offline copy is as good as
     // the server's — and opens without a connection. Inbox only: UIDs are per
     // mailbox, so a Sent or Trash UID can name an unrelated inbox mail.
@@ -459,17 +1098,24 @@ class MailService extends ChangeNotifier {
       final cached = await _offlineBody(uid);
       if (cached != null) return cached;
     }
-    final ok = await _ensureConnected();
-    if (!ok) return null;
     try {
-      if (!await _selectFolder(folder)) return null;
-      final result = await _imap!.uidFetchMessage(uid, 'BODY[]');
-      return result.messages.isNotEmpty ? result.messages.first : null;
+      return await _run(
+        'open ${folder.name} $uid',
+        (c) async {
+          if (await _selectOn(c, folder) == null) return null;
+          final result = await c.uidFetchMessage(
+            uid,
+            'BODY[]',
+            responseTimeout: _commandTimeout,
+          );
+          return result.messages.isNotEmpty ? result.messages.first : null;
+        },
+        timeout: _fetchTimeout,
+        idempotent: true,
+      );
     } catch (e) {
       _log('[mail] error: $e');
-      _isConnected = false;
-      _imap?.disconnect();
-      _imap = null;
+      _noteFailure(e);
       return null;
     }
   }
@@ -478,7 +1124,7 @@ class MailService extends ChangeNotifier {
   /// that UID. The Message-ID comparison guards the narrow windows where the
   /// saved bodies trail a UIDVALIDITY or account change.
   Future<MimeMessage?> _offlineBody(int uid) async {
-    final listed = _messages.where((m) => m.uid == uid).firstOrNull;
+    final listed = _inbox.where((m) => m.uid == uid).firstOrNull;
     if (listed == null) return null;
     final MimeMessage? cached;
     try {
@@ -512,9 +1158,9 @@ class MailService extends ChangeNotifier {
   ///
   /// Searches Inbox and Sent (where the user's own replies are) by reply
   /// headers and by subject; [conversationOf] decides what belongs. On a
-  /// connection of its own with each folder EXAMINEd read-only: the shared
-  /// one's selected folder changes under any await, and BODY.PEEK leaves the
-  /// other mails' read state alone.
+  /// connection of its own with each folder EXAMINEd read-only: a lookup
+  /// shouldn't wait behind the list's ops, and BODY.PEEK leaves the other
+  /// mails' read state alone.
   Future<List<ThreadMessage>?> fetchThread(
     MimeMessage opened,
     MailFolder folder,
@@ -534,16 +1180,20 @@ class MailService extends ChangeNotifier {
             messageIdOf(t.message) == key ? ThreadMessage(opened, folder) : t,
         ];
       }
-      final generation = _offlineGeneration;
+      final generation = _generation;
       // Whole-call: a dead socket that was never closed would otherwise hang
       // a command forever — and every later lookup queued behind it.
       final watch = Stopwatch()..start();
-      final thread = await _lookUpThread(opened, folder)
-          .timeout(const Duration(seconds: 25));
+      final thread = await _lookUpThread(
+        opened,
+        folder,
+      ).timeout(const Duration(seconds: 25));
       _threadImapUsed = DateTime.now();
-      _log('[mail] conversation: ${thread?.length ?? 0} mails '
-          'in ${watch.elapsedMilliseconds} ms');
-      if (thread == null || generation != _offlineGeneration) return null;
+      _log(
+        '[mail] conversation: ${thread?.length ?? 0} mails '
+        'in ${watch.elapsedMilliseconds} ms',
+      );
+      if (thread == null || generation != _generation) return null;
       if (key != null) {
         _threadCache[key] = thread;
         while (_threadCache.length > _threadCacheSize) {
@@ -567,8 +1217,7 @@ class MailService extends ChangeNotifier {
     // An idle connection may be dead without knowing it (the phone slept,
     // the network changed): after a few minutes, a fresh one is cheaper
     // than finding out by timeout.
-    final fresh =
-        used != null && DateTime.now().difference(used).inMinutes < 4;
+    final fresh = used != null && DateTime.now().difference(used).inMinutes < 4;
     if (current != null && current.isConnected && fresh) return current;
     current?.disconnect();
     _threadImap = null;
@@ -576,8 +1225,12 @@ class MailService extends ChangeNotifier {
     final password = await _storage.read(key: 'kisd_password');
     if (username == null || password == null) return null;
     final imap = ImapClient(isLogEnabled: false);
-    await imap.connectToServer(_imapHost, _imapPort,
-        isSecure: true, timeout: const Duration(seconds: 10));
+    await imap.connectToServer(
+      _imapHost,
+      _imapPort,
+      isSecure: true,
+      timeout: const Duration(seconds: 10),
+    );
     await imap.login(username, password);
     _threadImap = imap;
     return imap;
@@ -588,23 +1241,31 @@ class MailService extends ChangeNotifier {
     final parents = parentIdsOf(opened);
     final subject = subjectSearchText(opened.decodeSubject());
     final criteria = threadSearchCriteria(
-        messageId: id, parentIds: parents, subjectText: subject);
+      messageId: id,
+      parentIds: parents,
+      subjectText: subject,
+    );
     if (criteria == null) return const [];
     try {
       final result = await imap.uidSearchMessages(
-          searchCriteria: criteria, responseTimeout: _threadResponseTimeout);
+        searchCriteria: criteria,
+        responseTimeout: _threadResponseTimeout,
+      );
       return result.matchingSequence?.toList() ?? const [];
     } on ImapException catch (e) {
       // A server that can't search headers still finds the subject.
       _log('[mail] header search refused ($e) — searching the subject only');
       final subjectOnly = threadSearchCriteria(
-          messageId: id,
-          parentIds: parents,
-          subjectText: subject,
-          headers: false);
+        messageId: id,
+        parentIds: parents,
+        subjectText: subject,
+        headers: false,
+      );
       if (subjectOnly == null) return const [];
       final result = await imap.uidSearchMessages(
-          searchCriteria: subjectOnly, responseTimeout: _threadResponseTimeout);
+        searchCriteria: subjectOnly,
+        responseTimeout: _threadResponseTimeout,
+      );
       return result.matchingSequence?.toList() ?? const [];
     }
   }
@@ -615,7 +1276,7 @@ class MailService extends ChangeNotifier {
   ) async {
     final imap = await _threadClient();
     if (imap == null) return null;
-    final sent = await _resolveSentMailbox(via: imap);
+    final sent = await _resolveSentMailbox(imap);
     final boxes = <(MailFolder, Mailbox)>[
       (MailFolder.inbox, _inboxMailbox),
       if (sent != null) (MailFolder.sent, sent),
@@ -644,15 +1305,13 @@ class MailService extends ChangeNotifier {
     }
 
     final seedKey = '${folder.name}:${opened.uid}';
-    final members = conversationOf(
-      ThreadCandidate.of(opened, seedKey),
-      [for (final e in found.entries) ThreadCandidate.of(e.value.$2, e.key)],
-    );
+    final members = conversationOf(ThreadCandidate.of(opened, seedKey), [
+      for (final e in found.entries) ThreadCandidate.of(e.value.$2, e.key),
+    ]);
     // The same mail can sit in both folders (sent to oneself, a list
     // echoing it back): one card — the opened copy, else the inbox's.
-    int rank(ThreadCandidate c) => c.key == seedKey
-        ? 0
-        : (found[c.key]?.$1 == MailFolder.inbox ? 1 : 2);
+    int rank(ThreadCandidate c) =>
+        c.key == seedKey ? 0 : (found[c.key]?.$1 == MailFolder.inbox ? 1 : 2);
     final byId = <String, ThreadCandidate>{};
     final unique = <ThreadCandidate>[];
     for (final m in members) {
@@ -673,10 +1332,10 @@ class MailService extends ChangeNotifier {
     if (keep.length > _threadMaxMessages) {
       keep = keep.sublist(keep.length - _threadMaxMessages);
       if (!keep.any((m) => m.key == seedKey)) {
-        keep = [
-          ...keep.skip(1),
-          unique.firstWhere((m) => m.key == seedKey),
-        ]..sort((a, b) => (a.date ?? DateTime(0)).compareTo(b.date ?? DateTime(0)));
+        keep = [...keep.skip(1), unique.firstWhere((m) => m.key == seedKey)]
+          ..sort(
+            (a, b) => (a.date ?? DateTime(0)).compareTo(b.date ?? DateTime(0)),
+          );
       }
     }
     if (keep.length < 2) return [ThreadMessage(opened, folder)];
@@ -751,11 +1410,15 @@ class MailService extends ChangeNotifier {
   /// `buildSimpleTextMessage` and the 30 s timeout. Every attachment-only
   /// step below is guarded by `attachments.isNotEmpty`.
   /// [inReplyTo] and [references] mark a reply (see [applyReplyHeaders]).
-  Future<void> sendEmail(String to, String subject, String body,
-      {String? from,
-      List<MailAttachmentData> attachments = const [],
-      String? inReplyTo,
-      List<String> references = const []}) async {
+  Future<void> sendEmail(
+    String to,
+    String subject,
+    String body, {
+    String? from,
+    List<MailAttachmentData> attachments = const [],
+    String? inReplyTo,
+    List<String> references = const [],
+  }) async {
     // Storage, not `_cachedUsername`: the field is the account this session
     // connected as, which after a switch is the *previous* user.
     final username = await _storage.read(key: 'kisd_username');
@@ -770,27 +1433,32 @@ class MailService extends ChangeNotifier {
     final fromEmail = from ?? await accountEmail();
     if (fromEmail == null || !fromEmail.contains('@')) {
       throw Exception(
-          'No sender address set — enter your TH Köln email address in the '
-          'From field (you can see it in webmail under Sent).');
+        'No sender address set — enter your TH Köln email address in the '
+        'From field (you can see it in webmail under Sent).',
+      );
     }
     if (isCampusIdAddress(fromEmail, username)) {
       throw Exception(
-          '$fromEmail is your Campus ID, not a real mailbox — the server '
-          'accepts mail from it and then silently drops it. Use your real '
-          'address (your.name@smail.th-koeln.de).');
+        '$fromEmail is your Campus ID, not a real mailbox — the server '
+        'accepts mail from it and then silently drops it. Use your real '
+        'address (your.name@smail.th-koeln.de).',
+      );
     }
     if (isRoleAddress(fromEmail)) {
       throw Exception(
-          '$fromEmail is a system address, not yours. Use your real '
-          'address (your.name@smail.th-koeln.de).');
+        '$fromEmail is a system address, not yours. Use your real '
+        'address (your.name@smail.th-koeln.de).',
+      );
     }
     if (from != null) await setAccountEmail(from);
 
     _log('[mail] sending email to $to (from $fromEmail)');
     // Debug logging echoes every line sent — for a mail with attachments
     // that's megabytes of base64 in the console.
-    final smtp = SmtpClient('fh-koeln.de',
-        isLogEnabled: kDebugMode && attachments.isEmpty);
+    final smtp = SmtpClient(
+      'fh-koeln.de',
+      isLogEnabled: kDebugMode && attachments.isEmpty,
+    );
     try {
       // enough_mail's SMTP commands await the server with no timeout of
       // their own — a stalled response would hang the send forever, with
@@ -808,17 +1476,23 @@ class MailService extends ChangeNotifier {
         final sizes = attachments.map((a) => a.bytes.length);
         estimatedSize = estimateEncodedSize(body.length, sizes);
         if (exceedsMailLimit(body.length, sizes, limit)) {
-          throw Exception(mailTooBigMessage(
-            sizes.fold(0, (a, b) => a + b),
-            attachmentAllowance(limit!,
-                bodyLength: body.length, count: attachments.length),
-          ));
+          throw Exception(
+            mailTooBigMessage(
+              sizes.fold(0, (a, b) => a + b),
+              attachmentAllowance(
+                limit!,
+                bodyLength: body.length,
+                count: attachments.length,
+              ),
+            ),
+          );
         }
         // The timeout covers the whole upload. Fixed at 30 s, a few MB on a
         // weak uplink would be reported as failed while the server may
         // already have queued the mail — and the retry sends it twice. So
         // it only guards against a stall: at least 32 KB/s.
-        sendTimeout = _smtpResponseTimeout +
+        sendTimeout =
+            _smtpResponseTimeout +
             Duration(seconds: estimatedSize ~/ (32 * 1024));
       }
       await smtp.authenticate(username, password).timeout(_smtpResponseTimeout);
@@ -836,11 +1510,12 @@ class MailService extends ChangeNotifier {
               body: body,
               attachments: attachments,
             );
-      applyReplyHeaders(message,
-          inReplyTo: inReplyTo, references: references);
+      applyReplyHeaders(message, inReplyTo: inReplyTo, references: references);
       if (estimatedSize != null) {
-        _log('[mail] sending ${attachments.length} attachment(s), '
-            '~$estimatedSize bytes');
+        _log(
+          '[mail] sending ${attachments.length} attachment(s), '
+          '~$estimatedSize bytes',
+        );
       }
       final response = await smtp.sendMessage(message).timeout(sendTimeout);
       // The acceptance line carries the server's queue ID — the proof the
@@ -874,9 +1549,9 @@ class MailService extends ChangeNotifier {
   /// silently, which is worse than asking the user once.
   Future<String?> accountEmail() async {
     // Before the cached-address read below: that read returns early, so it
-    // never reaches the heal inside `_ensureConnected()` further down — and a
-    // previous account's real address passes both validity checks here, which
-    // would make the new user compose with the old user's From.
+    // would never reach an account check further down — and a previous
+    // account's real address passes both validity checks here, which would
+    // make the new user compose with the old user's From.
     await _resetIfAccountChanged();
     final username = await _storage.read(key: 'kisd_username');
     final cached = await _storage.read(key: _emailStorageKey);
@@ -895,8 +1570,11 @@ class MailService extends ChangeNotifier {
     // from IDM. Official, so it is persisted like a confirmed address.
     try {
       final spaces = await scraperService.fetchAccountEmail();
-      final official =
-          acceptSpacesEmail(spaces?.email, spaces?.username, username);
+      final official = acceptSpacesEmail(
+        spaces?.email,
+        spaces?.username,
+        username,
+      );
       if (official != null) {
         _log('[mail] spaces account email: $official');
         await setAccountEmail(official);
@@ -909,26 +1587,25 @@ class MailService extends ChangeNotifier {
     // Fallback when Spaces is unreachable (offline, expired session).
     final receivedHeaders = <String>[];
     final sentFrom = <MailAddress>[];
-    if (await _ensureConnected()) {
-      try {
-        receivedHeaders.addAll(await _inboxReceivedHeaders());
-      } catch (e) {
-        _log('[mail] received-header lookup failed: $e');
-      }
-      try {
-        if (_sentMessages.isEmpty) await fetchSent(limit: 10);
-        for (final m in _sentMessages) {
-          sentFrom.addAll(m.from ?? const []);
-        }
-      } catch (e) {
-        _log('[mail] account email lookup failed: $e');
-      }
+    try {
+      receivedHeaders.addAll(
+        await _run('received headers', _inboxReceivedHeaders, idempotent: true),
+      );
+    } catch (e) {
+      _log('[mail] received-header lookup failed: $e');
+    }
+    if (_folders[MailFolder.sent]!.messages.isEmpty) {
+      await refreshFolder(MailFolder.sent);
+    }
+    for (final m in _folders[MailFolder.sent]!.messages) {
+      sentFrom.addAll(m.from ?? const []);
     }
 
     final email = pickAccountEmail(
-        receivedHeaders: receivedHeaders,
-        sentFrom: sentFrom,
-        username: username);
+      receivedHeaders: receivedHeaders,
+      sentFrom: sentFrom,
+      username: username,
+    );
     if (email != null) _log('[mail] detected account email: $email');
     // Not persisted here: detection is only a prefill. The address is stored
     // once the user sends with it (setAccountEmail), i.e. after they saw it.
@@ -950,7 +1627,10 @@ class MailService extends ChangeNotifier {
   /// address must be a th-koeln one that is neither the Campus ID nor a role.
   @visibleForTesting
   static String? acceptSpacesEmail(
-      String? email, String? spacesUsername, String? loginUsername) {
+    String? email,
+    String? spacesUsername,
+    String? loginUsername,
+  ) {
     final normalized = email?.trim().toLowerCase();
     final spacesLogin = spacesUsername?.trim().toLowerCase();
     final login = loginUsername?.trim().toLowerCase();
@@ -1018,8 +1698,7 @@ class MailService extends ChangeNotifier {
       return domain == 'th-koeln.de' || domain.endsWith('.th-koeln.de');
     }
 
-    bool isSmail(String email) =>
-        email.split('@').last == 'smail.th-koeln.de';
+    bool isSmail(String email) => email.split('@').last == 'smail.th-koeln.de';
 
     String? mostFrequent(Iterable<String> emails) {
       final counts = <String, int>{};
@@ -1038,9 +1717,7 @@ class MailService extends ChangeNotifier {
     }
 
     bool isOwnCandidate(String e) =>
-        e.contains('@') &&
-        !isCampusIdAddress(e, username) &&
-        !isRoleAddress(e);
+        e.contains('@') && !isCampusIdAddress(e, username) && !isRoleAddress(e);
 
     // A server only writes `for <addr>` when that copy has exactly one
     // envelope recipient, so it names this mailbox even for Bcc'd mass
@@ -1051,7 +1728,8 @@ class MailService extends ChangeNotifier {
         .map((m) => m.group(1)!.trim().toLowerCase())
         .where((e) => isThKoeln(e) && isOwnCandidate(e))
         .toList();
-    final receivedPick = mostFrequent(receivedAddresses.where(isSmail)) ??
+    final receivedPick =
+        mostFrequent(receivedAddresses.where(isSmail)) ??
         mostFrequent(receivedAddresses);
     if (receivedPick != null) return receivedPick;
 
@@ -1069,16 +1747,19 @@ class MailService extends ChangeNotifier {
 
   // `for <addr>` (Postfix) or `for addr` (Exim) in a Received header.
   static final _receivedForPattern = RegExp(
-      r'\bfor\s+<?([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+)>?',
-      caseSensitive: false);
+    r'\bfor\s+<?([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+)>?',
+    caseSensitive: false,
+  );
 
   /// Raw `Received:` header values of the newest inbox messages. Header-only
   /// fetch with PEEK, so nothing is marked read and no bodies are loaded.
-  Future<List<String>> _inboxReceivedHeaders({int limit = 30}) async {
-    await _imap!.selectInbox();
-    final result = await _imap!.fetchRecentMessages(
-      messageCount: limit,
-      criteria: '(BODY.PEEK[HEADER.FIELDS (RECEIVED)])',
+  Future<List<String>> _inboxReceivedHeaders(ImapClient c) async {
+    final inbox = await c.selectInbox();
+    final range = newestRange(inbox.messagesExists, count: 30);
+    if (range == null) return const [];
+    final result = await c.fetchMessages(
+      MessageSequence.fromRange(range.$1, range.$2),
+      '(BODY.PEEK[HEADER.FIELDS (RECEIVED)])',
       responseTimeout: const Duration(seconds: 30),
     );
     return [
@@ -1088,31 +1769,31 @@ class MailService extends ChangeNotifier {
     ];
   }
 
+  /// How long an APPEND of a mail of [size] bytes may take: 30 s plus 1 s
+  /// per 32 KB, the same floor as the SMTP upload.
+  static Duration _appendTimeout(int? size) =>
+      _smtpResponseTimeout + Duration(seconds: (size ?? 0) ~/ (32 * 1024));
+
   // Webmail parity: SMTP delivery alone stores no copy — webmail APPENDs one
   // to the Sent folder over IMAP. Failures here must not fail the send.
   //
   // Bounded like the SMTP upload — 30 s plus 1 s per 32 KB of [size] — so a
   // connection that died without the server closing it can't hang the send.
+  // Never retried: the copy may have landed before the connection failed.
   Future<void> _appendToSent(MimeMessage message, {int? size}) async {
     try {
-      if (!await _ensureConnected()) return;
-      final sent = await _resolveSentMailbox();
+      final sent = await _run('append sent', (c) async {
+        final box = await _resolveSentMailbox(c);
+        if (box == null) return null;
+        await c.appendMessage(message, targetMailbox: box, flags: [r'\Seen']);
+        return box;
+      }, timeout: _appendTimeout(size));
       if (sent == null) return;
-      await _imap!
-          .appendMessage(message, targetMailbox: sent, flags: [r'\Seen'])
-          .timeout(_smtpResponseTimeout +
-              Duration(seconds: (size ?? 0) ~/ (32 * 1024)));
       _log('[mail] appended sent copy to ${sent.path}');
       // The reply's Sent copy now belongs to a conversation looked up
       // before — attachment mails append after compose has closed.
       _threadCache.clear();
-    } on TimeoutException catch (e) {
-      _log('[mail] could not append to sent folder: $e');
-      // Whatever the connection is doing, it isn't answering: start fresh
-      // with the next command.
-      _isConnected = false;
-      _imap?.disconnect();
-      _imap = null;
+      unawaited(refreshFolder(MailFolder.sent, force: true));
     } catch (e) {
       _log('[mail] could not append to sent folder: $e');
     }
@@ -1172,13 +1853,11 @@ class MailService extends ChangeNotifier {
   }
 
   // ── Drafts ───────────────────────────────────────────────────────────────
-  // The only additions the mail UI rework made to this service (explicitly
-  // allowed): saving a compose sheet as a draft, and removing a draft once it
-  // is sent, saved again or deleted. Nothing above was changed for them.
 
   /// Appends a draft to the Drafts folder over IMAP, the way [_appendToSent]
-  /// stores a sent copy. Returns false when it didn't land, so compose can
-  /// stay open rather than lose what was typed.
+  /// stores a sent copy. Returns false when it didn't land — also after the
+  /// size-scaled timeout — so compose can stay open rather than lose what
+  /// was typed.
   Future<bool> saveDraft({
     required String from,
     required String to,
@@ -1189,11 +1868,10 @@ class MailService extends ChangeNotifier {
     List<String> references = const [],
   }) async {
     try {
-      if (!await _ensureConnected()) return false;
-      final drafts = await _resolveDraftsMailbox();
-      if (drafts == null) return false;
-      final sender =
-          from.contains('@') ? from.trim() : (await accountEmail() ?? from);
+      // Before the op: accountEmail runs ops of its own.
+      final sender = from.contains('@')
+          ? from.trim()
+          : (await accountEmail() ?? from);
       // Attachments travel inside the draft, photos marked so a reopened
       // draft can still offer scaling them.
       final message = attachments.isEmpty
@@ -1212,12 +1890,26 @@ class MailService extends ChangeNotifier {
               markPhotos: true,
             );
       // Kept in the draft, so a reopened reply is still sent as one.
-      applyReplyHeaders(message,
-          inReplyTo: inReplyTo, references: references);
-      await _imap!.appendMessage(message,
-          targetMailbox: drafts, flags: [r'\Draft', r'\Seen']);
+      applyReplyHeaders(message, inReplyTo: inReplyTo, references: references);
+      final size = attachments.isEmpty
+          ? null
+          : estimateEncodedSize(
+              body.length,
+              attachments.map((a) => a.bytes.length),
+            );
+      final drafts = await _run('save draft', (c) async {
+        final box = await _resolveDraftsMailbox(c);
+        if (box == null) return null;
+        await c.appendMessage(
+          message,
+          targetMailbox: box,
+          flags: [r'\Draft', r'\Seen'],
+        );
+        return box;
+      }, timeout: _appendTimeout(size));
+      if (drafts == null) return false;
       _log('[mail] saved draft to ${drafts.path}');
-      unawaited(fetchDrafts());
+      unawaited(refreshFolder(MailFolder.drafts, force: true));
       return true;
     } catch (e) {
       _log('[mail] could not save draft: $e');
@@ -1230,19 +1922,21 @@ class MailService extends ChangeNotifier {
   Future<bool> discardDraft(MimeMessage draft) async {
     final uid = draft.uid;
     if (uid == null) return false;
-    if (!await _ensureConnected()) return false;
     try {
-      if (!await _selectFolder(MailFolder.drafts)) return false;
-      final seq = MessageSequence.fromId(uid, isUid: true);
-      await _imap!.uidMarkDeleted(seq);
-      try {
-        await _imap!.uidExpunge(seq);
-      } catch (_) {
-        // No UIDPLUS: expunge the folder — only \Deleted drafts go.
-        await _imap!.expunge();
-      }
-      _draftMessages.removeWhere((m) => m.uid == uid);
-      notifyListeners();
+      final done = await _run('discard draft', (c) async {
+        if (await _selectOn(c, MailFolder.drafts) == null) return false;
+        final seq = MessageSequence.fromId(uid, isUid: true);
+        await c.uidMarkDeleted(seq);
+        try {
+          await c.uidExpunge(seq);
+        } on ImapException {
+          // No UIDPLUS: expunge the folder — only \Deleted drafts go.
+          await c.expunge();
+        }
+        return true;
+      }, idempotent: true);
+      if (!done) return false;
+      _removeFromList(MailFolder.drafts, uid);
       _log('[mail] discarded draft $uid');
       return true;
     } catch (e) {
@@ -1251,338 +1945,279 @@ class MailService extends ChangeNotifier {
     }
   }
 
-  // Moves message to Trash instead of permanent expunge.
-  Future<void> deleteMessage(MimeMessage message,
-      {MailFolder folder = MailFolder.inbox}) async {
+  void _removeFromList(MailFolder folder, int uid) {
+    final s = _folders[folder]!;
+    s.messages = [
+      for (final m in s.messages)
+        if (m.uid != uid) m,
+    ];
+    if (folder == MailFolder.inbox) {
+      _unreadController.add(unreadCount);
+      unawaited(_updateOfflineCopy());
+    } else {
+      unawaited(_saveFolderIndex(folder));
+    }
+    notifyListeners();
+  }
+
+  // Moves message to Trash instead of permanent expunge. Never retried: a
+  // MOVE whose answer was lost may have happened.
+  Future<void> deleteMessage(
+    MimeMessage message, {
+    MailFolder folder = MailFolder.inbox,
+  }) async {
     final uid = message.uid;
     if (uid == null) return;
-    final ok = await _ensureConnected();
-    if (!ok) return;
     try {
-      // Resolve trash first — it may LIST/CREATE mailboxes — then select the
-      // source folder so the UID operations run against the right mailbox.
-      final trash = await _resolveTrashMailbox();
-      if (!await _selectFolder(folder)) return;
-      if (trash == null) {
-        _log('[mail] deleteMessage: no trash folder — expunging instead');
+      final done = await _run('delete', (c) async {
+        // Resolve trash first — it may LIST/CREATE mailboxes — then select
+        // the source folder so the UID operations run against it.
+        final trash = await _resolveTrashMailbox(c);
+        if (await _selectOn(c, folder) == null) return false;
         final seq = MessageSequence.fromId(uid, isUid: true);
-        await _imap!.uidMarkDeleted(seq);
-        await _imap!.uidExpunge(seq);
-      } else {
-        final seq = MessageSequence.fromId(uid, isUid: true);
-        try {
-          await _imap!.uidMove(seq, targetMailbox: trash);
-          _log('[mail] moved $uid to trash via MOVE');
-        } catch (_) {
-          await _imap!.uidCopy(seq, targetMailbox: trash);
-          await _imap!.uidMarkDeleted(seq);
-          await _imap!.uidExpunge(seq);
-          _log('[mail] moved $uid to trash via COPY+DELETE');
+        if (trash == null) {
+          _log('[mail] deleteMessage: no trash folder — expunging instead');
+          await c.uidMarkDeleted(seq);
+          await c.uidExpunge(seq);
+        } else {
+          try {
+            await c.uidMove(seq, targetMailbox: trash);
+            _log('[mail] moved $uid to trash via MOVE');
+          } on ImapException {
+            await c.uidCopy(seq, targetMailbox: trash);
+            await c.uidMarkDeleted(seq);
+            await c.uidExpunge(seq);
+            _log('[mail] moved $uid to trash via COPY+DELETE');
+          }
         }
-      }
-      _mutableListFor(folder).removeWhere((m) => m.uid == uid);
-      _unreadController.add(unreadCount);
-      notifyListeners();
-      if (folder == MailFolder.inbox) unawaited(_updateOfflineCopy());
-      // Refresh trash in background so the deleted message appears immediately.
-      unawaited(fetchTrash());
+        return true;
+      });
+      if (!done) return;
+      _removeFromList(folder, uid);
+      // Refresh trash in background so the deleted message appears there.
+      unawaited(refreshFolder(MailFolder.trash, force: true));
     } catch (e) {
       _log('[mail] deleteMessage error: $e');
     }
   }
 
-  Future<void> markAsRead(MimeMessage message,
-      {MailFolder folder = MailFolder.inbox}) async {
-    final uid = message.uid;
-    if (uid == null || message.isSeen) return;
-    final ok = await _ensureConnected();
-    if (!ok) return;
-    try {
-      if (!await _selectFolder(folder)) return;
-      await _imap!.uidMarkSeen(MessageSequence.fromId(uid, isUid: true));
-      final list = _mutableListFor(folder);
-      final idx = list.indexWhere((m) => m.uid == uid);
-      if (idx >= 0) list[idx].isSeen = true;
-      _unreadController.add(unreadCount);
-      notifyListeners();
-      if (folder == MailFolder.inbox) unawaited(_updateOfflineCopy());
-    } catch (e) {
-      _log('[mail] error: $e');
-    }
+  Future<void> markAsRead(
+    MimeMessage message, {
+    MailFolder folder = MailFolder.inbox,
+  }) async {
+    if (message.uid == null || message.isSeen) return;
+    await _setSeen(message, folder, true);
   }
 
-  Future<void> markAsUnread(MimeMessage message,
-      {MailFolder folder = MailFolder.inbox}) async {
-    final uid = message.uid;
-    if (uid == null || !message.isSeen) return;
-    final ok = await _ensureConnected();
-    if (!ok) return;
+  Future<void> markAsUnread(
+    MimeMessage message, {
+    MailFolder folder = MailFolder.inbox,
+  }) async {
+    if (message.uid == null || !message.isSeen) return;
+    await _setSeen(message, folder, false);
+  }
+
+  Future<void> _setSeen(
+    MimeMessage message,
+    MailFolder folder,
+    bool seen,
+  ) async {
+    final uid = message.uid!;
     try {
-      if (!await _selectFolder(folder)) return;
-      await _imap!.uidMarkUnseen(MessageSequence.fromId(uid, isUid: true));
-      final list = _mutableListFor(folder);
-      final idx = list.indexWhere((m) => m.uid == uid);
-      if (idx >= 0) list[idx].isSeen = false;
-      _unreadController.add(unreadCount);
+      final done = await _run(seen ? 'mark read' : 'mark unread', (c) async {
+        if (await _selectOn(c, folder) == null) return false;
+        final seq = MessageSequence.fromId(uid, isUid: true);
+        if (seen) {
+          await c.uidMarkSeen(seq);
+        } else {
+          await c.uidMarkUnseen(seq);
+        }
+        return true;
+      }, idempotent: true);
+      if (!done) return;
+      // The object the caller holds, and the listed one — a fresh list may
+      // have replaced it meanwhile.
+      message.isSeen = seen;
+      for (final m in _folders[folder]!.messages) {
+        if (m.uid == uid) m.isSeen = seen;
+      }
+      if (folder == MailFolder.inbox) {
+        _unreadController.add(unreadCount);
+        unawaited(_updateOfflineCopy());
+      } else {
+        unawaited(_saveFolderIndex(folder));
+      }
       notifyListeners();
-      if (folder == MailFolder.inbox) unawaited(_updateOfflineCopy());
     } catch (e) {
       _log('[mail] error: $e');
     }
   }
 
   // Finds the Trash mailbox by \Trash flag first, then common names. Caches result.
-  Future<Mailbox?> _resolveTrashMailbox() async {
+  Future<Mailbox?> _resolveTrashMailbox(ImapClient c) async {
     if (_trashMailbox != null) return _trashMailbox;
-    try {
-      final mailboxes = await _imap!.listMailboxes();
+    final mailboxes = await c.listMailboxes();
 
-      // Prefer server-advertised \Trash special-use attribute.
+    // Prefer server-advertised \Trash special-use attribute.
+    try {
+      _trashMailbox = mailboxes.firstWhere(
+        (mb) => mb.flags.contains(MailboxFlag.trash),
+      );
+      _log('[mail] found trash folder by flag: ${_trashMailbox!.path}');
+      return _trashMailbox;
+    } on StateError {
+      // No \Trash flag — fall through to name matching.
+    }
+
+    const candidates = [
+      'Trash',
+      'Papierkorb',
+      'Gelöscht',
+      'Deleted',
+      'Deleted Items',
+      'Deleted Messages',
+      'INBOX.Trash',
+    ];
+    for (final name in candidates) {
       try {
         _trashMailbox = mailboxes.firstWhere(
-          (mb) => mb.flags.contains(MailboxFlag.trash),
+          (mb) =>
+              mb.name.toLowerCase() == name.toLowerCase() ||
+              mb.path.toLowerCase() == name.toLowerCase(),
         );
-        _log('[mail] found trash folder by flag: ${_trashMailbox!.path}');
+        _log('[mail] found trash folder by name: ${_trashMailbox!.path}');
         return _trashMailbox;
       } on StateError {
-        // No \Trash flag — fall through to name matching.
+        continue;
       }
+    }
 
-      const candidates = [
-        'Trash', 'Papierkorb', 'Gelöscht', 'Deleted',
-        'Deleted Items', 'Deleted Messages', 'INBOX.Trash',
-      ];
-      for (final name in candidates) {
-        try {
-          _trashMailbox = mailboxes.firstWhere(
-            (mb) =>
-                mb.name.toLowerCase() == name.toLowerCase() ||
-                mb.path.toLowerCase() == name.toLowerCase(),
-          );
-          _log('[mail] found trash folder by name: ${_trashMailbox!.path}');
-          return _trashMailbox;
-        } on StateError {
-          continue;
-        }
-      }
-
-      // No matching folder — create one.
-      _log('[mail] no trash folder found (available: '
-          '${mailboxes.map((m) => m.name).join(', ')}), creating "Trash"');
-      _trashMailbox = await _imap!.createMailbox('Trash');
+    // No matching folder — create one.
+    _log(
+      '[mail] no trash folder found (available: '
+      '${mailboxes.map((m) => m.name).join(', ')}), creating "Trash"',
+    );
+    try {
+      _trashMailbox = await c.createMailbox('Trash');
       _log('[mail] created trash folder: ${_trashMailbox!.path}');
-    } catch (e) {
-      _log('[mail] could not resolve trash folder: $e');
+    } on ImapException catch (e) {
+      _log('[mail] could not create trash folder: $e');
     }
     return _trashMailbox;
   }
 
-  // Moves a message from Trash back to Inbox.
+  // Moves a message from Trash back to Inbox. Never retried, like delete.
   Future<void> restoreFromTrash(MimeMessage message) async {
     final uid = message.uid;
     if (uid == null) return;
-    final ok = await _ensureConnected();
-    if (!ok) return;
     try {
-      final trash = _trashMailbox ?? await _resolveTrashMailbox();
-      if (trash == null) {
-        _log('[mail] restoreFromTrash: no trash folder found');
-        return;
-      }
-      // Select inbox to get its Mailbox reference, then switch to trash to operate.
-      final inboxMailbox = await _imap!.selectInbox();
-      await _imap!.selectMailbox(trash);
-      final seq = MessageSequence.fromId(uid, isUid: true);
-      try {
-        await _imap!.uidMove(seq, targetMailbox: inboxMailbox);
-        _log('[mail] restored $uid from trash via MOVE');
-      } catch (_) {
-        await _imap!.uidCopy(seq, targetMailbox: inboxMailbox);
-        await _imap!.uidMarkDeleted(seq);
-        await _imap!.uidExpunge(seq);
-        _log('[mail] restored $uid from trash via COPY+DELETE');
-      }
-      _trashedMessages.removeWhere((m) => m.uid == uid);
-      notifyListeners();
+      final done = await _run('restore', (c) async {
+        final trash = await _resolveTrashMailbox(c);
+        if (trash == null) {
+          _log('[mail] restoreFromTrash: no trash folder found');
+          return false;
+        }
+        await c.selectMailbox(trash);
+        final seq = MessageSequence.fromId(uid, isUid: true);
+        try {
+          await c.uidMove(seq, targetMailboxPath: 'INBOX');
+          _log('[mail] restored $uid from trash via MOVE');
+        } on ImapException {
+          await c.uidCopy(seq, targetMailboxPath: 'INBOX');
+          await c.uidMarkDeleted(seq);
+          await c.uidExpunge(seq);
+          _log('[mail] restored $uid from trash via COPY+DELETE');
+        }
+        return true;
+      });
+      if (!done) return;
+      _removeFromList(MailFolder.trash, uid);
+      unawaited(refreshFolder(MailFolder.inbox, force: true));
     } catch (e) {
       _log('[mail] restoreFromTrash error: $e');
     }
   }
 
-  Future<List<MimeMessage>> fetchTrash({int limit = 50}) async {
-    final ok = await _ensureConnected();
-    if (!ok) return _trashedMessages;
-
-    _isFetchingTrash = true;
-    notifyListeners();
-
-    try {
-      final trash = await _resolveTrashMailbox();
-      if (trash == null) {
-        _log('[mail] fetchTrash: no trash folder available');
-      } else {
-        await _imap!.selectMailbox(trash);
-        final result = await _imap!.fetchRecentMessages(
-          messageCount: limit,
-          criteria: '(FLAGS ENVELOPE UID BODY.PEEK[TEXT]<0.500>)',
-          responseTimeout: const Duration(seconds: 90),
-        );
-        _trashedMessages = result.messages.reversed.toList();
-        _log('[mail] fetched ${_trashedMessages.length} trashed messages');
-      }
-    } catch (e) {
-      _log('[mail] fetchTrash error: $e');
-      _isConnected = false;
-      _imap?.disconnect();
-      _imap = null;
-      _trashMailbox = null; // invalidate cache on connection failure
-    } finally {
-      _isFetchingTrash = false;
-      notifyListeners();
-    }
-    return _trashedMessages;
-  }
-
   // Finds a special-use mailbox by its IMAP flag first, then common names.
   // Unlike trash, sent/drafts folders are never created if missing.
-  Future<Mailbox?> _resolveSpecialMailbox({
+  Future<Mailbox?> _resolveSpecialMailbox(
+    ImapClient c, {
     required MailboxFlag flag,
     required List<String> nameCandidates,
     required String label,
-    ImapClient? via,
   }) async {
-    try {
-      final mailboxes = await (via ?? _imap!).listMailboxes();
+    final mailboxes = await c.listMailboxes();
 
+    try {
+      final mb = mailboxes.firstWhere((mb) => mb.flags.contains(flag));
+      _log('[mail] found $label folder by flag: ${mb.path}');
+      return mb;
+    } on StateError {
+      // No special-use flag — fall through to name matching.
+    }
+
+    for (final name in nameCandidates) {
       try {
         final mb = mailboxes.firstWhere(
-          (mb) => mb.flags.contains(flag),
+          (mb) =>
+              mb.name.toLowerCase() == name.toLowerCase() ||
+              mb.path.toLowerCase() == name.toLowerCase(),
         );
-        _log('[mail] found $label folder by flag: ${mb.path}');
+        _log('[mail] found $label folder by name: ${mb.path}');
         return mb;
       } on StateError {
-        // No special-use flag — fall through to name matching.
+        continue;
       }
-
-      for (final name in nameCandidates) {
-        try {
-          final mb = mailboxes.firstWhere(
-            (mb) =>
-                mb.name.toLowerCase() == name.toLowerCase() ||
-                mb.path.toLowerCase() == name.toLowerCase(),
-          );
-          _log('[mail] found $label folder by name: ${mb.path}');
-          return mb;
-        } on StateError {
-          continue;
-        }
-      }
-
-      _log('[mail] no $label folder found (available: '
-          '${mailboxes.map((m) => m.name).join(', ')})');
-    } catch (e) {
-      _log('[mail] could not resolve $label folder: $e');
     }
+
+    _log(
+      '[mail] no $label folder found (available: '
+      '${mailboxes.map((m) => m.name).join(', ')})',
+    );
     return null;
   }
 
-  /// [via]: list on that connection instead of the shared one.
-  Future<Mailbox?> _resolveSentMailbox({ImapClient? via}) async {
+  /// Lists on [c] — the main connection's op or the conversation lookup's
+  /// own connection.
+  Future<Mailbox?> _resolveSentMailbox(ImapClient c) async {
     _sentMailbox ??= await _resolveSpecialMailbox(
+      c,
       flag: MailboxFlag.sent,
       nameCandidates: const [
-        'Sent', 'Sent Items', 'Sent Messages', 'Gesendet',
-        'Gesendete Elemente', 'Gesendete Objekte', 'INBOX.Sent',
+        'Sent',
+        'Sent Items',
+        'Sent Messages',
+        'Gesendet',
+        'Gesendete Elemente',
+        'Gesendete Objekte',
+        'INBOX.Sent',
       ],
       label: 'sent',
-      via: via,
     );
     return _sentMailbox;
   }
 
-  Future<Mailbox?> _resolveDraftsMailbox() async {
+  Future<Mailbox?> _resolveDraftsMailbox(ImapClient c) async {
     _draftsMailbox ??= await _resolveSpecialMailbox(
+      c,
       flag: MailboxFlag.drafts,
-      nameCandidates: const [
-        'Drafts', 'Draft', 'Entwürfe', 'INBOX.Drafts',
-      ],
+      nameCandidates: const ['Drafts', 'Draft', 'Entwürfe', 'INBOX.Drafts'],
       label: 'drafts',
     );
     return _draftsMailbox;
   }
 
-  Future<List<MimeMessage>> fetchSent({int limit = 50}) async {
-    final ok = await _ensureConnected();
-    if (!ok) return _sentMessages;
-
-    _isFetchingSent = true;
-    notifyListeners();
-
-    try {
-      final sent = await _resolveSentMailbox();
-      if (sent == null) {
-        _log('[mail] fetchSent: no sent folder available');
-      } else {
-        await _imap!.selectMailbox(sent);
-        final result = await _imap!.fetchRecentMessages(
-          messageCount: limit,
-          criteria: '(FLAGS ENVELOPE UID BODY.PEEK[TEXT]<0.500>)',
-          responseTimeout: const Duration(seconds: 90),
-        );
-        _sentMessages = result.messages.reversed.toList();
-        _log('[mail] fetched ${_sentMessages.length} sent messages');
-      }
-    } catch (e) {
-      _log('[mail] fetchSent error: $e');
-      _isConnected = false;
-      _imap?.disconnect();
-      _imap = null;
-      _sentMailbox = null; // invalidate cache on connection failure
-    } finally {
-      _isFetchingSent = false;
-      notifyListeners();
-    }
-    return _sentMessages;
-  }
-
-  Future<List<MimeMessage>> fetchDrafts({int limit = 50}) async {
-    final ok = await _ensureConnected();
-    if (!ok) return _draftMessages;
-
-    _isFetchingDrafts = true;
-    notifyListeners();
-
-    try {
-      final drafts = await _resolveDraftsMailbox();
-      if (drafts == null) {
-        _log('[mail] fetchDrafts: no drafts folder available');
-      } else {
-        await _imap!.selectMailbox(drafts);
-        final result = await _imap!.fetchRecentMessages(
-          messageCount: limit,
-          criteria: '(FLAGS ENVELOPE UID BODY.PEEK[TEXT]<0.500>)',
-          responseTimeout: const Duration(seconds: 90),
-        );
-        _draftMessages = result.messages.reversed.toList();
-        _log('[mail] fetched ${_draftMessages.length} draft messages');
-      }
-    } catch (e) {
-      _log('[mail] fetchDrafts error: $e');
-      _isConnected = false;
-      _imap?.disconnect();
-      _imap = null;
-      _draftsMailbox = null; // invalidate cache on connection failure
-    } finally {
-      _isFetchingDrafts = false;
-      notifyListeners();
-    }
-    return _draftMessages;
-  }
-
   @override
   void dispose() {
+    _lifecycle?.dispose();
+    _idleRearmTimer?.cancel();
+    _pollTimer?.cancel();
+    _eventTimer?.cancel();
+    _offlineIdleTimer?.cancel();
+    unawaited(_events?.cancel());
+    _session.dispose();
     _offlineImap?.disconnect();
-    _imap?.disconnect();
+    _threadImap?.disconnect();
     _unreadController.close();
     super.dispose();
   }

@@ -31,24 +31,24 @@ extension on _MailFilter {
   /// `all` reads "Inbox": it only ever shows the inbox, and Unread is a view of
   /// that same folder rather than a mailbox of its own.
   String get label => switch (this) {
-        _MailFilter.all    => 'Inbox',
-        _MailFilter.unread => 'Unread',
-        _MailFilter.drafts => 'Drafts',
-        _MailFilter.sent   => 'Sent',
-        _MailFilter.trash  => 'Trash',
-      };
+    _MailFilter.all => 'Inbox',
+    _MailFilter.unread => 'Unread',
+    _MailFilter.drafts => 'Drafts',
+    _MailFilter.sent => 'Sent',
+    _MailFilter.trash => 'Trash',
+  };
 
   /// Apple Mail's glyphs, except Unread. Apple's envelope-with-dot looked
   /// just like the Mail tab icon right below the strip, so Unread is the
   /// list's own unread dot instead. Drafts is a document, not a pencil, so it
   /// can't be mistaken for the compose button sitting right next to the strip.
   IconData get icon => switch (this) {
-        _MailFilter.all    => CupertinoIcons.tray,
-        _MailFilter.unread => CupertinoIcons.circle_fill,
-        _MailFilter.drafts => CupertinoIcons.doc_text,
-        _MailFilter.sent   => CupertinoIcons.paperplane,
-        _MailFilter.trash  => CupertinoIcons.trash,
-      };
+    _MailFilter.all => CupertinoIcons.tray,
+    _MailFilter.unread => CupertinoIcons.circle_fill,
+    _MailFilter.drafts => CupertinoIcons.doc_text,
+    _MailFilter.sent => CupertinoIcons.paperplane,
+    _MailFilter.trash => CupertinoIcons.trash,
+  };
 
   /// The unread dot is a solid disc: at full icon size it would outweigh the
   /// line glyphs around it, so it renders at half size.
@@ -76,9 +76,6 @@ class _MailScreenState extends State<MailScreen>
   bool get wantKeepAlive => true;
 
   _MailFilter _filter = _MailFilter.all;
-  bool _trashFetchTriggered = false;
-  bool _sentFetchTriggered = false;
-  bool _draftsFetchTriggered = false;
   bool _reloadDone = false;
   final _searchCtrl = TextEditingController();
   String _searchQuery = '';
@@ -127,8 +124,9 @@ class _MailScreenState extends State<MailScreen>
     super.dispose();
   }
 
-  // Each folder is fetched the first time it's opened — the same guards the
-  // old header chips ran inline.
+  // Opening a folder shows its saved list at once and brings it up to date —
+  // every time, not just the first: the service skips a folder fetched in
+  // the last few seconds.
   void _selectFilter(_MailFilter f) {
     _swipeGroup.closeAll();
     _keepInUnread.clear();
@@ -136,16 +134,9 @@ class _MailScreenState extends State<MailScreen>
       _filter = f;
       _recompute();
     });
-    if (f == _MailFilter.drafts && !_draftsFetchTriggered) {
-      _draftsFetchTriggered = true;
-      mailService.fetchDrafts();
-    } else if (f == _MailFilter.sent && !_sentFetchTriggered) {
-      _sentFetchTriggered = true;
-      mailService.fetchSent();
-    } else if (f == _MailFilter.trash && !_trashFetchTriggered) {
-      _trashFetchTriggered = true;
-      mailService.fetchTrash();
-    }
+    mailService.activeFolder = _currentFolder;
+    mailService.refreshFolder(_currentFolder);
+    _syncActionPhase();
   }
 
   void _onUpdate() {
@@ -161,16 +152,17 @@ class _MailScreenState extends State<MailScreen>
 
   // Mirrors the reload button's busy/done state into the bottom bar's slot.
   void _syncActionPhase() {
-    widget.actions.phase.value = mailService.isFetching
+    widget.actions.phase.value = mailService.isRefreshing(_currentFolder)
         ? ActionPhase.busy
         : _reloadDone
         ? ActionPhase.done
         : ActionPhase.idle;
   }
 
+  // Reloads the folder on screen, not always the inbox.
   void _onReload() {
-    if (mailService.isFetching) return;
-    mailService.reloadInbox().then((_) {
+    if (mailService.isRefreshing(_currentFolder)) return;
+    mailService.refreshFolder(_currentFolder, force: true).then((_) {
       if (!mounted) return;
       setState(() => _reloadDone = true);
       _syncActionPhase();
@@ -285,12 +277,20 @@ class _MailScreenState extends State<MailScreen>
 
   void openCompose() => openComposeSheet(context);
 
-  Future<void> _refresh() => switch (_filter) {
-    _MailFilter.trash => mailService.fetchTrash(),
-    _MailFilter.sent => mailService.fetchSent(),
-    _MailFilter.drafts => mailService.fetchDrafts(),
-    _ => mailService.reloadInbox(),
-  }.then((_) {});
+  Future<void> _refresh() =>
+      mailService.refreshFolder(_currentFolder, force: true);
+
+  // Near the end of the list, the next older page loads — the list isn't
+  // capped at the newest page. Not while searching: search only filters
+  // the mails already listed.
+  bool _onScroll(ScrollNotification n) {
+    if (n.metrics.axis == Axis.vertical &&
+        n.metrics.extentAfter < 600 &&
+        _searchQuery.isEmpty) {
+      mailService.loadOlder(_currentFolder);
+    }
+    return false;
+  }
 
   // ── Build ────────────────────────────────────────────────────────────────
 
@@ -426,12 +426,7 @@ class _MailScreenState extends State<MailScreen>
       // fades on a page switch. Left-aligned with the search bar.
       child: Padding(
         padding: EdgeInsets.only(
-          top: statusH +
-              topGapH +
-              dateRowH +
-              searchGapH +
-              searchH +
-              searchGapH,
+          top: statusH + topGapH + dateRowH + searchGapH + searchH + searchGapH,
           left: 20,
           right: 20,
         ),
@@ -444,8 +439,9 @@ class _MailScreenState extends State<MailScreen>
               child: Text(
                 _filter.label,
                 maxLines: 1,
-                style: AppTextStyles.bodyLarge(color: titleColor)
-                    .copyWith(fontWeight: FontWeight.w600, height: 1.2),
+                style: AppTextStyles.bodyLarge(
+                  color: titleColor,
+                ).copyWith(fontWeight: FontWeight.w600, height: 1.2),
               ),
             ),
           ),
@@ -458,23 +454,17 @@ class _MailScreenState extends State<MailScreen>
     final s = AppColorScheme.current;
     final folder = _currentFolder;
     final isTrashTab = _filter == _MailFilter.trash;
-    final loading = switch (_filter) {
-      _MailFilter.trash => mailService.isFetchingTrash,
-      _MailFilter.sent => mailService.isFetchingSent,
-      _MailFilter.drafts => mailService.isFetchingDrafts,
-      _ => mailService.isConnecting || mailService.isFetching,
-    };
-    final hasData = switch (_filter) {
-      _MailFilter.trash => mailService.trashedMessages.isNotEmpty,
-      _MailFilter.sent => mailService.sentMessages.isNotEmpty,
-      _MailFilter.drafts => mailService.draftMessages.isNotEmpty,
-      _ => mailService.messages.isNotEmpty,
-    };
-    final error = mailService.connectionError;
+    final loading =
+        mailService.isRefreshing(folder) ||
+        (folder == MailFolder.inbox && mailService.isConnecting);
+    final hasData = mailService.messagesIn(folder).isNotEmpty;
+    final error = mailService.errorFor(folder);
+    final loadingOlder = mailService.isLoadingOlder(folder);
 
     final view = View.of(context);
     final statusH = view.viewPadding.top / view.devicePixelRatio;
-    final headerH = statusH +
+    final headerH =
+        statusH +
         kHeaderDateRowTopGap +
         kHeaderDateRowH +
         10.0 +
@@ -491,17 +481,22 @@ class _MailScreenState extends State<MailScreen>
         padding: EdgeInsets.only(top: headerH),
         child: const Center(child: CupertinoActivityIndicator(radius: 12)),
       );
-    } else if (!isTrashTab && error != null && !hasData) {
+    } else if (error != null && !hasData) {
       body = Padding(
         padding: EdgeInsets.only(top: headerH),
-        child: _ErrorView(error: error, onRetry: () => mailService.connect()),
+        child: _ErrorView(
+          error: error,
+          onRetry: () => mailService.refreshFolder(folder, force: true),
+        ),
       );
     } else {
-      body = NotificationListener<ScrollStartNotification>(
+      body = NotificationListener<ScrollNotification>(
         onNotification: (n) {
           // A user scroll closes an open swipe, as on iOS.
-          if (n.dragDetails != null) _swipeGroup.closeAll();
-          return false;
+          if (n is ScrollStartNotification && n.dragDetails != null) {
+            _swipeGroup.closeAll();
+          }
+          return _onScroll(n);
         },
         child: CustomScrollView(
           physics: const BouncingScrollPhysics(
@@ -553,62 +548,68 @@ class _MailScreenState extends State<MailScreen>
                   bottom: headerH,
                 ),
               )
-            else
-              SliverPadding(
-                // Clearance for the floating bottom cluster the list scrolls
-                // behind and the folder strip above it, so the last row ends
-                // clear of them.
-                padding: EdgeInsets.only(
-                  bottom: bottomClusterHeight(context) +
-                      kFloatingButtonSize +
-                      16,
+            else ...[
+              SliverList.builder(
+                itemCount: _visible.length,
+                findChildIndexCallback: (key) =>
+                    _indexByKey[(key as ValueKey<String>).value],
+                itemBuilder: (context, i) {
+                  final msg = _visible[i];
+                  final key = MailActions.keyOf(msg, folder);
+                  final seen = _mailActions.isSeen(msg, folder);
+                  return SwipeActionRow(
+                    key: ValueKey(key),
+                    group: _swipeGroup,
+                    leading: SwipeAction(
+                      icon: seen
+                          ? CupertinoIcons.envelope_badge
+                          : CupertinoIcons.envelope_open,
+                      label: seen ? 'Unread' : 'Read',
+                      color: s.accent,
+                      onTriggered: () => _toggleSeen(msg),
+                    ),
+                    trailing: isTrashTab
+                        ? SwipeAction(
+                            icon: CupertinoIcons.tray_arrow_up,
+                            label: 'Restore',
+                            color: s.success,
+                            destructive: true,
+                            onTriggered: () => _mailActions.restore(msg),
+                          )
+                        : SwipeAction(
+                            icon: CupertinoIcons.trash,
+                            label: 'Delete',
+                            color: s.danger,
+                            destructive: true,
+                            onTriggered: () => _mailActions.delete(msg, folder),
+                          ),
+                    child: MailRow(
+                      data: MailRowData.of(msg, folder),
+                      preview: MailPreviews.instance.previewFor(msg),
+                      unread: !seen,
+                      styles: styles,
+                      onTap: () => _open(msg),
+                    ),
+                  );
+                },
+              ),
+              if (loadingOlder)
+                const SliverToBoxAdapter(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Center(child: CupertinoActivityIndicator()),
+                  ),
                 ),
-                sliver: SliverList.builder(
-                  itemCount: _visible.length,
-                  findChildIndexCallback: (key) =>
-                      _indexByKey[(key as ValueKey<String>).value],
-                  itemBuilder: (context, i) {
-                    final msg = _visible[i];
-                    final key = MailActions.keyOf(msg, folder);
-                    final seen = _mailActions.isSeen(msg, folder);
-                    return SwipeActionRow(
-                      key: ValueKey(key),
-                      group: _swipeGroup,
-                      leading: SwipeAction(
-                        icon: seen
-                            ? CupertinoIcons.envelope_badge
-                            : CupertinoIcons.envelope_open,
-                        label: seen ? 'Unread' : 'Read',
-                        color: s.accent,
-                        onTriggered: () => _toggleSeen(msg),
-                      ),
-                      trailing: isTrashTab
-                          ? SwipeAction(
-                              icon: CupertinoIcons.tray_arrow_up,
-                              label: 'Restore',
-                              color: s.success,
-                              destructive: true,
-                              onTriggered: () => _mailActions.restore(msg),
-                            )
-                          : SwipeAction(
-                              icon: CupertinoIcons.trash,
-                              label: 'Delete',
-                              color: s.danger,
-                              destructive: true,
-                              onTriggered: () =>
-                                  _mailActions.delete(msg, folder),
-                            ),
-                      child: MailRow(
-                        data: MailRowData.of(msg, folder),
-                        preview: MailPreviews.instance.previewFor(msg),
-                        unread: !seen,
-                        styles: styles,
-                        onTap: () => _open(msg),
-                      ),
-                    );
-                  },
+              // Clearance for the floating bottom cluster the list scrolls
+              // behind and the folder strip above it, so the last row ends
+              // clear of them.
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height:
+                      bottomClusterHeight(context) + kFloatingButtonSize + 16,
                 ),
               ),
+            ],
           ],
         ),
       );

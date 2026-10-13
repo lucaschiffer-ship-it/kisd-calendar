@@ -9,6 +9,8 @@ import '../models/kisd_event.dart';
 import '../models/one_off_event.dart';
 import 'cache_service.dart';
 import 'calendar_service.dart';
+import 'course_choices.dart';
+import 'course_merge.dart';
 import 'semester.dart';
 import 'service_locator.dart';
 import 'spaces_theme.dart';
@@ -63,7 +65,8 @@ class ScraperService extends ChangeNotifier {
             urlStr.contains('redirect_to=')) {
           if (!completer.isCompleted) {
             completer.completeError(
-                Exception('[events] auth_required: redirected to $urlStr'));
+              Exception('[events] auth_required: redirected to $urlStr'),
+            );
             view?.dispose();
             view = null;
           }
@@ -78,7 +81,8 @@ class ScraperService extends ChangeNotifier {
         processing = true;
         try {
           // ── Recon: dump DOM structure before attempting parse ─────────────
-          final recon = await ctrl.callAsyncJavaScript(functionBody: r"""
+          final recon = await ctrl.callAsyncJavaScript(
+            functionBody: r"""
             const url   = window.location.href;
             const title = document.title;
             const theList = document.querySelector('table#the-list');
@@ -137,12 +141,16 @@ class ScraperService extends ChangeNotifier {
               displayingNumText, viewTabs, viewLinks,
               wpListTableExists: !!mainTable, wpListTableInnerHtml
             });
-          """);
+          """,
+          );
           if (recon?.value != null) {
-            final r = json.decode(recon!.value.toString()) as Map<String, dynamic>;
+            final r =
+                json.decode(recon!.value.toString()) as Map<String, dynamic>;
             print('[evt-recon] url=${r['url']}');
             print('[evt-recon] title=${r['title']}');
-            print('[evt-recon] #the-list found=${r['theListFound']}  rowCount=${r['rowCount']}');
+            print(
+              '[evt-recon] #the-list found=${r['theListFound']}  rowCount=${r['rowCount']}',
+            );
             if (r['theListFound'] == false) {
               print('[evt-recon] tableIds=${r['tableIds']}');
             }
@@ -157,7 +165,9 @@ class ScraperService extends ChangeNotifier {
             } else {
               print('[evt-recon] NO row with td[data-colname="Event"] exists');
             }
-            print('[evt-recon] td[data-colname="Event"] count=${r['tdEventCount']}');
+            print(
+              '[evt-recon] td[data-colname="Event"] count=${r['tdEventCount']}',
+            );
             print('[evt-recon] td[data-colname] total=${r['tdColnameTotal']}');
             print('[evt-recon] th[data-colname] total=${r['thColnameTotal']}');
             print('[evt-recon] displaying-num=${r['displayingNumText']}');
@@ -165,7 +175,9 @@ class ScraperService extends ChangeNotifier {
             print('[evt-recon] view links=${r['viewLinks']}');
             print('[evt-recon] wp-list-table exists=${r['wpListTableExists']}');
             if (r['wpListTableInnerHtml'] != null) {
-              print('[evt-recon] wp-list-table innerHTML=${r['wpListTableInnerHtml']}');
+              print(
+                '[evt-recon] wp-list-table innerHTML=${r['wpListTableInnerHtml']}',
+              );
             }
           } else {
             print('[evt-recon] recon JS returned null');
@@ -173,56 +185,62 @@ class ScraperService extends ChangeNotifier {
           // ── End recon ─────────────────────────────────────────────────────
 
           var raw = await ctrl.callAsyncJavaScript(
-              functionBody: _kEventsScript);
+            functionBody: _kEventsScript,
+          );
           if (raw?.value == null) {
             print('[events] JS returned null — retrying in 2s');
             await Future.delayed(const Duration(seconds: 2));
-            raw = await ctrl.callAsyncJavaScript(
-                functionBody: _kEventsScript);
+            raw = await ctrl.callAsyncJavaScript(functionBody: _kEventsScript);
           }
 
           final jsonStr = raw?.value?.toString() ?? '[]';
           final list = (json.decode(jsonStr) as List<dynamic>)
               .cast<Map<String, dynamic>>();
 
-          final cutoff =
-              DateTime.now().subtract(const Duration(days: 365 * 2));
+          final cutoff = DateTime.now().subtract(const Duration(days: 365 * 2));
           final events = <KisdEvent>[];
           for (final m in list) {
-            final start =
-                _parseEventDateTime((m['startRaw'] as String?) ?? '');
+            final start = _parseEventDateTime((m['startRaw'] as String?) ?? '');
             final end =
-                _parseEventDateTime((m['endRaw'] as String?) ?? '') ??
-                    start;
+                _parseEventDateTime((m['endRaw'] as String?) ?? '') ?? start;
             if (start == null) continue;
             if (end != null && end.isBefore(cutoff)) continue;
-            final recurrence =
-                ((m['recurrence'] as String?) ?? 'one time only').trim();
-            events.add(KisdEvent(
-              id: (m['id'] as String?) ?? 'post-unknown',
-              title: (m['title'] as String?) ?? '',
-              start: start,
-              end: end ?? start,
-              venue: _nullIfEmpty(m['venue'] as String?),
-              organiser: _nullIfEmpty(m['organiser'] as String?),
-              categories:
-                  (m['categories'] as List<dynamic>).cast<String>(),
-              recurrence: recurrence,
-              isRecurring: (m['isRecurring'] as bool?) ??
-                  (recurrence.toLowerCase() != 'one time only'),
-              url: _nullIfEmpty(m['url'] as String?),
-            ));
+            final recurrence = ((m['recurrence'] as String?) ?? 'one time only')
+                .trim();
+            events.add(
+              KisdEvent(
+                id: (m['id'] as String?) ?? 'post-unknown',
+                title: (m['title'] as String?) ?? '',
+                start: start,
+                end: end ?? start,
+                venue: _nullIfEmpty(m['venue'] as String?),
+                organiser: _nullIfEmpty(m['organiser'] as String?),
+                categories: (m['categories'] as List<dynamic>).cast<String>(),
+                recurrence: recurrence,
+                isRecurring:
+                    (m['isRecurring'] as bool?) ??
+                    (recurrence.toLowerCase() != 'one time only'),
+                url: _nullIfEmpty(m['url'] as String?),
+              ),
+            );
           }
 
           final recurring = events.where((e) => e.isRecurring).length;
-          print('[evt-scrape] total=${events.length} rows=${list.length} recurring=$recurring');
+          print(
+            '[evt-scrape] total=${events.length} rows=${list.length} recurring=$recurring',
+          );
           if (events.isNotEmpty) {
-            final sorted = [...events]..sort((a, b) => a.start.compareTo(b.start));
-            print('[evt-scrape] earliest=${sorted.first.start}  latest=${sorted.last.start}');
+            final sorted = [...events]
+              ..sort((a, b) => a.start.compareTo(b.start));
+            print(
+              '[evt-scrape] earliest=${sorted.first.start}  latest=${sorted.last.start}',
+            );
             final first = events.first;
-            print('[evt-scrape] first: id=${first.id} title="${first.title}" '
-                'start=${first.start} venue=${first.venue} '
-                'recurrence=${first.recurrence} isRecurring=${first.isRecurring}');
+            print(
+              '[evt-scrape] first: id=${first.id} title="${first.title}" '
+              'start=${first.start} venue=${first.venue} '
+              'recurrence=${first.recurrence} isRecurring=${first.isRecurring}',
+            );
           }
           completer.complete(events);
         } catch (e, st) {
@@ -285,7 +303,9 @@ class ScraperService extends ChangeNotifier {
     }
 
     view = HeadlessInAppWebView(
-      initialUrlRequest: URLRequest(url: WebUri('https://spaces.kisd.de/home/')),
+      initialUrlRequest: URLRequest(
+        url: WebUri('https://spaces.kisd.de/home/'),
+      ),
       initialSettings: InAppWebViewSettings(
         javaScriptEnabled: true,
         domStorageEnabled: true,
@@ -308,7 +328,8 @@ class ScraperService extends ChangeNotifier {
 
         processing = true;
         try {
-          final raw = await ctrl.callAsyncJavaScript(functionBody: r"""
+          final raw = await ctrl.callAsyncJavaScript(
+            functionBody: r"""
             const s = window.wpApiSettings;
             if (!s || !s.nonce || !s.root) return null;
             const r = await fetch(s.root + 'wp/v2/users/me?context=edit', {
@@ -318,7 +339,8 @@ class ScraperService extends ChangeNotifier {
             if (!r.ok) return null;
             const j = await r.json();
             return JSON.stringify({ email: j.email, username: j.username });
-          """);
+          """,
+          );
           final value = raw?.value;
           if (value == null) {
             finish(null);
@@ -327,9 +349,11 @@ class ScraperService extends ChangeNotifier {
           final m = json.decode(value.toString()) as Map<String, dynamic>;
           final email = m['email'] as String?;
           final username = m['username'] as String?;
-          finish(email == null || username == null
-              ? null
-              : (email: email, username: username));
+          finish(
+            email == null || username == null
+                ? null
+                : (email: email, username: username),
+          );
         } catch (e) {
           print('[account] Spaces account lookup failed: $e');
           finish(null);
@@ -359,20 +383,22 @@ class ScraperService extends ChangeNotifier {
     }
 
     await view!.run();
-    return completer.future.timeout(const Duration(seconds: 20),
-        onTimeout: () {
-      print('[account] Spaces account lookup timed out');
-      finish(null);
-      return null;
-    });
+    return completer.future.timeout(
+      const Duration(seconds: 20),
+      onTimeout: () {
+        print('[account] Spaces account lookup timed out');
+        finish(null);
+        return null;
+      },
+    );
   }
 
-  static String? _nullIfEmpty(String? s) =>
-      (s == null || s.isEmpty) ? null : s;
+  static String? _nullIfEmpty(String? s) => (s == null || s.isEmpty) ? null : s;
 
   Future<List<CourseShell>> loadCached() async {
+    await CourseChoices.instance.load();
     final raw = await CacheService().loadCourses();
-    return raw.map(_fromJson).toList();
+    return CourseChoices.instance.apply(raw.map(_fromJson).toList());
   }
 
   // True when the user switched semester while a scrape was in flight. Its
@@ -396,14 +422,11 @@ class ScraperService extends ChangeNotifier {
     print('[scraper] my-courses semester: $semester');
 
     try {
-      final scraped =
-          (await _scrapeOnePage(myCoursesUrl(semester), isMyCourse: true))
-              .shells;
+      final scraped = (await _scrapeOnePage(
+        myCoursesUrl(semester),
+        isMyCourse: true,
+      )).shells;
 
-      // Preserve isFavourite choices the user set manually — but only if the
-      // course was already enrolled (isMyCourse: true in cache). If it was
-      // previously a non-enrolled course (allCourses-only, isFavourite: false
-      // by default), treat it as newly enrolled and keep isFavourite: true.
       final existing = await CacheService().loadCourses();
 
       // Guard against wiping real data: an empty my-courses result for a user
@@ -413,100 +436,37 @@ class ScraperService extends ChangeNotifier {
       if (scraped.isEmpty &&
           existing.map(_fromJson).any((s) => s.isMyCourse && !s.isManual)) {
         throw Exception(
-            'auth_required: my-courses scrape empty but cache has enrolled courses');
+          'auth_required: my-courses scrape empty but cache has enrolled courses',
+        );
       }
 
-      final cachedById = <String, Map<String, dynamic>>{
-        for (final c in existing) if (c['id'] != null) c['id'] as String: c,
-      };
-      final shells = scraped.map((s) {
-        final cached = cachedById[s.id];
-        if (cached == null) return s; // new course → isFavourite: true (default)
+      final cachedShells = existing.map(_fromJson).toList();
+      final cachedById = {for (final c in cachedShells) c.id: c};
+      // Fresh data, with the user's edits and one-off events kept. Hearts
+      // come from CourseChoices below, not from the cache.
+      final shells = [
+        for (final s in scraped)
+          if (cachedById[s.id] case final cached?)
+            withCachedOverrides(s, cached)
+          else
+            s,
+      ];
 
-        final cachedEditedFields = (cached['editedFields'] as List<dynamic>?)
-                ?.cast<String>()
-                .toSet() ??
-            <String>{};
-        // Always preserve any user-added one-off events from the cache.
-        final cachedEvents = (cached['oneOffEvents'] as List<dynamic>?)
-                ?.map((e) => OneOffEvent.fromJson(e as Map<String, dynamic>))
-                .toList() ??
-            const <OneOffEvent>[];
-        final wasMyCourse = (cached['isMyCourse'] as bool?) ?? false;
-        final cachedFav = (cached['isFavourite'] as bool?) ?? true;
-
-        // Override scraped values with user-edited cached values.
-        var merged = s;
-        if (cachedEditedFields.contains('title')) {
-          merged = merged.copyWith(title: cached['title'] as String);
-        }
-        if (cachedEditedFields.contains('description')) {
-          merged = merged.copyWith(description: (cached['description'] as String?) ?? '');
-        }
-        if (cachedEditedFields.contains('location')) {
-          merged = merged.copyWith(location: cached['location'] as String?);
-        }
-        if (cachedEditedFields.contains('lecturer')) {
-          merged = merged.copyWith(lecturer: cached['lecturer'] as String?);
-        }
-        if (cachedEditedFields.contains('timeframe')) {
-          merged = merged.copyWith(
-            startDate: DateTime.parse(cached['startDate'] as String),
-            endDate: DateTime.parse(cached['endDate'] as String),
-          );
-        }
-        if (cachedEditedFields.contains('meetingTimes')) {
-          final cachedMeetings = (cached['meetingTimes'] as List<dynamic>)
-              .map((m) {
-                final map = m as Map<String, dynamic>;
-                return MeetingTime(
-                  weekday: Weekday.values[map['weekday'] as int],
-                  startTime: TimeOfDay(
-                      hour: map['startHour'] as int,
-                      minute: map['startMinute'] as int),
-                  endTime: TimeOfDay(
-                      hour: map['endHour'] as int,
-                      minute: map['endMinute'] as int),
-                );
-              })
-              .toList();
-          merged = merged.copyWith(meetingTimes: cachedMeetings);
-        }
-        if (cachedEditedFields.contains('links')) {
-          final cachedLinks = (cached['links'] as List<dynamic>)
-              .map((l) {
-                final map = l as Map<String, dynamic>;
-                return CourseLink(
-                    label: map['label'] as String, url: map['url'] as String);
-              })
-              .toList();
-          merged = merged.copyWith(links: cachedLinks);
-        }
-
-        if (!wasMyCourse) {
-          // Was non-enrolled → treat as newly enrolled, keep isFavourite: true.
-          return merged.copyWith(
-            oneOffEvents: cachedEvents,
-            editedFields: cachedEditedFields,
-          );
-        }
-        // Was already enrolled: honour isFavourite toggle and accumulated overrides.
-        return merged.copyWith(
-          isFavourite: cachedFav,
-          oneOffEvents: cachedEvents,
-          editedFields: cachedEditedFields,
-        );
-      }).toList();
-
-      // Manual (custom) courses are never on Spaces — carry them over from
-      // the cache so the overwrite below doesn't delete them.
-      final manualShells =
-          existing.map(_fromJson).where((s) => s.isManual).toList();
-      final result = [...shells, ...manualShells];
+      // The user's own courses, and every course from "All" — they stay
+      // listed and in the calendar until scrapeAllCourses refreshes them.
+      // Saving only the enrolled ones here is what unliked courses liked
+      // from "All" on every daily refresh.
+      await CourseChoices.instance.load();
+      final result = CourseChoices.instance.apply([
+        ...shells,
+        ...carryOver(cachedShells, shells),
+      ]);
 
       if (_semesterLeft(semester)) {
-        print('[scraper] my-courses: semester left $semester → '
-            '${Semester.activeId}; discarding ${result.length} shells');
+        print(
+          '[scraper] my-courses: semester left $semester → '
+          '${Semester.activeId}; discarding ${result.length} shells',
+        );
         _isLoading = false;
         notifyListeners();
         return loadCached();
@@ -539,7 +499,12 @@ class ScraperService extends ChangeNotifier {
     try {
       final existing = await CacheService().loadCourses();
       final cachedShells = existing.map(_fromJson).toList();
-      final skipTitles = {for (final s in cachedShells) s.title.toLowerCase()};
+      // Only enrolled and own courses are skipped: the rest are fetched fresh
+      // (as they always were — the my-courses scrape used to drop them).
+      final skipTitles = {
+        for (final s in cachedShells)
+          if (s.isMyCourse || s.isManual) s.title.toLowerCase(),
+      };
 
       // The listing is paginated (classic WP ?paged=N links); walk every page.
       const maxPages = 15;
@@ -552,37 +517,44 @@ class ScraperService extends ChangeNotifier {
           skipTitles: skipTitles,
         );
         newShells.addAll(result.shells);
-        print('[scraper] all-courses page $page: ${result.shells.length} new '
-            '(hasNext=${result.hasNext})');
+        print(
+          '[scraper] all-courses page $page: ${result.shells.length} new '
+          '(hasNext=${result.hasNext})',
+        );
         if (!result.hasNext) break;
       }
       print('[scraper] all-courses new: ${newShells.length}');
 
-      final merged = _mergeShells(cachedShells, newShells);
-      print('[scraper] merged total: ${merged.length}');
-
-      // Re-read the latest favourite state — it may have changed while the
-      // long all-courses scrape was running.
-      final latestCache = await CacheService().loadCourses();
-      final latestFavMap = <String, bool>{
-        for (final c in latestCache)
-          if (c['id'] != null && c['isFavourite'] != null)
-            c['id'] as String: c['isFavourite'] as bool,
-      };
-      final mergedWithFavs = merged
-          .map((s) => latestFavMap.containsKey(s.id)
-              ? s.copyWith(isFavourite: latestFavMap[s.id]!)
-              : s)
-          .toList();
+      // Hearts tapped during the long scrape are in CourseChoices already —
+      // applied after the merge, they can't be lost to it.
+      final choices = CourseChoices.instance;
+      await choices.load();
+      final mergedWithFavs = choices.apply(
+        mergeAll(
+          cachedShells,
+          newShells,
+          (c) => choices.choiceFor(c) ?? c.isFavourite,
+        ),
+      );
+      print('[scraper] merged total: ${mergedWithFavs.length}');
 
       if (_semesterLeft(semester)) {
-        print('[scraper] all-courses: semester left $semester → '
-            '${Semester.activeId}; discarding');
+        print(
+          '[scraper] all-courses: semester left $semester → '
+          '${Semester.activeId}; discarding',
+        );
         return loadCached();
       }
 
       await saveToCache(mergedWithFavs);
       await CacheService().setCachedSemester(semester);
+      // A liked course from "All" was just fetched fresh: its schedule may
+      // have changed. Otherwise the calendar is left alone, as before.
+      if (mergedWithFavs.any(
+        (s) => s.isFavourite && !s.isMyCourse && !s.isManual,
+      )) {
+        CalendarService.instance.writeCourses(mergedWithFavs).ignore();
+      }
       return mergedWithFavs;
     } catch (e, st) {
       print('[scraper] scrapeAllCourses error: $e\n$st');
@@ -618,10 +590,12 @@ class ScraperService extends ChangeNotifier {
         // Fail fast instead of silently waiting for the 5-minute timeout.
         if (urlStr.contains('login.th-koeln.de') ||
             urlStr.contains('mfa.th-koeln.de') ||
-            (urlStr.contains('spaces.kisd.de') && !urlStr.contains('course-selection'))) {
+            (urlStr.contains('spaces.kisd.de') &&
+                !urlStr.contains('course-selection'))) {
           if (!completer.isCompleted) {
             completer.completeError(
-                Exception('auth_required: redirected to $urlStr'));
+              Exception('auth_required: redirected to $urlStr'),
+            );
             view?.dispose();
             view = null;
           }
@@ -644,24 +618,32 @@ class ScraperService extends ChangeNotifier {
           // this page must never count as evidence of a session.
           var loggedIn = false;
           try {
-            final r = await ctrl.callAsyncJavaScript(functionBody: """
+            final r = await ctrl
+                .callAsyncJavaScript(
+                  functionBody: """
               var body = document.body;
               return JSON.stringify({
                 loggedIn: body ? body.classList.contains('logged-in') : false,
                 cls: body ? body.className : '',
               });
-            """).timeout(const Duration(seconds: 10));
-            final m = json.decode(r?.value?.toString() ?? '{}')
-                as Map<String, dynamic>;
+            """,
+                )
+                .timeout(const Duration(seconds: 10));
+            final m =
+                json.decode(r?.value?.toString() ?? '{}')
+                    as Map<String, dynamic>;
             loggedIn = m['loggedIn'] == true;
-            print('[scraper] logged-in check: $loggedIn (body classes: ${m['cls']})');
+            print(
+              '[scraper] logged-in check: $loggedIn (body classes: ${m['cls']})',
+            );
           } catch (e) {
             print('[scraper] logged-in check failed: $e');
           }
           if (!loggedIn) {
             if (!completer.isCompleted) {
               completer.completeError(
-                  Exception('auth_required: course-selection served logged-out'));
+                Exception('auth_required: course-selection served logged-out'),
+              );
             }
             view?.dispose();
             view = null;
@@ -670,8 +652,11 @@ class ScraperService extends ChangeNotifier {
         }
 
         try {
-          final result = await _extractFromPage(ctrl,
-              isMyCourse: isMyCourse, skipTitles: skipTitles);
+          final result = await _extractFromPage(
+            ctrl,
+            isMyCourse: isMyCourse,
+            skipTitles: skipTitles,
+          );
           completer.complete(result);
         } catch (e, st) {
           if (!completer.isCompleted) completer.completeError(e, st);
@@ -720,28 +705,12 @@ class ScraperService extends ChangeNotifier {
     );
   }
 
-  // Merge: myCourse shells take priority; allShells adds only new courses.
-  List<CourseShell> _mergeShells(
-      List<CourseShell> myShells, List<CourseShell> allShells) {
-    final myIds = {for (final s in myShells) s.id};
-    final myTitles = {for (final s in myShells) s.title.toLowerCase()};
-    final result = [...myShells];
-    for (final s in allShells) {
-      if (!myIds.contains(s.id) && !myTitles.contains(s.title.toLowerCase())) {
-        result.add(s);
-      }
-    }
-    return result;
-  }
-
   Future<({List<CourseShell> shells, bool hasNext})> _extractFromPage(
     InAppWebViewController ctrl, {
     bool isMyCourse = false,
     Set<String> skipTitles = const {},
   }) async {
-    var raw = await ctrl.callAsyncJavaScript(
-      functionBody: _kExtractScript,
-    );
+    var raw = await ctrl.callAsyncJavaScript(functionBody: _kExtractScript);
     if (raw?.value == null) {
       print('[scraper] JS returned null — retrying in 2 s');
       await Future.delayed(const Duration(seconds: 2));
@@ -797,43 +766,66 @@ class ScraperService extends ChangeNotifier {
       if (shell != null) {
         shells.add(shell);
         print(
-            '[scraper] parsed: ${shell.title}  isMyCourse=$isMyCourse  spaceUrl=${spaceUrl ?? '-'}  location=${location ?? '-'}');
+          '[scraper] parsed: ${shell.title}  isMyCourse=$isMyCourse  spaceUrl=${spaceUrl ?? '-'}  location=${location ?? '-'}',
+        );
       }
     }
 
     return (shells: shells, hasNext: hasNext);
   }
 
-  Future<({String? location, String? spaceUrl, String? description, String? lecturer, String? timeframe})>
-      _fetchDetailData(InAppWebViewController ctrl, String detailUrl) async {
+  Future<
+    ({
+      String? location,
+      String? spaceUrl,
+      String? description,
+      String? lecturer,
+      String? timeframe,
+    })
+  >
+  _fetchDetailData(InAppWebViewController ctrl, String detailUrl) async {
     try {
-      final result = await ctrl.callAsyncJavaScript(
-        functionBody: _kDetailScript,
-        arguments: {'url': detailUrl},
-      ).timeout(const Duration(seconds: 15));
+      final result = await ctrl
+          .callAsyncJavaScript(
+            functionBody: _kDetailScript,
+            arguments: {'url': detailUrl},
+          )
+          .timeout(const Duration(seconds: 15));
       final val = result?.value;
       if (val == null || val.toString() == 'null' || val.toString().isEmpty) {
-        return (location: null, spaceUrl: null, description: null, lecturer: null, timeframe: null);
+        return (
+          location: null,
+          spaceUrl: null,
+          description: null,
+          lecturer: null,
+          timeframe: null,
+        );
       }
       final map = json.decode(val.toString()) as Map<String, dynamic>;
-      final loc    = (map['location']    as String?)?.trim();
-      final slug   = (map['spaceSlug']   as String?)?.trim();
-      final desc   = (map['description'] as String?)?.trim();
-      final lctr   = (map['lecturer']    as String?)?.trim();
-      final tframe = (map['timeframe']   as String?)?.trim();
+      final loc = (map['location'] as String?)?.trim();
+      final slug = (map['spaceSlug'] as String?)?.trim();
+      final desc = (map['description'] as String?)?.trim();
+      final lctr = (map['lecturer'] as String?)?.trim();
+      final tframe = (map['timeframe'] as String?)?.trim();
       final spaceUrl = (slug != null && slug.isNotEmpty)
           ? (slug.startsWith('http') ? slug : 'https://spaces.kisd.de/$slug/')
           : null;
       return (
-        location:    loc?.isEmpty    == true ? null : loc,
-        spaceUrl:    spaceUrl,
-        description: desc?.isEmpty   == true ? null : desc,
-        lecturer:    lctr?.isEmpty   == true ? null : lctr,
-        timeframe:   tframe?.isEmpty == true ? null : tframe,
+        location: loc?.isEmpty == true ? null : loc,
+        spaceUrl: spaceUrl,
+        description: desc?.isEmpty == true ? null : desc,
+        lecturer: lctr?.isEmpty == true ? null : lctr,
+        timeframe: tframe?.isEmpty == true ? null : tframe,
       );
     } catch (e) {
       print('[scraper] detail fetch failed for $detailUrl: $e');
-      return (location: null, spaceUrl: null, description: null, lecturer: null, timeframe: null);
+      return (
+        location: null,
+        spaceUrl: null,
+        description: null,
+        lecturer: null,
+        timeframe: null,
+      );
     }
   }
 
@@ -1159,21 +1151,37 @@ class ScraperService extends ChangeNotifier {
   // ─── Parse admin date strings (e.g. "Jun, 10 2026 02:30") ─────────────────
 
   static final _kMonthAbbrs = <String, int>{
-    'jan': 1,  'feb': 2,  'mar': 3,  'apr': 4,  'may': 5,  'jun': 6,
-    'jul': 7,  'aug': 8,  'sep': 9,  'oct': 10, 'nov': 11, 'dec': 12,
-    'mär': 3,  'mai': 5,  'okt': 10, 'dez': 12,
+    'jan': 1,
+    'feb': 2,
+    'mar': 3,
+    'apr': 4,
+    'may': 5,
+    'jun': 6,
+    'jul': 7,
+    'aug': 8,
+    'sep': 9,
+    'oct': 10,
+    'nov': 11,
+    'dec': 12,
+    'mär': 3,
+    'mai': 5,
+    'okt': 10,
+    'dez': 12,
   };
 
   static DateTime? _parseAdminDate(String text) {
     if (text.isEmpty) return null;
     // ISO / near-ISO
-    final iso = DateTime.tryParse(text) ??
+    final iso =
+        DateTime.tryParse(text) ??
         DateTime.tryParse(text.replaceFirst(' ', 'T'));
     if (iso != null) return iso;
 
     // Strip optional day-of-week prefix "Mon, " or "Montag, "
     final stripped = text.replaceFirst(
-        RegExp(r'^[A-Za-z]{2,10},?\s+', caseSensitive: false), '');
+      RegExp(r'^[A-Za-z]{2,10},?\s+', caseSensitive: false),
+      '',
+    );
 
     // "MMM[,] D YYYY [H:MM[ am|pm]]" or "MMM D[,] YYYY [H:MM[ am|pm]]"
     final monthFirst = RegExp(
@@ -1183,11 +1191,11 @@ class ScraperService extends ChangeNotifier {
     final mf = monthFirst.firstMatch(stripped);
     if (mf != null) {
       final month = _kMonthAbbrs[mf.group(1)!.toLowerCase()];
-      final day   = int.tryParse(mf.group(2)!);
-      final year  = int.tryParse(mf.group(3)!);
+      final day = int.tryParse(mf.group(2)!);
+      final year = int.tryParse(mf.group(3)!);
       if (month != null && day != null && year != null) {
-        int hour   = mf.group(4) != null ? (int.tryParse(mf.group(4)!) ?? 0) : 0;
-        final min  = mf.group(5) != null ? (int.tryParse(mf.group(5)!) ?? 0) : 0;
+        int hour = mf.group(4) != null ? (int.tryParse(mf.group(4)!) ?? 0) : 0;
+        final min = mf.group(5) != null ? (int.tryParse(mf.group(5)!) ?? 0) : 0;
         final ampm = mf.group(6)?.toLowerCase();
         if (ampm == 'pm' && hour < 12) hour += 12;
         if (ampm == 'am' && hour == 12) hour = 0;
@@ -1197,15 +1205,18 @@ class ScraperService extends ChangeNotifier {
 
     // EU numeric: "D.M.YYYY [H:MM]" or "D/M/YYYY [H:MM]"
     final eu = RegExp(
-        r'^(\d{1,2})[./](\d{1,2})[./](\d{4})(?:\s+(\d{1,2}):(\d{2}))?');
+      r'^(\d{1,2})[./](\d{1,2})[./](\d{4})(?:\s+(\d{1,2}):(\d{2}))?',
+    );
     final em = eu.firstMatch(stripped);
     if (em != null) {
-      final day   = int.tryParse(em.group(1)!);
+      final day = int.tryParse(em.group(1)!);
       final month = int.tryParse(em.group(2)!);
-      final year  = int.tryParse(em.group(3)!);
+      final year = int.tryParse(em.group(3)!);
       if (day != null && month != null && year != null) {
-        final hour = em.group(4) != null ? (int.tryParse(em.group(4)!) ?? 0) : 0;
-        final min  = em.group(5) != null ? (int.tryParse(em.group(5)!) ?? 0) : 0;
+        final hour = em.group(4) != null
+            ? (int.tryParse(em.group(4)!) ?? 0)
+            : 0;
+        final min = em.group(5) != null ? (int.tryParse(em.group(5)!) ?? 0) : 0;
         return DateTime(year, month, day, hour, min);
       }
     }
@@ -1224,16 +1235,21 @@ class ScraperService extends ChangeNotifier {
       final commaIdx = datePart.indexOf(',');
       if (commaIdx >= 0) {
         final monthStr = datePart.substring(0, commaIdx).trim().toLowerCase();
-        final rest     = datePart.substring(commaIdx + 1).trim().split(RegExp(r'\s+'));
+        final rest = datePart
+            .substring(commaIdx + 1)
+            .trim()
+            .split(RegExp(r'\s+'));
         if (rest.length >= 2) {
-          final day   = int.tryParse(rest[0]);
-          final year  = int.tryParse(rest[1]);
-          final abbr  = monthStr.length >= 3 ? monthStr.substring(0, 3) : monthStr;
+          final day = int.tryParse(rest[0]);
+          final year = int.tryParse(rest[1]);
+          final abbr = monthStr.length >= 3
+              ? monthStr.substring(0, 3)
+              : monthStr;
           final month = _kMonthAbbrs[abbr];
           if (day != null && year != null && month != null) {
-            final tp     = timePart.split(':');
-            final hour   = tp.isNotEmpty ? (int.tryParse(tp[0]) ?? 0) : 0;
-            final minute = tp.length > 1  ? (int.tryParse(tp[1]) ?? 0) : 0;
+            final tp = timePart.split(':');
+            final hour = tp.isNotEmpty ? (int.tryParse(tp[0]) ?? 0) : 0;
+            final minute = tp.length > 1 ? (int.tryParse(tp[1]) ?? 0) : 0;
             return DateTime(year, month, day, hour, minute);
           }
         }
@@ -1261,7 +1277,8 @@ class ScraperService extends ChangeNotifier {
         : rawTitle;
     if (title.isEmpty) return null;
 
-    final meetingTexts = (map['meetingTexts'] as List<dynamic>?)
+    final meetingTexts =
+        (map['meetingTexts'] as List<dynamic>?)
             ?.map((e) => e.toString())
             .toList() ??
         [];
@@ -1271,14 +1288,17 @@ class ScraperService extends ChangeNotifier {
         .whereType<MeetingTime>()
         .toList();
 
-    final dateTexts = (map['dateTexts'] as List<dynamic>?)
+    final dateTexts =
+        (map['dateTexts'] as List<dynamic>?)
             ?.map((e) => e.toString())
             .toList() ??
         [];
-    final (startDate, endDate) =
-        (detailTimeframe != null && detailTimeframe.isNotEmpty)
-            ? _parseDates([detailTimeframe])
-            : _parseDates(dateTexts);
+    final (
+      startDate,
+      endDate,
+    ) = (detailTimeframe != null && detailTimeframe.isNotEmpty)
+        ? _parseDates([detailTimeframe])
+        : _parseDates(dateTexts);
 
     final spacesUrl = (map['spacesUrl'] as String?)?.trim() ?? '';
     final detailUrl = (map['detailUrl'] as String?)?.trim() ?? '';
@@ -1292,32 +1312,37 @@ class ScraperService extends ChangeNotifier {
 
     // Priority 1: dedicated Spaces course page from the "Space URL" field on
     // the detail page. Falls back to the listing-page spacesUrl if not found.
-    final effectiveSpaceUrl =
-        (spaceUrl != null && spaceUrl.isNotEmpty)
-            ? spaceUrl
-            : spacesUrl.isNotEmpty
-                ? spacesUrl
-                : null;
+    final effectiveSpaceUrl = (spaceUrl != null && spaceUrl.isNotEmpty)
+        ? spaceUrl
+        : spacesUrl.isNotEmpty
+        ? spacesUrl
+        : null;
     if (effectiveSpaceUrl != null) {
-      links.add(const CourseLink(url: '', label: '').copyWithValues(
-        url: effectiveSpaceUrl,
-        label: 'Spaces page',
-      ));
+      links.add(
+        const CourseLink(
+          url: '',
+          label: '',
+        ).copyWithValues(url: effectiveSpaceUrl, label: 'Spaces page'),
+      );
     }
 
     // Priority 2: course-selection ?course= URL
     if (detailUrl.isNotEmpty && detailUrl != effectiveSpaceUrl) {
-      links.add(const CourseLink(url: '', label: '').copyWithValues(
-        url: detailUrl,
-        label: 'Course selection',
-      ));
+      links.add(
+        const CourseLink(
+          url: '',
+          label: '',
+        ).copyWithValues(url: detailUrl, label: 'Course selection'),
+      );
     }
 
     // Keyed on the course-selection slug, not the Space URL: scrapeMyCourses
     // matches cached hearts/edits/events by id, so the id must not flip when
     // the site's Space field appears, disappears or gets renamed.
     final id = _makeId(
-        detailUrl.isNotEmpty ? detailUrl : (effectiveSpaceUrl ?? ''), title);
+      detailUrl.isNotEmpty ? detailUrl : (effectiveSpaceUrl ?? ''),
+      title,
+    );
 
     return CourseShell(
       id: id,
@@ -1338,13 +1363,13 @@ class ScraperService extends ChangeNotifier {
   // ─── Parsing helpers ──────────────────────────────────────────────────────
 
   static final _dayMap = <String, Weekday>{
-    'monday': Weekday.mon,    'montag': Weekday.mon,
-    'tuesday': Weekday.tue,   'dienstag': Weekday.tue,
+    'monday': Weekday.mon, 'montag': Weekday.mon,
+    'tuesday': Weekday.tue, 'dienstag': Weekday.tue,
     'wednesday': Weekday.wed, 'mittwoch': Weekday.wed,
-    'thursday': Weekday.thu,  'donnerstag': Weekday.thu,
-    'friday': Weekday.fri,    'freitag': Weekday.fri,
-    'saturday': Weekday.sat,  'samstag': Weekday.sat,
-    'sunday': Weekday.sun,    'sonntag': Weekday.sun,
+    'thursday': Weekday.thu, 'donnerstag': Weekday.thu,
+    'friday': Weekday.fri, 'freitag': Weekday.fri,
+    'saturday': Weekday.sat, 'samstag': Weekday.sat,
+    'sunday': Weekday.sun, 'sonntag': Weekday.sun,
     // 2-letter abbreviations (German)
     'mo': Weekday.mon, 'di': Weekday.tue, 'mi': Weekday.wed,
     'do': Weekday.thu, 'fr': Weekday.fri, 'sa': Weekday.sat,
@@ -1392,7 +1417,8 @@ class ScraperService extends ChangeNotifier {
 
   static (DateTime, DateTime) _parseDates(List<String> texts) {
     final dateRe = RegExp(
-        r'(\d{4})-(\d{2})-(\d{2})|(\d{1,2})[./](\d{1,2})[./](\d{2,4})');
+      r'(\d{4})-(\d{2})-(\d{2})|(\d{1,2})[./](\d{1,2})[./](\d{2,4})',
+    );
     final found = <DateTime>[];
 
     for (final t in texts) {
@@ -1400,8 +1426,11 @@ class ScraperService extends ChangeNotifier {
         try {
           DateTime? dt;
           if (m.group(1) != null) {
-            dt = DateTime(int.parse(m.group(1)!), int.parse(m.group(2)!),
-                int.parse(m.group(3)!));
+            dt = DateTime(
+              int.parse(m.group(1)!),
+              int.parse(m.group(2)!),
+              int.parse(m.group(3)!),
+            );
           } else if (m.group(4) != null) {
             var y = int.parse(m.group(6)!);
             if (y < 100) y += 2000;
@@ -1444,78 +1473,78 @@ class ScraperService extends ChangeNotifier {
   // ─── Serialisation ────────────────────────────────────────────────────────
 
   static Map<String, dynamic> _toJson(CourseShell s) => {
-        'id': s.id,
-        'title': s.title,
-        'description': s.description,
-        'meetingTimes': s.meetingTimes
-            .map((m) => {
-                  'weekday': m.weekday.index,
-                  'startHour': m.startTime.hour,
-                  'startMinute': m.startTime.minute,
-                  'endHour': m.endTime.hour,
-                  'endMinute': m.endTime.minute,
-                })
-            .toList(),
-        'startDate': s.startDate.toIso8601String(),
-        'endDate': s.endDate.toIso8601String(),
-        'location': s.location,
-        'lecturer': s.lecturer,
-        'links': s.links
-            .map((l) => {'url': l.url, 'label': l.label})
-            .toList(),
-        'isManual': s.isManual,
-        'isLiked': s.isLiked,
-        'isMyCourse': s.isMyCourse,
-        'isFavourite': s.isFavourite,
-        'oneOffEvents': s.oneOffEvents.map((e) => e.toJson()).toList(),
-        'editedFields': s.editedFields.toList(),
-      };
+    'id': s.id,
+    'title': s.title,
+    'description': s.description,
+    'meetingTimes': s.meetingTimes
+        .map(
+          (m) => {
+            'weekday': m.weekday.index,
+            'startHour': m.startTime.hour,
+            'startMinute': m.startTime.minute,
+            'endHour': m.endTime.hour,
+            'endMinute': m.endTime.minute,
+          },
+        )
+        .toList(),
+    'startDate': s.startDate.toIso8601String(),
+    'endDate': s.endDate.toIso8601String(),
+    'location': s.location,
+    'lecturer': s.lecturer,
+    'links': s.links.map((l) => {'url': l.url, 'label': l.label}).toList(),
+    'isManual': s.isManual,
+    'isLiked': s.isLiked,
+    'isMyCourse': s.isMyCourse,
+    'isFavourite': s.isFavourite,
+    'oneOffEvents': s.oneOffEvents.map((e) => e.toJson()).toList(),
+    'editedFields': s.editedFields.toList(),
+  };
 
   static CourseShell _fromJson(Map<String, dynamic> j) => CourseShell(
-        id: j['id'] as String,
-        title: j['title'] as String,
-        description: (j['description'] as String?) ?? '',
-        meetingTimes: (j['meetingTimes'] as List<dynamic>).map((m) {
-          final map = m as Map<String, dynamic>;
-          return MeetingTime(
-            weekday: Weekday.values[map['weekday'] as int],
-            startTime: TimeOfDay(
-              hour: map['startHour'] as int,
-              minute: map['startMinute'] as int,
-            ),
-            endTime: TimeOfDay(
-              hour: map['endHour'] as int,
-              minute: map['endMinute'] as int,
-            ),
-          );
-        }).toList(),
-        startDate: DateTime.parse(j['startDate'] as String),
-        endDate: DateTime.parse(j['endDate'] as String),
-        location: j['location'] as String?,
-        lecturer: j['lecturer'] as String?,
-        links: (j['links'] as List<dynamic>).map((l) {
-          final map = l as Map<String, dynamic>;
-          return CourseLink(
-            url: map['url'] as String,
-            label: map['label'] as String,
-          );
-        }).toList(),
-        isManual: (j['isManual'] as bool?) ?? false,
-        isLiked: (j['isLiked'] as bool?) ?? false,
-        isMyCourse: (j['isMyCourse'] as bool?) ?? false,
-        isFavourite: (j['isFavourite'] as bool?) ?? false,
-        oneOffEvents: (j['oneOffEvents'] as List<dynamic>?)
-                ?.map((e) => OneOffEvent.fromJson(e as Map<String, dynamic>))
-                .toList() ??
-            const [],
-        editedFields: (j['editedFields'] as List<dynamic>?)
-                ?.cast<String>()
-                .toSet() ??
-            const {},
+    id: j['id'] as String,
+    title: j['title'] as String,
+    description: (j['description'] as String?) ?? '',
+    meetingTimes: (j['meetingTimes'] as List<dynamic>).map((m) {
+      final map = m as Map<String, dynamic>;
+      return MeetingTime(
+        weekday: Weekday.values[map['weekday'] as int],
+        startTime: TimeOfDay(
+          hour: map['startHour'] as int,
+          minute: map['startMinute'] as int,
+        ),
+        endTime: TimeOfDay(
+          hour: map['endHour'] as int,
+          minute: map['endMinute'] as int,
+        ),
       );
+    }).toList(),
+    startDate: DateTime.parse(j['startDate'] as String),
+    endDate: DateTime.parse(j['endDate'] as String),
+    location: j['location'] as String?,
+    lecturer: j['lecturer'] as String?,
+    links: (j['links'] as List<dynamic>).map((l) {
+      final map = l as Map<String, dynamic>;
+      return CourseLink(
+        url: map['url'] as String,
+        label: map['label'] as String,
+      );
+    }).toList(),
+    isManual: (j['isManual'] as bool?) ?? false,
+    isLiked: (j['isLiked'] as bool?) ?? false,
+    isMyCourse: (j['isMyCourse'] as bool?) ?? false,
+    isFavourite: (j['isFavourite'] as bool?) ?? false,
+    oneOffEvents:
+        (j['oneOffEvents'] as List<dynamic>?)
+            ?.map((e) => OneOffEvent.fromJson(e as Map<String, dynamic>))
+            .toList() ??
+        const [],
+    editedFields:
+        (j['editedFields'] as List<dynamic>?)?.cast<String>().toSet() ??
+        const {},
+  );
 
-  static CourseShell parseCachedJson(Map<String, dynamic> json) => _fromJson(json);
-
+  static CourseShell parseCachedJson(Map<String, dynamic> json) =>
+      _fromJson(json);
 }
 
 // CourseLink has no copyWith — add a local extension so _buildShell stays clean

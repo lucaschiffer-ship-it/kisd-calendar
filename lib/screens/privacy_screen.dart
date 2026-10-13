@@ -53,11 +53,14 @@ class PrivacyScreen extends StatelessWidget {
             _gap(),
             _body(s,
                 'Your course list, favourites and theme settings are kept in '
-                'local app storage. So the app still has something to show '
-                'offline, your newest 50 inbox emails (up to 5 MB each) are '
-                'kept in the app\'s cache folder, which is excluded from '
-                'backups, and the mensa menu for this week and the next two '
-                'in local app storage.'),
+                'local app storage. So your mail folders open at once and '
+                'still have something to show offline, the lists of your '
+                'newest 200 inbox emails and 100 each from Sent, Drafts and '
+                'Trash (sender, subject, date, a short preview) and the full '
+                'newest 50 inbox emails (up to 5 MB each) are kept in the '
+                'app\'s own storage, which is excluded from backups. The '
+                'mensa menu for this week and the next two is kept in local '
+                'app storage.'),
             _gap(),
             _body(s,
                 'Your two-factor (TOTP) secret is never stored — you enter '
@@ -147,9 +150,12 @@ class PrivacyScreen extends StatelessWidget {
                 'Campus-ID, Sitzungs-Cookies und die Zuordnung der lokalen '
                 'Daten zur Campus-ID liegen im iOS-Schlüsselbund '
                 '(hardware-verschlüsselt, vom iCloud-Sync und von Backups '
-                'ausgeschlossen). Für die Offline-Nutzung liegen die neuesten '
-                '50 E-Mails des Posteingangs (bis 5 MB je Mail) im '
-                'Cache-Ordner der App, von Backups ausgeschlossen. Das '
+                'ausgeschlossen). Damit die Mail-Ordner sofort und offline '
+                'zu sehen sind, liegen die Listen der neuesten 200 E-Mails '
+                'des Posteingangs und je 100 aus Gesendet, Entwürfe und '
+                'Papierkorb sowie die neuesten 50 E-Mails des Posteingangs '
+                'vollständig (bis 5 MB je Mail) im App-Speicher, von Backups '
+                'ausgeschlossen. Das '
                 'TOTP-Geheimnis wird nie gespeichert. '
                 'Übertragen werden die Zugangsdaten ausschließlich '
                 'TLS-verschlüsselt an die offiziellen Server der TH Köln '

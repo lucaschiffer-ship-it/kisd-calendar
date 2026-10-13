@@ -16,8 +16,8 @@ service.
 | Login/session cookies (incl. the optional "trust this device" MFA cookie) | iOS Keychain | So you don't have to enter your password and one-time code on every launch |
 | Your confirmed sender email address | iOS Keychain | So sent mail carries your real address |
 | Which Campus ID the data on the device belongs to | iOS Keychain | So signing in with a different Campus ID clears the previous account's data |
-| Course list, schedule, favourites, theme settings | Local app storage on your device | App functionality |
-| Your newest 50 inbox emails (bodies up to 5 MB each) | The app's cache folder on your device (excluded from iCloud and device backups) | So recent mail can still be read offline |
+| Course list, schedule, favourites, theme settings | Local app storage on your device | App functionality (your liked courses are kept separately, so a refresh never resets them) |
+| Your mail lists — the newest 200 inbox emails and 100 each from Sent, Drafts and Trash (sender, subject, date, a short preview) — and the full text of the newest 50 inbox emails (up to 5 MB each) | The app's own storage on your device (excluded from iCloud and device backups) | So your folders open at once and recent mail can still be read offline |
 | The mensa menu for this week and the next two | Local app storage on your device | So the menu still opens offline |
 
 Your two-factor (TOTP) secret is **never** stored — you enter the one-time
@@ -91,10 +91,13 @@ Crash-Reporting, keine Telemetrie.
 -Passwort, Sitzungs-Cookies, die bestätigte Absenderadresse und die Angabe,
 zu welcher Campus-ID die Daten auf dem Gerät gehören, im iOS-Schlüsselbund
 (hardware-verschlüsselt, vom iCloud-Sync und von Backups ausgeschlossen), außerdem
-Kursliste, Favoriten und Einstellungen im lokalen App-Speicher. Für die
-Offline-Nutzung liegen zusätzlich die neuesten 50 E-Mails des Posteingangs
-(bis 5 MB je Mail) im Cache-Ordner der App (von Backups ausgeschlossen) und
-der Mensaplan dieser und der nächsten zwei Wochen im App-Speicher. Das
+Kursliste, Favoriten und Einstellungen im lokalen App-Speicher. Damit die
+Ordner sofort und auch offline zu sehen sind, liegen zusätzlich die Listen
+der neuesten 200 E-Mails des Posteingangs und je 100 aus Gesendet, Entwürfe
+und Papierkorb (Absender, Betreff, Datum, kurze Vorschau) sowie die neuesten
+50 E-Mails des Posteingangs vollständig (bis 5 MB je Mail) im App-Speicher
+(von Backups ausgeschlossen), außerdem der Mensaplan dieser und der nächsten
+zwei Wochen. Das
 TOTP-Geheimnis für die Zwei-Faktor-Authentifizierung wird **nie**
 gespeichert — den Einmalcode gibst du selbst ein.
 

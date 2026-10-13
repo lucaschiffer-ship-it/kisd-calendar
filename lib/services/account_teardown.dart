@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import 'cache_service.dart';
+import 'course_choices.dart';
 import 'calendar_service.dart';
 import 'course_reminder_scheduler.dart';
 import 'event_store.dart';
@@ -18,7 +19,8 @@ import 'service_locator.dart';
 /// there must never delete anything — it can't authenticate, so it never
 /// gets here.
 ///
-/// Cleared: courses and their scrape/semester stamps, the whole EventStore
+/// Cleared: courses and their scrape/semester stamps, the liked courses
+/// (`CourseChoices`), the whole EventStore
 /// (and with it the iOS "KISD" calendar mirror), pending course reminders,
 /// mail state including the offline mail copy, the favourites prefetch.
 /// Kept, because they are device settings or public: theme, semester choice,
@@ -48,11 +50,15 @@ class AccountTeardown {
     // Each step on its own: one failing must neither skip the rest nor stop
     // the login that prepareForLogin precedes.
     await _step('courses', () => CacheService().clearAccountData());
+    await _step('likes', CourseChoices.instance.clear);
     await _step('calendar', () => EventStore.instance.resetForAccountSwitch());
     await _step('reminders', CourseReminderScheduler.clearAll);
     await _step('mail', () => mailService.resetForAccountSwitch());
     await _step('prefetch', () async => pagePrefetcher.resetForAccountSwitch());
-    await _step('calendar cache', () async => CalendarService.instance.clearCache());
+    await _step(
+      'calendar cache',
+      () async => CalendarService.instance.clearCache(),
+    );
     await _step('owner', () => _storage.delete(key: _ownerKey));
   }
 

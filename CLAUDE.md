@@ -167,8 +167,9 @@ Headless `InAppWebView` drives the full SAML/OAuth2 flow against `login.th-koeln
 
 Uses a headless `InAppWebView` + `callAsyncJavaScript` to extract course cards from `spaces.kisd.de/course-selection`. Two scrape paths:
 
-- **`scrapeMyCourses()`** — fast path, `?mycourses=on`. Sets `isMyCourse: true` and `isFavourite: true` for all results. Preserves the user's explicit `isFavourite: false` toggles from cache **only if the cached entry was already `isMyCourse: true`** (prevents non-enrolled items accidentally suppressing the favourite default). Overwrites cache and writes to device calendar.
-- **`scrapeAllCourses()`** — slow path, full listing. Skips titles already in cache. Merges with `_mergeShells()` (cached myCourse items take priority by ID then title). Re-reads the latest favourite state from cache before saving to avoid race-condition overwrites during the long scrape.
+- **`scrapeMyCourses()`** — fast path, `?mycourses=on`. Sets `isMyCourse: true` for all results. Keeps cached user edits and one-off events (`withCachedOverrides`), and **keeps every cached non-enrolled course** (`carryOver`), so courses liked from "All" stay listed and in the calendar until the all-courses scrape refreshes them. Saving only the enrolled courses here is what used to unlike them on every daily refresh. Writes cache and device calendar.
+- **`scrapeAllCourses()`** — slow path, full listing. Skips only enrolled + own titles. `mergeAll` keeps enrolled/own courses as cached, takes non-enrolled ones fresh (with cached edits), and keeps a **liked** course Spaces no longer lists. It writes the calendar only when a liked non-enrolled course is in the result.
+- The merge rules live in `lib/services/course_merge.dart`, pinned by `test/course_merge_test.dart`.
 
 Both paths fetch per-course detail pages for location and Spaces URL via a separate `fetch()` call injected into the same WebView.
 
@@ -176,7 +177,12 @@ Both paths fetch per-course detail pages for location and Spaces URL via a separ
 
 `SharedPreferences`, key `kisd_courses`, JSON array. Bump `_currentVersion` (currently `14`) whenever the stored schema changes — the app clears and re-scrapes on version mismatch.
 
-`isFavourite` is persisted per course. The list screen writes cache via `scraperService.saveToCache(_shells)` when the user toggles a heart; the card widget itself does **not** write to cache directly.
+**Hearts** (`lib/services/course_choices.dart`, pinned by `test/course_choices_test.dart`):
+- `CourseChoices` (SharedPreferences `kisd_course_choices`) is the record of the user's explicit heart taps, by course id only (no title fallback: same-named courses, or the next semester's, would share a heart).
+- `isFavourite` = its choice ?? the default (enrolled liked, the rest not). Every list on its way to the screen, cache or calendar passes through `apply`: `loadCached`, both scrapes.
+- It is written only by `ListScreen._onFavouriteChanged`, never by scrapes. It survives schema bumps and semester switches; `AccountTeardown` clears it.
+- Its first run seeds it from the cache (hearts that differ from their default), so `ListScreen._init` loads it *before* the schema check may clear the cache.
+- The list screen still writes the cache via `scraperService.saveToCache(_shells)` on a heart tap; the card widget itself does **not** write to cache directly.
 
 ### Theme system
 
@@ -191,7 +197,7 @@ Two layers:
 ### `CourseShell` model
 
 `isMyCourse` — enrolled via spaces.kisd.de  
-`isFavourite` — heart-toggled by the user (defaults to `true` for enrolled courses)  
+`isFavourite` — heart-toggled by the user (defaults to `true` for enrolled courses); the tap is recorded in `CourseChoices`, which every scrape respects  
 `isLiked` — unused legacy field (kept for JSON round-trip compatibility)  
 `id` — derived from the last URL path segment of the course/detail page, or a title slug as fallback
 
@@ -203,12 +209,22 @@ The list search bar uses typo-tolerant fuzzy matching (`fuzzy` package, a Fuse.j
 
 IMAP via `enough_mail`. Credentials reused from `LoginService` (TH Köln email). Surfaces unread count to `HomeScreen` for the badge on the Mail tab.
 
-**Offline copy** (`lib/services/mail_offline_cache.dart`, pinned by `test/mail_offline_cache_test.dart`): the newest 50 inbox messages in `Library/Caches/mail_offline` — `index.json` holds the list rows (envelope, flags, size, preview), `<uid>.eml` the raw bodies (skipped above 5 MB). `connect()` shows it before going online; `fetchFullMessage` reads it first for the inbox. Gotchas:
+**Main connection** (`lib/services/imap_session.dart`, pinned by `test/imap_session_test.dart`): every command on the main connection goes through `_run` → `ImapSession.run` — one op at a time, so a `SELECT` and its `FETCH` can't be split by another caller (that split, and two callers reconnecting at once, made Sent/Inbox come up empty). Gotchas:
 
-- **Inbox only.** UIDs are per mailbox; never read the cache for Sent/Trash/Drafts.
-- Bodies are downloaded on a **separate, EXAMINE'd `ImapClient` with `BODY.PEEK[]`** — the shared client's selected folder changes under any await, and plain `BODY[]` would mark 50 mails read.
+- **Ops never call ops** (it would wait for itself — asserted). Anything that runs its own ops (`accountEmail`, message building) happens *before* the op. Internal helpers take the `ImapClient` as a parameter.
+- **Ops return data, the caller applies it** — an op abandoned by its timeout may still be running.
+- Each op has a timeout; a timeout or a closed socket drops the connection. Only idempotent ops (fetch, select, flags, draft expunge) are retried; APPEND/MOVE are not (they may have landed). A connection quiet > 60 s is NOOP-probed first.
+- **IDLE** runs on the main connection, inbox selected, once the queue has drained 1.5 s (`_onSessionDrained`); the session's `prepare` (`_leaveIdle`) sends DONE before any op. Re-armed every 8 min; ended on hide; replaced after 10 min in the background. Without the IDLE capability: a 60 s poll. Server events count only while idling (our own responses carry EXISTS too). Never open a connection *just* to idle (login rate limit).
+- Automatic refreshes back off after a failed connect; a refused login stops them until the user pulls to refresh.
+
+**Folder sync** (`lib/services/mail_sync.dart`, pinned by `test/mail_sync_test.dart`): `refreshFolder` selects the folder, then fetches either the newest 50 (new list) or a delta — `UID FETCH <lowest>:* (UID FLAGS)`, then the list rows of the new UIDs. Flags are updated **in place** (row objects and `MailActions` keys survive). An empty folder fetches nothing: `FETCH 1:0` is a BAD. `loadOlder` (list scrolled to its end) runs the delta and then the 50 sequence numbers below the oldest listed message (its number comes with the delta's FLAGS answer) in one op. Before IDLE starts, the inbox's EXISTS/UIDNEXT are compared with the last sync: mail that came while nothing idled is never announced again. Opening a folder refreshes it unless it was synced < 30 s ago.
+
+**Offline copy** (`lib/services/mail_offline_cache.dart`, pinned by `test/mail_offline_cache_test.dart`): `Library/Application Support/mail_store`, excluded from backups (`kisd/storage` channel in `AppDelegate.swift`) — `<folder>.json` holds the list rows (envelope, flags, size, preview) of the newest 200 inbox / 100 Sent, Drafts, Trash mails, `<uid>.eml` the raw bodies of the newest 50 inbox mails (skipped above 5 MB). The pre-13-Oct-2026 `Library/Caches/mail_offline` is moved over once. `connect()` shows every folder's list before going online; `fetchFullMessage` reads it first for the inbox. Gotchas:
+
+- **Bodies are inbox only.** UIDs are per mailbox; never read a body for Sent/Trash/Drafts.
+- Bodies are downloaded on a **separate, EXAMINE'd `ImapClient` with `BODY.PEEK[]`** (kept 4 min for reuse) — a download would hold up the main connection's ops, and plain `BODY[]` would mark 50 mails read.
 - Store bodies as **raw bytes** (`BinaryMimeData.data`), never via `renderMessage()` — it maps bytes to chars and mangles 8-bit umlauts.
-- `resetForAccountSwitch` bumps `_offlineGeneration` and clears the folder; every async cache step re-checks the generation so a sync in flight can't write the old account back.
+- `resetForAccountSwitch` bumps `_generation`, replaces the session and clears the folder; every async fetch and cache step re-checks the generation so a sync in flight can't show or write the old account back.
 
 ### Mail UI (list, message view, compose)
 
@@ -307,7 +323,8 @@ UI keeps its own optimistic state on top.
   - The message view waits **3 s** (`_threadWait`) and otherwise shows the mail
     alone — and doesn't look up at all while `mailService.isConnected` is false,
     so offline opens stay instant; the lookup still finishes into an in-memory cache (8 entries,
-    cleared by `fetchInbox`, a Sent copy landing and the account switch).
+    cleared when a sync adds or removes Inbox/Sent mail, a Sent copy landing and
+    the account switch).
   - Offline bodies are only reused while the lookup's inbox UIDVALIDITY equals
     the list's, and only when the Message-IDs match.
   - Each mail's CSS is confined to `#kisd-b<i>` (`scopeMailCss`); external
@@ -321,12 +338,12 @@ UI keeps its own optimistic state on top.
     newest first, stays on the server): read date and
     subject from `envelope` — the `HEADER.FIELDS (REFERENCES)` fetch replaces
     the headers the envelope parse added.
-- **Stale IMAP connection:** the server drops an idle connection, and `_isConnected`
-  doesn't notice. `_ensureConnected` therefore also checks enough_mail's own
-  `_imap.isConnected`. `_appendToSent` has a size-scaled timeout that resets the
-  connection. Before this, a Sent copy after ~15 min idle hung compose forever.
-  enough_mail's own `responseTimeout` only starts *after* the write, so wrap the whole
-  call in a Dart `.timeout()`.
+- **Stale IMAP connection:** the server drops an idle connection without the
+  socket noticing. `ImapSession` checks enough_mail's `isConnected`, probes a
+  quiet connection and bounds every op with a Dart `.timeout()` (APPENDs
+  size-scaled). Before this, a Sent copy after ~15 min idle hung compose forever.
+  enough_mail's own `responseTimeout` only starts *after* the write, so the
+  whole call needs the Dart timeout.
 
 ### Mensa (`MensaService`)
 

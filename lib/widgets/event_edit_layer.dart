@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -46,6 +47,22 @@ abstract class EventEditLayerDelegate {
   void requestCreate(DateTime day, Offset globalPos);
 }
 
+/// Pan for the held block's body that claims the pointer at the plain touch
+/// slop. A stock [PanGestureRecognizer] waits for twice that, so inside the
+/// timeline it always lost the arena to the scroll view's vertical drag or the
+/// board's horizontal day swipe: a held block could be resized but not moved.
+/// The path length it measures is never shorter than either axis, and it sits
+/// deepest in the hit path, so it reaches the shared slop first and wins.
+class _BlockPanGestureRecognizer extends PanGestureRecognizer {
+  @override
+  bool hasSufficientGlobalDistanceToAccept(
+    PointerDeviceKind pointerDeviceKind,
+    double? deviceTouchSlop,
+  ) =>
+      globalDistanceMoved.abs() >
+      computeHitSlop(pointerDeviceKind, gestureSettings);
+}
+
 // ─── Layer ────────────────────────────────────────────────────────────────────
 
 enum _Phase { idle, held, moving, resizingTop, resizingBottom, createDragging }
@@ -83,6 +100,9 @@ class _EventEditLayerState extends State<EventEditLayer>
   static const double _kAutoScrollZone = 60.0;
   static const double _kAutoScrollStep = 8.0;
   static const int _kMinDurationMin = 15;
+
+  /// How far a resize handle's touch strip reaches out past the block edge.
+  static const double _kHandleReach = 12.0;
 
   final _boxKey = GlobalKey();
 
@@ -592,65 +612,102 @@ class _EventEditLayerState extends State<EventEditLayer>
             _phase == _Phase.resizingTop ||
             _phase == _Phase.resizingBottom);
 
-    return AnimatedPositioned(
-      duration: Duration(milliseconds: dragging ? 0 : 180),
-      curve: Curves.easeOut,
+    // Horizontal placement belongs to the board: it changes on every frame of
+    // a day swipe, snap or stretch, so it must never animate or the block
+    // trails its column. Only the vertical settle below is animated.
+    return Positioned(
       left: widget.slotLefts[dayIdx] + 2,
       width: widget.slotWidth - 4,
-      top: top,
-      height: height,
-      child: Transform.scale(
-        scale: 1.02,
-        child: Opacity(
-          opacity: 0.9,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              // Body: pan to move again while in edit mode.
-              Positioned.fill(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onPanStart: (d) {
-                    final local = _toLocal(d.globalPosition);
-                    if (local == null) return;
-                    setState(() {
-                      _phase = _Phase.moving;
-                      _grabDy = local.dy -
-                          _minutesOf(_draftStart!) /
-                              60.0 *
-                              DayColumn.hourHeight;
-                    });
-                    _lastGlobal = d.globalPosition;
-                  },
-                  onPanUpdate: (d) => pickupMove(d.globalPosition),
-                  onPanEnd: (_) => pickupEnd(),
-                  child: _blockChrome(
-                    color: color,
-                    title: occ?.event.title ?? 'New Event',
-                    timeLabel: '${_fmt(_draftStart!)} – ${_fmt(_draftEnd!)}',
-                  ),
+      top: 0,
+      bottom: 0,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          // Padded by the handles' reach at both ends: a box drops touches
+          // outside its own bounds before its children see them, so without
+          // this the strips' outer halves were dead.
+          AnimatedPositioned(
+            duration: Duration(milliseconds: dragging ? 0 : 180),
+            curve: Curves.easeOut,
+            left: 0,
+            right: 0,
+            top: top - _kHandleReach,
+            height: height + 2 * _kHandleReach,
+            child: Transform.scale(
+              scale: 1.02,
+              child: Opacity(
+                opacity: 0.9,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    // Body: pan to move again while in edit mode.
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      top: _kHandleReach,
+                      bottom: _kHandleReach,
+                      child: RawGestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        gestures: {
+                          _BlockPanGestureRecognizer:
+                              GestureRecognizerFactoryWithHandlers<
+                                  _BlockPanGestureRecognizer>(
+                            () => _BlockPanGestureRecognizer(),
+                            (g) {
+                              g.gestureSettings =
+                                  MediaQuery.maybeGestureSettingsOf(context);
+                              // Start from the touch-down point so the spot
+                              // you grabbed stays under the finger.
+                              g.dragStartBehavior = DragStartBehavior.down;
+                              g.onStart = (d) {
+                                final local = _toLocal(d.globalPosition);
+                                if (local == null) return;
+                                setState(() {
+                                  _phase = _Phase.moving;
+                                  _grabDy = local.dy -
+                                      _minutesOf(_draftStart!) /
+                                          60.0 *
+                                          DayColumn.hourHeight;
+                                });
+                                _lastGlobal = d.globalPosition;
+                              };
+                              g.onUpdate = (d) => pickupMove(d.globalPosition);
+                              g.onEnd = (_) => pickupEnd();
+                            },
+                          ),
+                        },
+                        child: _blockChrome(
+                          color: color,
+                          title: occ?.event.title ?? 'New Event',
+                          timeLabel: '${_fmt(_draftStart!)} – ${_fmt(_draftEnd!)}',
+                        ),
+                      ),
+                    ),
+                    if (showHandles) ...[
+                      _buildHandle(
+                          top: true, color: color, blockHeight: height),
+                      _buildHandle(
+                          top: false, color: color, blockHeight: height),
+                    ],
+                    // Live minute read-outs riding the block edges while dragging.
+                    if (showStartChip)
+                      Positioned(
+                        top: _kHandleReach - 22,
+                        left: 0,
+                        child: _timeChip(_fmt(_draftStart!), color),
+                      ),
+                    if (showEndChip)
+                      Positioned(
+                        bottom: _kHandleReach - 22,
+                        right: 0,
+                        child: _timeChip(_fmt(_draftEnd!), color),
+                      ),
+                  ],
                 ),
               ),
-              if (showHandles) ...[
-                _buildHandle(top: true, color: color),
-                _buildHandle(top: false, color: color),
-              ],
-              // Live minute read-outs riding the block edges while dragging.
-              if (showStartChip)
-                Positioned(
-                  top: -22,
-                  left: 0,
-                  child: _timeChip(_fmt(_draftStart!), color),
-                ),
-              if (showEndChip)
-                Positioned(
-                  bottom: -22,
-                  right: 0,
-                  child: _timeChip(_fmt(_draftEnd!), color),
-                ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -676,15 +733,22 @@ class _EventEditLayerState extends State<EventEditLayer>
     );
   }
 
-  /// 24 pt-tall invisible strip straddling the block edge, with a small
-  /// visible grab pill in the middle.
-  Widget _buildHandle({required bool top, required Color color}) {
+  /// Invisible strip straddling the block edge, with a small visible grab pill
+  /// on the edge. It reaches [_kHandleReach] out of the block but at most a
+  /// quarter of [blockHeight] into it, so a short block keeps a band in the
+  /// middle that moves it.
+  Widget _buildHandle({
+    required bool top,
+    required Color color,
+    required double blockHeight,
+  }) {
+    final inward = (blockHeight / 4).clamp(0.0, _kHandleReach);
     return Positioned(
       left: 0,
       right: 0,
-      top: top ? -12 : null,
-      bottom: top ? null : -12,
-      height: 24,
+      top: top ? 0 : null,
+      bottom: top ? null : 0,
+      height: _kHandleReach + inward,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onVerticalDragStart: (d) {
@@ -694,8 +758,14 @@ class _EventEditLayerState extends State<EventEditLayer>
         },
         onVerticalDragUpdate: (d) => _onResizeUpdate(top, d.globalPosition),
         onVerticalDragEnd: (_) => _onResizeEnd(),
-        child: Center(
+        child: Align(
+          alignment: top ? Alignment.topCenter : Alignment.bottomCenter,
+          // Centres the 8 pt pill on the edge.
           child: Container(
+            margin: EdgeInsets.only(
+              top: top ? _kHandleReach - 4 : 0,
+              bottom: top ? 0 : _kHandleReach - 4,
+            ),
             width: 28,
             height: 8,
             decoration: BoxDecoration(

@@ -5,6 +5,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../models/app_event.dart';
 import '../services/account_teardown.dart';
+import '../services/attachment_metadata.dart';
 import '../services/cache_service.dart';
 import '../services/calendar_service.dart';
 import '../services/course_reminder_scheduler.dart';
@@ -122,6 +123,11 @@ class SettingsScreen extends StatelessWidget {
                 value: on == true ? 'On' : 'Off',
                 onTap: () => _push(context, const _NotificationsPage()),
               ),
+            ),
+            _NavRow(
+              icon: CupertinoIcons.mail,
+              label: 'Mail',
+              onTap: () => _push(context, const _MailPage()),
             ),
           ],
         ),
@@ -432,6 +438,96 @@ class _NotificationsPageState extends State<_NotificationsPage> {
             ],
           ),
         ],
+        const SizedBox(height: 32),
+      ],
+    );
+  }
+}
+
+class _MailPage extends StatelessWidget {
+  const _MailPage();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ThemeService.instance;
+    return _SettingsPage(
+      title: 'Mail',
+      builder: (context, s) => [
+        const _SectionHeader('PHOTO METADATA'),
+        _Padded(
+          ValueListenableBuilder<MetadataStrip>(
+            valueListenable: theme.metadataStrip,
+            builder: (context, strip, _) => _Group(
+              inset: false,
+              children: [
+                _ThemeOption(
+                  label: "Don't strip",
+                  subtitle: 'Photos keep location, camera and date',
+                  selected: strip == MetadataStrip.keep,
+                  onTap: () => theme.setMetadataStrip(MetadataStrip.keep),
+                ),
+                _ThemeOption(
+                  label: 'Strip GPS',
+                  subtitle: 'Removes where the photo was taken',
+                  selected: strip == MetadataStrip.gps,
+                  onTap: () => theme.setMetadataStrip(MetadataStrip.gps),
+                ),
+                _ThemeOption(
+                  label: 'Strip all',
+                  subtitle: 'Removes location, camera, date and other details',
+                  selected: strip == MetadataStrip.all,
+                  onTap: () => theme.setMetadataStrip(MetadataStrip.all),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const _SectionHeader('APPLIES TO'),
+        _Padded(
+          ValueListenableBuilder<MetadataStrip>(
+            valueListenable: theme.metadataStrip,
+            builder: (context, strip, _) {
+              // Kept, but out of reach, while nothing is stripped.
+              final off = strip == MetadataStrip.keep;
+              return IgnorePointer(
+                ignoring: off,
+                child: AnimatedOpacity(
+                  opacity: off ? 0.4 : 1,
+                  duration: const Duration(milliseconds: 200),
+                  child: ValueListenableBuilder<Set<StripSource>>(
+                    valueListenable: theme.stripSources,
+                    builder: (context, sources, _) => _Group(
+                      inset: false,
+                      children: [
+                        // Each row toggles on its own.
+                        for (final source in StripSource.values)
+                          _ThemeOption(
+                            label: switch (source) {
+                              StripSource.libraryPhotos => 'Library photos',
+                              StripSource.libraryVideos => 'Library videos',
+                              StripSource.cameraPhotos => 'Camera photos',
+                              StripSource.filesImages => 'Images from Files',
+                              StripSource.filesVideos => 'Videos from Files',
+                            },
+                            selected: sources.contains(source),
+                            onTap: () => theme.setStripSource(
+                              source,
+                              !sources.contains(source),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        const _Caption(
+          'Applied when you add a file to a mail. Orientation is always '
+          'kept, and photos lose no quality. Attachments of forwarded mails '
+          'are sent as they are.',
+        ),
         const SizedBox(height: 32),
       ],
     );
@@ -860,14 +956,14 @@ class _ThemeOption extends StatelessWidget {
   const _ThemeOption({
     this.leading,
     required this.label,
-    required this.subtitle,
+    this.subtitle,
     required this.selected,
     required this.onTap,
   });
 
   final Widget? leading;
   final String label;
-  final String subtitle;
+  final String? subtitle;
   final bool selected;
   final VoidCallback onTap;
 
@@ -891,11 +987,13 @@ class _ThemeOption extends StatelessWidget {
                       color: s.textPrimary,
                     ).copyWith(fontWeight: FontWeight.w500),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitle,
-                    style: AppTextStyles.bodySmall(color: s.textSecondary),
-                  ),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle!,
+                      style: AppTextStyles.bodySmall(color: s.textSecondary),
+                    ),
+                  ],
                 ],
               ),
             ),

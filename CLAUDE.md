@@ -234,7 +234,10 @@ UI keeps its own optimistic state on top.
   (designed newsletter: white rounded card in dark mode). Near-white backgrounds
   count as neutral — simple mails often carry `bgcolor="#ffffff"`. Only main-frame,
   link-activated navigations open anything. The web view mounts after the push and
-  fades in; a Flutter replica of the header shows meanwhile.
+  fades in; a Flutter replica of the header shows meanwhile. Attachment tiles
+  are links to `kisd-mail://local/attachment/<i>` (`attachmentIndexOf`): a tap
+  writes the mail's attachments to `tmp/mail_attachments/<id>` (deleted on
+  close) and opens Quick Look via `ComposeAttachments.preview`.
 - **Optimistic actions** (`lib/services/mail_actions.dart`): delete/restore hide the
   row and read flags flip at once; a failed server call rolls back with a toast.
   Calls per message are **serialised** — `markAsRead`/`markAsUnread` early-return on
@@ -257,6 +260,38 @@ UI keeps its own optimistic state on top.
   the only service additions of the rework: `saveDraft()` (IMAP APPEND, like
   `_appendToSent`) and `discardDraft()` (expunge from Drafts). A reopened draft's old
   copy is discarded only after the new save/send succeeds.
+- **Attachments** (`lib/services/mail_attachments.dart`, pinned by
+  `test/mail_attachments_test.dart`; pickers in `ios/Runner/ComposeAttachmentsBridge.swift`
+  via `lib/services/compose_attachments.dart`): `sendEmail`/`saveDraft` take
+  `attachments`, and **an empty list must keep running the old
+  `buildSimpleTextMessage` path untouched**. Every attachment step sits behind
+  `attachments.isNotEmpty`. Gotchas:
+  - Set the root to multipart/mixed explicitly and add the text with `addTextPlain`.
+    `..text` + quoted-printable on the builder writes a QP `Content-Transfer-Encoding`
+    onto the multipart root.
+  - enough_mail writes `filename=` raw; `attachmentFilename` makes non-ASCII names
+    RFC 2047 words (enough_mail's own `encodeHeader` labels them `utf8`, not `UTF-8`).
+  - Sizes: tiles show file sizes, but the server's EHLO `SIZE` counts the base64'd
+    mail (×~1.37). Limits are shown via `attachmentAllowance`. The SMTP send timeout
+    scales with size only for attachment mails.
+  - `X-KISD-Photo: 1` marks photo parts **in drafts only**, so a reopened draft can
+    still offer Small/Medium/Large at Send.
+  - A reopened draft (or forward) gates Send/Save on `_prepared` until its files are
+    on disk; if the draft never loaded, its old copy is **kept** after send/save.
+  - Attachment mails don't wait for their Sent copy: compose closes once SMTP accepts,
+    and `_appendToSent` uploads in the background (text mails still await it).
+  - **Metadata stripping** (Settings › Mail; `lib/services/attachment_metadata.dart`,
+    pinned by `test/attachment_metadata_test.dart`, details in `docs/photo-metadata.md`)
+    runs in place right after a *pick*, never at Send, and fails closed. Forwards and
+    reopened drafts (`fromData`) are deliberately never stripped. `CGImageDestinationCopyImageSource` with only `ShouldExcludeGPS` silently
+    drops **all** metadata incl. orientation; it needs a `kCGImageDestinationMetadata`
+    entry. PNG ignores those options and is re-encoded instead.
+- **Stale IMAP connection:** the server drops an idle connection, and `_isConnected`
+  doesn't notice. `_ensureConnected` therefore also checks enough_mail's own
+  `_imap.isConnected`. `_appendToSent` has a size-scaled timeout that resets the
+  connection. Before this, a Sent copy after ~15 min idle hung compose forever.
+  enough_mail's own `responseTimeout` only starts *after* the write, so wrap the whole
+  call in a Dart `.timeout()`.
 
 ### Mensa (`MensaService`)
 

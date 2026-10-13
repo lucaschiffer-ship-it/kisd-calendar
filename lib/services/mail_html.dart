@@ -17,6 +17,19 @@ import 'package:html/parser.dart' as html_parser;
 const kMailScheme = 'kisd-mail';
 const kMailBaseUrl = '$kMailScheme://local/';
 
+/// Each attachment tile links to `kisd-mail://local/attachment/<index>`; the
+/// message view catches the tap and opens the file in Quick Look.
+const _attachmentPath = '/attachment/';
+
+/// The tile index a link to an attachment points at, or null for any other
+/// URL.
+int? attachmentIndexOf(Uri url) {
+  if (url.scheme != kMailScheme || !url.path.startsWith(_attachmentPath)) {
+    return null;
+  }
+  return int.tryParse(url.path.substring(_attachmentPath.length));
+}
+
 /// The bundled fonts the document asks for, by file name under `google_fonts/`.
 const kMailFontFiles = [
   'SpaceGrotesk-SemiBold.ttf',
@@ -679,7 +692,7 @@ String _bodyCss(MailHtmlColors c, MailRenderMode mode, double zoom) {
 String _attachmentCss(MailHtmlColors c) =>
     '''
 #kisd-att{display:block!important;padding:18px 20px 0!important;}
-#kisd-att .t{display:flex!important;align-items:center!important;gap:12px!important;margin:0 0 8px!important;padding:10px 12px!important;border-radius:12px!important;background:${c.surface}!important;}
+#kisd-att .t{display:flex!important;align-items:center!important;gap:12px!important;margin:0 0 8px!important;padding:10px 12px!important;border-radius:12px!important;background:${c.surface}!important;text-decoration:none!important;color:inherit!important;}
 #kisd-att .ic{display:flex!important;flex:none!important;align-items:center!important;justify-content:center!important;width:38px!important;height:38px!important;border-radius:9px!important;background:${c.accent}22!important;color:${c.accent}!important;font:600 11px/1 $_inter!important;letter-spacing:0.3px!important;}
 #kisd-att .tx{display:block!important;flex:1!important;min-width:0!important;}
 #kisd-att .n{display:block!important;font:600 15px/1.3 $_inter!important;color:${c.text}!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}
@@ -719,17 +732,18 @@ String _headerHtml(MailDocumentSpec s) {
 String _attachmentsHtml(List<MailAttachmentTile> tiles) {
   if (tiles.isEmpty) return '';
   final b = StringBuffer('<div id="kisd-att">');
-  for (final t in tiles) {
+  for (final (i, t) in tiles.indexed) {
     final dot = t.name.lastIndexOf('.');
     final ext = dot > 0 && dot < t.name.length - 1
         ? t.name.substring(dot + 1).toUpperCase()
         : 'FILE';
     b.write(
-      '<div class="t"><span class="ic">'
+      '<a class="t" href="$kMailScheme://local$_attachmentPath$i">'
+      '<span class="ic">'
       '${escapeHtml(ext.length > 4 ? ext.substring(0, 4) : ext)}</span>'
       '<span class="tx"><span class="n">${escapeHtml(t.name)}</span>'
       '${t.size.isEmpty ? '' : '<span class="s">${escapeHtml(t.size)}</span>'}'
-      '</span></div>',
+      '</span></a>',
     );
   }
   b.write('</div>');

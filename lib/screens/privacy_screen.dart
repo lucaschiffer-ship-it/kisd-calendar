@@ -106,7 +106,18 @@ class PrivacyScreen extends StatelessWidget {
                 'Google\n'
                 '•  Course dates are written to your device calendar after '
                 'you grant iOS calendar permission; calendar data never '
-                'leaves the device'),
+                'leaves the device\n'
+                '•  Mail attachments: photos, files and document scans are '
+                'read only when you pick them (the photo picker hands over '
+                'only what you select, so the app gets no access to your '
+                'library). While you write, copies sit in the app\'s cache '
+                'folder and are deleted when the compose sheet closes; they '
+                'are sent only to the TH Köln mail servers, and stored there '
+                'in your Sent or Drafts folder. The camera is used only for '
+                'Take Photo and Scan Document, after you grant iOS camera '
+                'permission. Photos keep their metadata, such as where they '
+                'were taken, unless you strip it in Settings › Mail; that '
+                'happens on the device'),
           ]),
 
           _section(s, 'NO TRACKING'),
@@ -143,6 +154,14 @@ class PrivacyScreen extends StatelessWidget {
                 'Übertragen werden die Zugangsdaten ausschließlich '
                 'TLS-verschlüsselt an die offiziellen Server der TH Köln '
                 'bzw. der KISD — an niemanden sonst.\n\n'
+                'E-Mail-Anhänge (Fotos, Dateien, Dokument-Scans) liest die '
+                'App nur, wenn du sie auswählst; beim Schreiben liegen Kopien '
+                'im Cache-Ordner und werden beim Schließen gelöscht. Gesendet '
+                'werden sie nur an die Mailserver der TH Köln. Die Kamera '
+                'wird nur für „Take Photo" und „Scan Document" genutzt, nach '
+                'deiner iOS-Freigabe. Fotos behalten ihre Metadaten, etwa den '
+                'Aufnahmeort, außer du entfernst sie unter „Settings › Mail"; '
+                'das geschieht auf dem Gerät.\n\n'
                 'Beim Login aktiviert die App die Option „Diesem Gerät '
                 'vertrauen" (Gerätename „KISD App"); das lässt sich im '
                 'MFA-Portal der TH Köln jederzeit widerrufen. Beim Abmelden '
@@ -159,7 +178,7 @@ class PrivacyScreen extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Text(
-              'Last updated: 8 October 2026',
+              'Last updated: 13 October 2026',
               style: AppTextStyles.bodySmall(color: s.textSecondary),
             ),
           ),

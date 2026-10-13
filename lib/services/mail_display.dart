@@ -5,6 +5,7 @@ import 'package:enough_mail/enough_mail.dart';
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
 
+import 'mail_attachments.dart';
 import 'mail_service.dart' show MailFolder;
 
 /// Display helpers for the mail UI — pure functions over [MimeMessage], so the
@@ -538,11 +539,15 @@ class ComposeDraft {
     this.subject = '',
     this.body = '',
     this.from,
+    this.attachments = const [],
   });
 
   final String to;
   final String subject;
   final String body;
+
+  /// Files compose opens with: a forwarded mail's attachments.
+  final List<MailAttachmentData> attachments;
 
   /// Only set when reopening a saved draft; otherwise compose fills in the
   /// account address itself.
@@ -603,6 +608,7 @@ ComposeDraft forwardDraft(MimeMessage original) {
   return ComposeDraft(
     subject: forwardSubject(original.decodeSubject()),
     body: '$header\n${messageBodyText(original)}',
+    attachments: attachmentsOf(original),
   );
 }
 

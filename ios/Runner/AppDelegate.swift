@@ -17,6 +17,9 @@ import UserNotifications
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     TranslationBridge.shared.register(with: engineBridge.pluginRegistry)
+    if #available(iOS 14.0, *) {
+      ComposeAttachmentsBridge.shared.register(with: engineBridge.pluginRegistry)
+    }
 
     // Registered after GeneratedPluginRegistrant on purpose: flutter_inappwebview
     // initialises WKWebsiteDataStore.default() during its own registration, and

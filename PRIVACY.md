@@ -1,6 +1,6 @@
 # Privacy Notice — KISD Calendar
 
-*Last updated: 8 October 2026. The German version below is identical in substance.*
+*Last updated: 13 October 2026. The German version below is identical in substance.*
 
 KISD Calendar is an unofficial student app for KISD / TH Köln. It is not
 affiliated with, or endorsed by, TH Köln. Everything the app does happens
@@ -55,6 +55,15 @@ the app deletes the cookie on the device.
 - Fonts are bundled with the app; nothing is fetched from Google.
 - The calendar feature writes course dates into your device calendar after
   you grant iOS calendar permission. Calendar data never leaves the device.
+- Mail attachments: photos, files and document scans are read only when you
+  pick them — the iOS photo picker hands over only what you select, so the
+  app has no access to your photo library. While you write, copies sit in
+  the app's cache folder and are deleted when the compose sheet closes. They
+  are sent only to the TH Köln mail servers (and stored there in your Sent
+  or Drafts folder). The camera is used only for "Take Photo" and "Scan
+  Document", after you grant iOS camera permission. Photos keep their
+  metadata, such as where they were taken, unless you strip it in
+  Settings › Mail; that happens on the device.
 
 ## No tracking
 
@@ -99,7 +108,13 @@ Beim Login aktiviert die App die TH-Köln-Option „Diesem Gerät vertrauen"
 (Gerätename „KISD App"), damit der Einmalcode ca. zwei Wochen lang nicht
 erneut nötig ist; das lässt sich im MFA-Portal der TH Köln jederzeit
 widerrufen. Der Mensaplan wird ohne Personenbezug von `openmensa.org`
-geladen. Beim Abmelden – oder bei der Anmeldung mit einer anderen
+geladen. E-Mail-Anhänge (Fotos, Dateien, Dokument-Scans) liest die App nur,
+wenn du sie auswählst; beim Schreiben liegen Kopien im Cache-Ordner und
+werden beim Schließen gelöscht. Gesendet werden sie nur an die Mailserver
+der TH Köln. Die Kamera wird nur für „Take Photo" und „Scan Document"
+genutzt, nach deiner iOS-Freigabe. Fotos behalten ihre Metadaten, etwa den
+Aufnahmeort, außer du entfernst sie unter „Settings › Mail"; das geschieht
+auf dem Gerät. Beim Abmelden – oder bei der Anmeldung mit einer anderen
 Campus-ID – werden Zugangsdaten, Cookies und E-Mail-Adresse gelöscht, ebenso
 die Kurse, Kalendereinträge (auch der Kalender „KISD" in Apple Kalender),
 anstehende Erinnerungen und zwischengespeicherte E-Mails dieses Kontos.

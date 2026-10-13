@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart' show compute;
@@ -5,8 +7,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/compose_attachments.dart';
 import '../services/mail_actions.dart';
 import '../services/mail_display.dart';
 import '../services/mail_html.dart';
@@ -65,6 +69,11 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
   bool _webVisible = false;
   bool _started = false;
 
+  // The mail's attachments on disk for Quick Look, one per tile (null where a
+  // part couldn't be decoded) — written on the first tap, deleted on close.
+  Future<List<String?>>? _attachmentFiles;
+  Directory? _attachmentDir;
+
   static final _fontBytes = <String, Uint8List>{};
 
   @override
@@ -88,6 +97,12 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
       animation.addStatusListener(listener);
     }
     _load();
+  }
+
+  @override
+  void dispose() {
+    _attachmentDir?.delete(recursive: true).ignore();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -264,6 +279,16 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
     if (url == null) return NavigationActionPolicy.ALLOW;
     final scheme = url.scheme.toLowerCase();
 
+    // An attachment tile.
+    final attachment = attachmentIndexOf(url);
+    if (attachment != null) {
+      if (action.isForMainFrame &&
+          action.navigationType == NavigationType.LINK_ACTIVATED) {
+        HapticFeedback.selectionClick();
+        _openAttachment(attachment);
+      }
+      return NavigationActionPolicy.CANCEL;
+    }
     // The document itself (and its in-page #anchors) — nothing else under the
     // document's own scheme is a real page.
     if (scheme == kMailScheme) {
@@ -292,6 +317,56 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
       }
     }
     return NavigationActionPolicy.CANCEL;
+  }
+
+  // ── Attachments ───────────────────────────────────────────────────────────
+
+  /// Quick Look over all the mail's attachments, opened at tile [index], so
+  /// the others are a swipe away.
+  Future<void> _openAttachment(int index) async {
+    final message = _full;
+    if (message == null) return;
+    try {
+      final files = await (_attachmentFiles ??= _writeAttachments(message));
+      final path = index < files.length ? files[index] : null;
+      if (path == null || !mounted) return;
+      final paths = files.nonNulls.toList();
+      await ComposeAttachments.preview(paths, paths.indexOf(path));
+    } catch (_) {}
+  }
+
+  /// Each attachment in its own folder, so two files of the same name
+  /// don't collide. In the same order as the tiles (`_attachments`).
+  Future<List<String?>> _writeAttachments(MimeMessage message) async {
+    final base = await getTemporaryDirectory();
+    final dir = Directory(
+      '${base.path}/mail_attachments/${DateTime.now().microsecondsSinceEpoch}',
+    );
+    _attachmentDir = dir;
+    final files = <String?>[];
+    final infos =
+        message.findContentInfo(disposition: ContentDisposition.attachment);
+    for (final (i, info) in infos.indexed) {
+      try {
+        final bytes = message.getPart(info.fetchId)?.decodeContentBinary();
+        if (bytes == null) {
+          files.add(null);
+          continue;
+        }
+        final folder =
+            await Directory('${dir.path}/$i').create(recursive: true);
+        final name = (info.fileName ?? '').replaceAll('/', '-').trim();
+        final file =
+            File('${folder.path}/${name.isEmpty ? 'Attachment' : name}');
+        await file.writeAsBytes(bytes, flush: true);
+        files.add(file.path);
+      } catch (_) {
+        files.add(null); // one unreadable part must not cost the others
+      }
+    }
+    // Closed while writing: dispose already ran, so clean up here.
+    if (!mounted) dir.delete(recursive: true).ignore();
+    return files;
   }
 
   // ── Actions ───────────────────────────────────────────────────────────────

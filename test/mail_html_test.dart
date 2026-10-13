@@ -211,5 +211,23 @@ void main() {
       expect(doc, contains('<blockquote class="kisd-q">'));
       expect(doc, contains('id="kisd-hdr"'));
     });
+
+    test('each attachment tile is a link the message view can open', () {
+      final dom = parseMailDocument(buildMailDocument(_spec(plain: 'x')));
+      final tiles = dom.querySelectorAll('#kisd-att a.t');
+      expect(tiles, hasLength(1));
+      final href = Uri.parse(tiles.single.attributes['href']!);
+      expect(attachmentIndexOf(href), 0);
+    });
+  });
+
+  test('attachmentIndexOf only reads attachment links', () {
+    expect(attachmentIndexOf(Uri.parse('kisd-mail://local/attachment/3')), 3);
+    expect(attachmentIndexOf(Uri.parse('kisd-mail://local/')), isNull);
+    expect(
+      attachmentIndexOf(Uri.parse('kisd-mail://local/fonts/x.ttf')),
+      isNull,
+    );
+    expect(attachmentIndexOf(Uri.parse('https://x.de/attachment/1')), isNull);
   });
 }

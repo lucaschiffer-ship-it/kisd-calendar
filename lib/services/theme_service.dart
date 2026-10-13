@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'attachment_metadata.dart';
 import 'semester.dart';
 
 class ThemeService {
@@ -12,6 +13,8 @@ class ThemeService {
   static const _roundedBarsKey   = 'kisd_rounded_bars';
   static const _showKisdEventsKey = 'show_kisd_events_v2';
   static const _semesterKey      = 'kisd_semester_override';
+  static const _metadataStripKey = 'mail_metadata_strip';
+  static const _stripSourcesKey  = 'mail_metadata_sources';
 
   // Accepts 'light' or 'dark' only.
   // A persisted 'pastel' value migrates to 'dark' on first read.
@@ -20,6 +23,11 @@ class ThemeService {
   // Fully-rounded bottom cluster: the nav pills and the Spaces mini bar.
   final ValueNotifier<bool>   roundedBars    = ValueNotifier<bool>(true);
   final ValueNotifier<bool>   showKisdEvents = ValueNotifier<bool>(true);
+  // Settings › Mail: what compose strips from attachments, and from which.
+  final ValueNotifier<MetadataStrip> metadataStrip =
+      ValueNotifier<MetadataStrip>(MetadataStrip.keep);
+  final ValueNotifier<Set<StripSource>> stripSources =
+      ValueNotifier<Set<StripSource>>(kDefaultStripSources);
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
@@ -29,6 +37,13 @@ class ThemeService {
     glassEnabled.value   = prefs.getBool(_glassKey) ?? true;
     roundedBars.value    = prefs.getBool(_roundedBarsKey) ?? true;
     showKisdEvents.value = prefs.getBool(_showKisdEventsKey) ?? true;
+    metadataStrip.value  = MetadataStrip.values
+        .asNameMap()[prefs.getString(_metadataStripKey)] ?? MetadataStrip.keep;
+    final sources        = prefs.getStringList(_stripSourcesKey);
+    final sourceNames    = StripSource.values.asNameMap();
+    stripSources.value   = sources == null
+        ? kDefaultStripSources
+        : {...sources.map((name) => sourceNames[name]).nonNulls};
     // Read straight into the resolver's notifier — `Semester` is the read
     // model for the override, this class is its only writer.
     final semester = prefs.getString(_semesterKey);
@@ -73,5 +88,20 @@ class ThemeService {
     showKisdEvents.value = value;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_showKisdEventsKey, value);
+  }
+
+  Future<void> setMetadataStrip(MetadataStrip value) async {
+    metadataStrip.value = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_metadataStripKey, value.name);
+  }
+
+  Future<void> setStripSource(StripSource source, bool on) async {
+    final next = {...stripSources.value};
+    on ? next.add(source) : next.remove(source);
+    stripSources.value = next;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+        _stripSourcesKey, [for (final s in next) s.name]);
   }
 }

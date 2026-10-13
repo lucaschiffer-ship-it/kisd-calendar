@@ -53,6 +53,8 @@
 	<string>KISD Calendar möchte Kurstermine in deinen Kalender eintragen.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>KISD Calendar benötigt vollen Kalenderzugriff, um Kurstermine zu schreiben und zu verwalten.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>KISD Calendar nutzt die Kamera, um Fotos und Dokument-Scans an E-Mails anzuhängen.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<!-- ATS stays fully enforced for app-level networking (mensa API,

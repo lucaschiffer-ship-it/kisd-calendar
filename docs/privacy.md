@@ -37,6 +37,9 @@ anywhere in the chain.
 | Courses, favourites, theme | Local app storage | No personal data beyond course choices |
 | Newest 50 inbox mails (list + raw bodies ≤ 5 MB each) | App cache folder (`Library/Caches/mail_offline`) | Offline reading. Excluded from backups; iOS may purge it under storage pressure. Owner Campus ID stored alongside; wiped by the account-switch teardown (`MailService.resetForAccountSwitch`). Never leaves the device |
 | Mensa menu, current + next two weeks | Local app storage | Public data, offline reading |
+| Compose attachments (added 13 October 2026) | App cache folder (`Library/Caches/compose_attachments/<session>`) | Copies of the photos/files/scans picked for the mail being written. Deleted when the compose sheet closes. Picked via PHPicker (out of process — no photo-library permission), UIDocumentPicker, the camera or VisionKit's scanner (`NSCameraUsageDescription`). Sent only over SMTP to TH Köln, and APPENDed to the user's own Sent/Drafts. Metadata (EXIF/GPS) is kept unless Settings › Mail strips it — on device, when the file is added (local app storage `mail_metadata_strip`, `mail_metadata_sources`) |
+| Opened mail attachments (added 13 October 2026) | Temporary folder (`tmp/mail_attachments/<id>`) | Copies of a received or sent mail's attachments, written when one is tapped so Quick Look can show it. Deleted when the message view closes; iOS also purges `tmp/`. Nothing leaves the device |
+| SMTP size limit (added 13 October 2026) | Local app storage (`mail_smtp_max_size`) | The server's announced EHLO `SIZE` — a server property, nothing personal. Read by an unauthenticated EHLO probe when the first attachment is added |
 | TOTP / 2FA secret | ❌ **never stored** | The user types each one-time code |
 
 This is the same storage mechanism Apple Passwords uses. Signing out wipes all of it.
@@ -50,7 +53,7 @@ This is the same storage mechanism Apple Passwords uses. Signing out wipes all o
 | `login.th-koeln.de`, `mfa.th-koeln.de` | HTTPS (SAML) | Credentials — into the official login form only |
 | `spaces.kisd.de` | HTTPS | Session cookies |
 | `imap.intranet.fh-koeln.de:993` | IMAP over TLS | Credentials, mail. After an inbox fetch, a second short read-only session (EXAMINE + `BODY.PEEK[]`) logs in with the same stored credentials to download the newest mails for offline reading (added 12 October 2026) |
-| `smtp.intranet.fh-koeln.de:587` | SMTP + STARTTLS | Credentials, mail (TLS established **before** auth) |
+| `smtp.intranet.fh-koeln.de:587` | SMTP + STARTTLS | Credentials, mail (TLS established **before** auth). Since 13 October 2026 also a size-limit probe (connect, EHLO, STARTTLS, QUIT — no credentials, nothing sent) the first time an attachment is added |
 | `openmensa.org` | HTTPS | Canteen number + date — nothing personal |
 
 **Nothing else.** No analytics, no crash reporting, no telemetry, no font CDNs

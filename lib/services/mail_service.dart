@@ -4,8 +4,10 @@ import 'dart:math' show min;
 import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'imap_preview_fix.dart';
+import 'mail_attachments.dart';
 import 'mail_offline_cache.dart';
 import 'service_locator.dart';
 
@@ -25,6 +27,7 @@ class MailService extends ChangeNotifier {
   static const _smtpPort = 587;
   static const _smtpResponseTimeout = Duration(seconds: 30);
   static const _emailStorageKey = 'kisd_email';
+  static const _smtpSizeLimitKey = 'mail_smtp_max_size';
 
   // Must match LoginService's options — both services share the credential
   // keys, and iOS Keychain lookups are scoped by these attributes.
@@ -108,7 +111,15 @@ class MailService extends ChangeNotifier {
     // Above the early return for the same reason as in `connect()` — folder
     // fetches reach here without ever going through `connect()`.
     await _resetIfAccountChanged();
-    if (_isConnected && _imap != null) return true;
+    // `_isConnected` alone outlives the socket: the server drops an idle
+    // connection, and every command on it then waits for an answer that
+    // never comes (a Sent copy hung compose forever). enough_mail clears its
+    // own flag when the server closes the socket — reconnect then.
+    if (_isConnected && _imap != null) {
+      if (_imap!.isConnected) return true;
+      _log('[mail] connection was closed by the server — reconnecting');
+      _isConnected = false;
+    }
     try {
       final username = await _storage.read(key: 'kisd_username');
       final password = await _storage.read(key: 'kisd_password');
@@ -454,8 +465,11 @@ class MailService extends ChangeNotifier {
     return cached;
   }
 
+  /// [attachments] empty sends exactly as before attachments existed:
+  /// `buildSimpleTextMessage` and the 30 s timeout. Every attachment-only
+  /// step below is guarded by `attachments.isNotEmpty`.
   Future<void> sendEmail(String to, String subject, String body,
-      {String? from}) async {
+      {String? from, List<MailAttachmentData> attachments = const []}) async {
     // Storage, not `_cachedUsername`: the field is the account this session
     // connected as, which after a switch is the *previous* user.
     final username = await _storage.read(key: 'kisd_username');
@@ -487,7 +501,10 @@ class MailService extends ChangeNotifier {
     if (from != null) await setAccountEmail(from);
 
     _log('[mail] sending email to $to (from $fromEmail)');
-    final smtp = SmtpClient('fh-koeln.de', isLogEnabled: kDebugMode);
+    // Debug logging echoes every line sent — for a mail with attachments
+    // that's megabytes of base64 in the console.
+    final smtp = SmtpClient('fh-koeln.de',
+        isLogEnabled: kDebugMode && attachments.isEmpty);
     try {
       // enough_mail's SMTP commands await the server with no timeout of
       // their own — a stalled response would hang the send forever, with
@@ -495,19 +512,59 @@ class MailService extends ChangeNotifier {
       await smtp.connectToServer(_smtpHost, _smtpPort, isSecure: false);
       await smtp.ehlo().timeout(_smtpResponseTimeout);
       await smtp.startTls().timeout(_smtpResponseTimeout);
+      var sendTimeout = _smtpResponseTimeout;
+      int? estimatedSize;
+      if (attachments.isNotEmpty) {
+        // The server announces its limit after STARTTLS's EHLO. Checked
+        // before logging in and before a single byte of the files is sent.
+        final limit = smtp.serverInfo.maxMessageSize;
+        await _rememberSmtpSizeLimit(limit);
+        final sizes = attachments.map((a) => a.bytes.length);
+        estimatedSize = estimateEncodedSize(body.length, sizes);
+        if (exceedsMailLimit(body.length, sizes, limit)) {
+          throw Exception(mailTooBigMessage(
+            sizes.fold(0, (a, b) => a + b),
+            attachmentAllowance(limit!,
+                bodyLength: body.length, count: attachments.length),
+          ));
+        }
+        // The timeout covers the whole upload. Fixed at 30 s, a few MB on a
+        // weak uplink would be reported as failed while the server may
+        // already have queued the mail — and the retry sends it twice. So
+        // it only guards against a stall: at least 32 KB/s.
+        sendTimeout = _smtpResponseTimeout +
+            Duration(seconds: estimatedSize ~/ (32 * 1024));
+      }
       await smtp.authenticate(username, password).timeout(_smtpResponseTimeout);
-      final message = MessageBuilder.buildSimpleTextMessage(
-        MailAddress(null, fromEmail),
-        [MailAddress(null, to)],
-        body,
-        subject: subject,
-      );
-      final response =
-          await smtp.sendMessage(message).timeout(_smtpResponseTimeout);
+      final message = attachments.isEmpty
+          ? MessageBuilder.buildSimpleTextMessage(
+              MailAddress(null, fromEmail),
+              [MailAddress(null, to)],
+              body,
+              subject: subject,
+            )
+          : await buildAttachmentMessageInBackground(
+              from: MailAddress(null, fromEmail),
+              to: [MailAddress(null, to)],
+              subject: subject,
+              body: body,
+              attachments: attachments,
+            );
+      if (estimatedSize != null) {
+        _log('[mail] sending ${attachments.length} attachment(s), '
+            '~$estimatedSize bytes');
+      }
+      final response = await smtp.sendMessage(message).timeout(sendTimeout);
       // The acceptance line carries the server's queue ID — the proof the
       // message entered the mail system, and the handle Campus IT can trace.
       _log('[mail] smtp accepted: ${response.code} ${response.message}');
-      await _appendToSent(message);
+      if (attachments.isEmpty) {
+        await _appendToSent(message);
+      } else {
+        // The mail is delivered now. Its Sent copy is the same MBs uploaded
+        // a second time, so compose closes without waiting for it.
+        unawaited(_appendToSent(message, size: estimatedSize));
+      }
     } catch (e) {
       _log('[mail] error: $e');
       rethrow;
@@ -745,17 +802,82 @@ class MailService extends ChangeNotifier {
 
   // Webmail parity: SMTP delivery alone stores no copy — webmail APPENDs one
   // to the Sent folder over IMAP. Failures here must not fail the send.
-  Future<void> _appendToSent(MimeMessage message) async {
+  //
+  // Bounded like the SMTP upload — 30 s plus 1 s per 32 KB of [size] — so a
+  // connection that died without the server closing it can't hang the send.
+  Future<void> _appendToSent(MimeMessage message, {int? size}) async {
     try {
       if (!await _ensureConnected()) return;
       final sent = await _resolveSentMailbox();
       if (sent == null) return;
-      await _imap!.appendMessage(message,
-          targetMailbox: sent, flags: [r'\Seen']);
+      await _imap!
+          .appendMessage(message, targetMailbox: sent, flags: [r'\Seen'])
+          .timeout(_smtpResponseTimeout +
+              Duration(seconds: (size ?? 0) ~/ (32 * 1024)));
       _log('[mail] appended sent copy to ${sent.path}');
+    } on TimeoutException catch (e) {
+      _log('[mail] could not append to sent folder: $e');
+      // Whatever the connection is doing, it isn't answering: start fresh
+      // with the next command.
+      _isConnected = false;
+      _imap?.disconnect();
+      _imap = null;
     } catch (e) {
       _log('[mail] could not append to sent folder: $e');
     }
+  }
+
+  // ── Attachment size limit ────────────────────────────────────────────────
+
+  Future<int?>? _sizeProbe;
+
+  /// The largest mail the TH SMTP server accepts, as announced in its EHLO
+  /// (`SIZE`). Remembered on the device — a server property, nothing
+  /// personal. Until the first send with attachments it comes from a probe:
+  /// connect, EHLO, STARTTLS, quit — no login, nothing sent. Null when the
+  /// server doesn't say (the server's own rejection then still surfaces).
+  Future<int?> smtpSizeLimit() async {
+    final prefs = await SharedPreferences.getInstance();
+    final known = prefs.getInt(_smtpSizeLimitKey);
+    if (known != null) return known;
+    // One probe per app run, however often compose asks.
+    return _sizeProbe ??= _probeSmtpSizeLimit();
+  }
+
+  Future<int?> _probeSmtpSizeLimit() async {
+    final smtp = SmtpClient('fh-koeln.de', isLogEnabled: false);
+    try {
+      await smtp
+          .connectToServer(_smtpHost, _smtpPort, isSecure: false)
+          .timeout(_smtpResponseTimeout);
+      await smtp.ehlo().timeout(_smtpResponseTimeout);
+      await smtp.startTls().timeout(_smtpResponseTimeout);
+      final limit = smtp.serverInfo.maxMessageSize;
+      await _rememberSmtpSizeLimit(limit);
+      return limit != null && limit > 0 ? limit : null;
+    } catch (e) {
+      _log('[mail] smtp size probe failed: $e');
+      _sizeProbe = null; // offline: try again next time
+      return null;
+    } finally {
+      try {
+        await smtp.quit().timeout(const Duration(seconds: 5));
+      } catch (_) {
+        // A probe that timed out mid-connect must not leave its socket open.
+        try {
+          await smtp.disconnect();
+        } catch (_) {}
+      }
+    }
+  }
+
+  // SIZE 0 means "no limit announced" (RFC 1870).
+  Future<void> _rememberSmtpSizeLimit(int? limit) async {
+    if (limit == null || limit <= 0) return;
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getInt(_smtpSizeLimitKey) == limit) return;
+    await prefs.setInt(_smtpSizeLimitKey, limit);
+    _log('[mail] smtp size limit: $limit bytes');
   }
 
   // ── Drafts ───────────────────────────────────────────────────────────────
@@ -771,6 +893,7 @@ class MailService extends ChangeNotifier {
     required String to,
     required String subject,
     required String body,
+    List<MailAttachmentData> attachments = const [],
   }) async {
     try {
       if (!await _ensureConnected()) return false;
@@ -778,12 +901,23 @@ class MailService extends ChangeNotifier {
       if (drafts == null) return false;
       final sender =
           from.contains('@') ? from.trim() : (await accountEmail() ?? from);
-      final message = MessageBuilder.buildSimpleTextMessage(
-        MailAddress(null, sender),
-        [if (to.trim().isNotEmpty) MailAddress(null, to.trim())],
-        body,
-        subject: subject,
-      );
+      // Attachments travel inside the draft, photos marked so a reopened
+      // draft can still offer scaling them.
+      final message = attachments.isEmpty
+          ? MessageBuilder.buildSimpleTextMessage(
+              MailAddress(null, sender),
+              [if (to.trim().isNotEmpty) MailAddress(null, to.trim())],
+              body,
+              subject: subject,
+            )
+          : await buildAttachmentMessageInBackground(
+              from: MailAddress(null, sender),
+              to: [if (to.trim().isNotEmpty) MailAddress(null, to.trim())],
+              subject: subject,
+              body: body,
+              attachments: attachments,
+              markPhotos: true,
+            );
       await _imap!.appendMessage(message,
           targetMailbox: drafts, flags: [r'\Draft', r'\Seen']);
       _log('[mail] saved draft to ${drafts.path}');

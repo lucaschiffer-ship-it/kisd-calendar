@@ -9,10 +9,23 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'imap_preview_fix.dart';
 import 'mail_attachments.dart';
 import 'mail_offline_cache.dart';
+import 'mail_threads.dart';
 import 'service_locator.dart';
 
 /// Which IMAP folder a message lives in — used for folder-aware operations.
 enum MailFolder { inbox, drafts, sent, trash }
+
+/// One mail of a conversation and the folder it was found in.
+class ThreadMessage {
+  const ThreadMessage(this.message, this.folder, {this.downloaded = true});
+
+  /// The full mail — or, when not [downloaded], only its envelope and size.
+  final MimeMessage message;
+  final MailFolder folder;
+
+  /// False when the body was left on the server (too large) or didn't come.
+  final bool downloaded;
+}
 
 // Mail diagnostics include addresses and server responses — release builds
 // log nothing to the device console.
@@ -65,6 +78,20 @@ class MailService extends ChangeNotifier {
   bool _offlineSyncAgain = false;
   bool _offlineFetchPending = false;
   ImapClient? _offlineImap;
+
+  // Conversations (see fetchThread): a connection of their own, one lookup
+  // at a time, and the last few results by the opened mail's Message-ID.
+  ImapClient? _threadImap;
+  DateTime? _threadImapUsed;
+  Future<void> _threadQueue = Future.value();
+  final _threadCache = <String, List<ThreadMessage>>{};
+  static const _threadCacheSize = 8;
+  static const _threadMaxMessages = 30;
+  static const _threadBodyLimit = 3 * 1024 * 1024;
+  // All bodies of one lookup together — newest first, so a long exchange of
+  // PDFs costs neither the data plan nor the lookup's 25 s.
+  static const _threadBodyBudget = 8 * 1024 * 1024;
+  static const _threadResponseTimeout = Duration(seconds: 20);
 
   final _unreadController = StreamController<int>.broadcast();
 
@@ -171,6 +198,9 @@ class MailService extends ChangeNotifier {
     _offlineGeneration++;
     _offlineImap?.disconnect();
     _offlineImap = null;
+    _threadImap?.disconnect();
+    _threadImap = null;
+    _threadCache.clear();
     _inboxUidValidity = null;
     _imap?.disconnect();
     _imap = null;
@@ -371,6 +401,8 @@ class MailService extends ChangeNotifier {
       );
       _messages = result.messages.reversed.toList();
       _inboxUidValidity = inbox.uidValidity;
+      // New mail may have joined a conversation looked up before.
+      _threadCache.clear();
       final unread = unreadCount;
       _log('[mail] fetched ${_messages.length} messages ($unread unread)');
       _unreadController.add(unread);
@@ -465,11 +497,265 @@ class MailService extends ChangeNotifier {
     return cached;
   }
 
+  // ── Conversations ─────────────────────────────────────────────────────────
+
+  static final _inboxMailbox = Mailbox(
+    encodedName: 'INBOX',
+    encodedPath: 'INBOX',
+    flags: [],
+    pathSeparator: '/',
+  );
+
+  /// The conversation [opened] belongs to, oldest first — [opened] itself
+  /// included as the very object passed in. Null when it can't be looked up
+  /// (offline, or the server refused).
+  ///
+  /// Searches Inbox and Sent (where the user's own replies are) by reply
+  /// headers and by subject; [conversationOf] decides what belongs. On a
+  /// connection of its own with each folder EXAMINEd read-only: the shared
+  /// one's selected folder changes under any await, and BODY.PEEK leaves the
+  /// other mails' read state alone.
+  Future<List<ThreadMessage>?> fetchThread(
+    MimeMessage opened,
+    MailFolder folder,
+  ) async {
+    final previous = _threadQueue;
+    final done = Completer<void>();
+    _threadQueue = done.future;
+    await previous;
+    try {
+      await _resetIfAccountChanged();
+      final key = messageIdOf(opened);
+      final cached = key == null ? null : _threadCache.remove(key);
+      if (cached != null) {
+        _threadCache[key!] = cached; // most recently used last
+        return [
+          for (final t in cached)
+            messageIdOf(t.message) == key ? ThreadMessage(opened, folder) : t,
+        ];
+      }
+      final generation = _offlineGeneration;
+      // Whole-call: a dead socket that was never closed would otherwise hang
+      // a command forever — and every later lookup queued behind it.
+      final watch = Stopwatch()..start();
+      final thread = await _lookUpThread(opened, folder)
+          .timeout(const Duration(seconds: 25));
+      _threadImapUsed = DateTime.now();
+      _log('[mail] conversation: ${thread?.length ?? 0} mails '
+          'in ${watch.elapsedMilliseconds} ms');
+      if (thread == null || generation != _offlineGeneration) return null;
+      if (key != null) {
+        _threadCache[key] = thread;
+        while (_threadCache.length > _threadCacheSize) {
+          _threadCache.remove(_threadCache.keys.first);
+        }
+      }
+      return thread;
+    } catch (e) {
+      _log('[mail] conversation lookup failed: $e');
+      _threadImap?.disconnect();
+      _threadImap = null;
+      return null;
+    } finally {
+      done.complete();
+    }
+  }
+
+  Future<ImapClient?> _threadClient() async {
+    final current = _threadImap;
+    final used = _threadImapUsed;
+    // An idle connection may be dead without knowing it (the phone slept,
+    // the network changed): after a few minutes, a fresh one is cheaper
+    // than finding out by timeout.
+    final fresh =
+        used != null && DateTime.now().difference(used).inMinutes < 4;
+    if (current != null && current.isConnected && fresh) return current;
+    current?.disconnect();
+    _threadImap = null;
+    final username = await _storage.read(key: 'kisd_username');
+    final password = await _storage.read(key: 'kisd_password');
+    if (username == null || password == null) return null;
+    final imap = ImapClient(isLogEnabled: false);
+    await imap.connectToServer(_imapHost, _imapPort,
+        isSecure: true, timeout: const Duration(seconds: 10));
+    await imap.login(username, password);
+    _threadImap = imap;
+    return imap;
+  }
+
+  Future<List<int>> _searchThread(ImapClient imap, MimeMessage opened) async {
+    final id = messageIdOf(opened);
+    final parents = parentIdsOf(opened);
+    final subject = subjectSearchText(opened.decodeSubject());
+    final criteria = threadSearchCriteria(
+        messageId: id, parentIds: parents, subjectText: subject);
+    if (criteria == null) return const [];
+    try {
+      final result = await imap.uidSearchMessages(
+          searchCriteria: criteria, responseTimeout: _threadResponseTimeout);
+      return result.matchingSequence?.toList() ?? const [];
+    } on ImapException catch (e) {
+      // A server that can't search headers still finds the subject.
+      _log('[mail] header search refused ($e) — searching the subject only');
+      final subjectOnly = threadSearchCriteria(
+          messageId: id,
+          parentIds: parents,
+          subjectText: subject,
+          headers: false);
+      if (subjectOnly == null) return const [];
+      final result = await imap.uidSearchMessages(
+          searchCriteria: subjectOnly, responseTimeout: _threadResponseTimeout);
+      return result.matchingSequence?.toList() ?? const [];
+    }
+  }
+
+  Future<List<ThreadMessage>?> _lookUpThread(
+    MimeMessage opened,
+    MailFolder folder,
+  ) async {
+    final imap = await _threadClient();
+    if (imap == null) return null;
+    final sent = await _resolveSentMailbox(via: imap);
+    final boxes = <(MailFolder, Mailbox)>[
+      (MailFolder.inbox, _inboxMailbox),
+      if (sent != null) (MailFolder.sent, sent),
+    ];
+
+    // The candidates: metadata of every mail the searches turn up.
+    final found = <String, (MailFolder, MimeMessage)>{};
+    final validity = <MailFolder, int?>{};
+    Mailbox? selected;
+    for (final (f, box) in boxes) {
+      validity[f] = (await imap.examineMailbox(box)).uidValidity;
+      selected = box;
+      final uids = await _searchThread(imap, opened);
+      if (uids.isEmpty) continue;
+      // The newest — a generic subject ("Frage") can match hundreds.
+      final newest = (uids.toList()..sort()).reversed.take(60).toList();
+      final meta = await imap.uidFetchMessages(
+        MessageSequence.fromIds(newest, isUid: true),
+        '(UID FLAGS ENVELOPE RFC822.SIZE '
+        'BODY.PEEK[HEADER.FIELDS (REFERENCES)])',
+        responseTimeout: _threadResponseTimeout,
+      );
+      for (final m in meta.messages) {
+        if (m.uid != null) found['${f.name}:${m.uid}'] = (f, m);
+      }
+    }
+
+    final seedKey = '${folder.name}:${opened.uid}';
+    final members = conversationOf(
+      ThreadCandidate.of(opened, seedKey),
+      [for (final e in found.entries) ThreadCandidate.of(e.value.$2, e.key)],
+    );
+    // The same mail can sit in both folders (sent to oneself, a list
+    // echoing it back): one card — the opened copy, else the inbox's.
+    int rank(ThreadCandidate c) => c.key == seedKey
+        ? 0
+        : (found[c.key]?.$1 == MailFolder.inbox ? 1 : 2);
+    final byId = <String, ThreadCandidate>{};
+    final unique = <ThreadCandidate>[];
+    for (final m in members) {
+      final id = m.messageId;
+      if (id == null) {
+        unique.add(m);
+      } else if (byId[id] == null || rank(m) < rank(byId[id]!)) {
+        byId[id] = m;
+      }
+    }
+    unique.addAll(byId.values);
+    unique.sort((a, b) {
+      final da = a.date, db = b.date;
+      if (da == null || db == null) return 0;
+      return da.compareTo(db);
+    });
+    var keep = unique;
+    if (keep.length > _threadMaxMessages) {
+      keep = keep.sublist(keep.length - _threadMaxMessages);
+      if (!keep.any((m) => m.key == seedKey)) {
+        keep = [
+          ...keep.skip(1),
+          unique.firstWhere((m) => m.key == seedKey),
+        ]..sort((a, b) => (a.date ?? DateTime(0)).compareTo(b.date ?? DateTime(0)));
+      }
+    }
+    if (keep.length < 2) return [ThreadMessage(opened, folder)];
+
+    // Bodies: the offline copy's first, the rest from the server — the
+    // folder still selected first.
+    final bodies = <String, MimeMessage>{};
+    // Only while the list's UIDs are this connection's UIDs.
+    if (validity[MailFolder.inbox] == _inboxUidValidity) {
+      for (final m in keep) {
+        final hit = found[m.key];
+        if (hit == null || hit.$1 != MailFolder.inbox) continue;
+        final body = await _offlineBody(hit.$2.uid!);
+        if (body != null && messageIdOf(body) == m.messageId) {
+          bodies[m.key] = body;
+        }
+      }
+    }
+    final wanted = <String>{};
+    var budget = _threadBodyBudget;
+    for (final m in keep.reversed) {
+      final hit = found[m.key];
+      if (m.key == seedKey || hit == null || bodies.containsKey(m.key)) {
+        continue;
+      }
+      final size = hit.$2.size ?? 0;
+      if (size > _threadBodyLimit || size > budget) continue;
+      budget -= size;
+      wanted.add(m.key);
+    }
+    final order = [
+      for (final b in boxes)
+        if (b.$2 == selected) b,
+      for (final b in boxes)
+        if (b.$2 != selected) b,
+    ];
+    for (final (f, box) in order) {
+      final uids = [
+        for (final m in keep)
+          if (wanted.contains(m.key) && found[m.key]!.$1 == f)
+            found[m.key]!.$2.uid!,
+      ];
+      if (uids.isEmpty) continue;
+      if (box != selected) {
+        final again = await imap.examineMailbox(box);
+        selected = box;
+        // The UIDs are from before: renumbered folder, different mails.
+        if (again.uidValidity != validity[f]) return null;
+      }
+      final result = await imap.uidFetchMessages(
+        MessageSequence.fromIds(uids, isUid: true),
+        'BODY.PEEK[]',
+        responseTimeout: const Duration(seconds: 60),
+      );
+      for (final m in result.messages) {
+        if (m.uid != null) bodies['${f.name}:${m.uid}'] = m;
+      }
+    }
+
+    return [
+      for (final m in keep)
+        if (m.key == seedKey)
+          ThreadMessage(opened, folder)
+        else if (bodies[m.key] case final body?)
+          ThreadMessage(body, found[m.key]!.$1)
+        else
+          ThreadMessage(found[m.key]!.$2, found[m.key]!.$1, downloaded: false),
+    ];
+  }
+
   /// [attachments] empty sends exactly as before attachments existed:
   /// `buildSimpleTextMessage` and the 30 s timeout. Every attachment-only
   /// step below is guarded by `attachments.isNotEmpty`.
+  /// [inReplyTo] and [references] mark a reply (see [applyReplyHeaders]).
   Future<void> sendEmail(String to, String subject, String body,
-      {String? from, List<MailAttachmentData> attachments = const []}) async {
+      {String? from,
+      List<MailAttachmentData> attachments = const [],
+      String? inReplyTo,
+      List<String> references = const []}) async {
     // Storage, not `_cachedUsername`: the field is the account this session
     // connected as, which after a switch is the *previous* user.
     final username = await _storage.read(key: 'kisd_username');
@@ -550,6 +836,8 @@ class MailService extends ChangeNotifier {
               body: body,
               attachments: attachments,
             );
+      applyReplyHeaders(message,
+          inReplyTo: inReplyTo, references: references);
       if (estimatedSize != null) {
         _log('[mail] sending ${attachments.length} attachment(s), '
             '~$estimatedSize bytes');
@@ -815,6 +1103,9 @@ class MailService extends ChangeNotifier {
           .timeout(_smtpResponseTimeout +
               Duration(seconds: (size ?? 0) ~/ (32 * 1024)));
       _log('[mail] appended sent copy to ${sent.path}');
+      // The reply's Sent copy now belongs to a conversation looked up
+      // before — attachment mails append after compose has closed.
+      _threadCache.clear();
     } on TimeoutException catch (e) {
       _log('[mail] could not append to sent folder: $e');
       // Whatever the connection is doing, it isn't answering: start fresh
@@ -894,6 +1185,8 @@ class MailService extends ChangeNotifier {
     required String subject,
     required String body,
     List<MailAttachmentData> attachments = const [],
+    String? inReplyTo,
+    List<String> references = const [],
   }) async {
     try {
       if (!await _ensureConnected()) return false;
@@ -918,6 +1211,9 @@ class MailService extends ChangeNotifier {
               attachments: attachments,
               markPhotos: true,
             );
+      // Kept in the draft, so a reopened reply is still sent as one.
+      applyReplyHeaders(message,
+          inReplyTo: inReplyTo, references: references);
       await _imap!.appendMessage(message,
           targetMailbox: drafts, flags: [r'\Draft', r'\Seen']);
       _log('[mail] saved draft to ${drafts.path}');
@@ -1153,9 +1449,10 @@ class MailService extends ChangeNotifier {
     required MailboxFlag flag,
     required List<String> nameCandidates,
     required String label,
+    ImapClient? via,
   }) async {
     try {
-      final mailboxes = await _imap!.listMailboxes();
+      final mailboxes = await (via ?? _imap!).listMailboxes();
 
       try {
         final mb = mailboxes.firstWhere(
@@ -1189,7 +1486,8 @@ class MailService extends ChangeNotifier {
     return null;
   }
 
-  Future<Mailbox?> _resolveSentMailbox() async {
+  /// [via]: list on that connection instead of the shared one.
+  Future<Mailbox?> _resolveSentMailbox({ImapClient? via}) async {
     _sentMailbox ??= await _resolveSpecialMailbox(
       flag: MailboxFlag.sent,
       nameCandidates: const [
@@ -1197,6 +1495,7 @@ class MailService extends ChangeNotifier {
         'Gesendete Elemente', 'Gesendete Objekte', 'INBOX.Sent',
       ],
       label: 'sent',
+      via: via,
     );
     return _sentMailbox;
   }

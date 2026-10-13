@@ -30,6 +30,19 @@ int? attachmentIndexOf(Uri url) {
   return int.tryParse(url.path.substring(_attachmentPath.length));
 }
 
+/// In a conversation, tiles link to `…/attachment/<mail>/<index>`: the
+/// mail's position in the conversation and the tile's within that mail.
+({int entry, int index})? threadAttachmentOf(Uri url) {
+  if (url.scheme != kMailScheme || !url.path.startsWith(_attachmentPath)) {
+    return null;
+  }
+  final parts = url.path.substring(_attachmentPath.length).split('/');
+  if (parts.length != 2) return null;
+  final entry = int.tryParse(parts[0]);
+  final index = int.tryParse(parts[1]);
+  return entry == null || index == null ? null : (entry: entry, index: index);
+}
+
 /// The bundled fonts the document asks for, by file name under `google_fonts/`.
 const kMailFontFiles = [
   'SpaceGrotesk-SemiBold.ttf',
@@ -128,6 +141,72 @@ class MailDocumentSpec {
   final List<MailAttachmentTile> attachments;
 
   /// CSS px the page is laid out at (the screen width).
+  final double viewportWidth;
+  final double topPadding;
+  final double bottomPadding;
+}
+
+/// One mail of a conversation, as plain data.
+class ThreadEntrySpec {
+  const ThreadEntrySpec({
+    required this.senderName,
+    required this.senderEmail,
+    required this.avatarInitial,
+    required this.avatarTint,
+    required this.avatarText,
+    required this.time,
+    required this.toSummary,
+    required this.to,
+    required this.cc,
+    required this.fullDate,
+    required this.html,
+    required this.plain,
+    required this.attachments,
+    required this.open,
+    this.foldQuotes = true,
+    this.unavailable,
+  });
+
+  final String senderName;
+  final String? senderEmail;
+  final String avatarInitial;
+  final String avatarTint;
+  final String avatarText;
+  final String time;
+  final String toSummary;
+  final List<String> to;
+  final List<String> cc;
+  final String? fullDate;
+  final String? html;
+  final String? plain;
+  final List<MailAttachmentTile> attachments;
+
+  /// Unfolded when the page opens.
+  final bool open;
+
+  /// Puts the quoted history behind a "•••" toggle. Off for forwards: what
+  /// they carry isn't in the cards around them.
+  final bool foldQuotes;
+
+  /// Shown instead of the body when the mail wasn't downloaded (too large).
+  final String? unavailable;
+}
+
+/// A conversation: its subject once, then its mails oldest first, each a
+/// card that folds to sender, time and a line of preview.
+class ThreadDocumentSpec {
+  const ThreadDocumentSpec({
+    required this.colors,
+    required this.subject,
+    required this.entries,
+    required this.viewportWidth,
+    required this.topPadding,
+    required this.bottomPadding,
+  });
+
+  final MailHtmlColors colors;
+  final String subject;
+  final List<ThreadEntrySpec> entries;
   final double viewportWidth;
   final double topPadding;
   final double bottomPadding;
@@ -338,9 +417,9 @@ String rewriteColorSchemeQueries(String html, {required bool dark}) {
 }
 
 /// Retargets a mail's `html` / `body` selectors at the wrapper it is rendered
-/// in, so its page styles (background, font, colour) land on the mail and not
-/// on the whole document — which also holds our header.
-String rewriteBodySelectors(String css) {
+/// in ([target]), so its page styles (background, font, colour) land on the
+/// mail and not on the whole document — which also holds our header.
+String rewriteBodySelectors(String css, {String target = '#kisd-body'}) {
   final htmlBody = RegExp(
     r'(^|[\s,>+~(])html\s+body(?=$|[\s,.#:\[>+~)])',
     caseSensitive: false,
@@ -354,10 +433,64 @@ String rewriteBodySelectors(String css) {
     // At-rule preludes (`@media …`) hold no selectors to retarget.
     if (prelude.trimLeft().startsWith('@')) return m.group(0)!;
     final rewritten = prelude
-        .replaceAllMapped(htmlBody, (b) => '${b.group(1)}#kisd-body')
-        .replaceAllMapped(single, (b) => '${b.group(1)}#kisd-body');
+        .replaceAllMapped(htmlBody, (b) => '${b.group(1)}$target')
+        .replaceAllMapped(single, (b) => '${b.group(1)}$target');
     return '$rewritten{';
   });
+}
+
+final _keyframeStep = RegExp(r'^(?:from|to|\d+(?:\.\d+)?%)$');
+
+/// A mail's stylesheet confined to [scope]: its page selectors retargeted at
+/// the scope, every other selector prefixed with it. In a conversation all
+/// mails share one document, and one mail's `p{…}` or `*{…!important}` must
+/// not restyle the mails around it.
+String scopeMailCss(String css, String scope) {
+  final clean = css
+      .replaceAll(RegExp(r'/\*[\s\S]*?\*/'), '')
+      .replaceAll('<!--', '')
+      .replaceAll('-->', '');
+  return rewriteBodySelectors(clean, target: scope).replaceAllMapped(
+    RegExp(r'([^{}]+)\{'),
+    (m) {
+      final prelude = m.group(1)!;
+      if (prelude.trimLeft().startsWith('@')) return m.group(0)!;
+      final selectors = _splitSelectors(prelude).map((raw) {
+        final s = raw.trim();
+        if (s.isEmpty || s.startsWith(scope)) return s;
+        if (_keyframeStep.hasMatch(s.toLowerCase())) return s;
+        if (s == ':root') return scope;
+        return '$scope $s';
+      });
+      return '${selectors.join(',')}{';
+    },
+  );
+}
+
+/// Splits a selector list at its top-level commas — not the ones inside
+/// `:is(a, b)` or `[title="a,b"]`.
+List<String> _splitSelectors(String prelude) {
+  final out = <String>[];
+  var depth = 0;
+  String? quote;
+  var start = 0;
+  for (var i = 0; i < prelude.length; i++) {
+    final ch = prelude[i];
+    if (quote != null) {
+      if (ch == quote) quote = null;
+    } else if (ch == '"' || ch == "'") {
+      quote = ch;
+    } else if (ch == '(' || ch == '[') {
+      depth++;
+    } else if (ch == ')' || ch == ']') {
+      depth--;
+    } else if (ch == ',' && depth == 0) {
+      out.add(prelude.substring(start, i));
+      start = i + 1;
+    }
+  }
+  out.add(prelude.substring(start));
+  return out;
 }
 
 final _fixedTableWidth = RegExp(
@@ -457,6 +590,273 @@ String _blocks(List<String> lines, int depth) {
   return out.toString();
 }
 
+// ── Quoted history ────────────────────────────────────────────────────────────
+
+// Separators under which a client puts the whole earlier mail.
+final _originalMessage = RegExp(
+  r'^\s*-{2,}\s*(?:original message|ursprüngliche nachricht|originalnachricht|original-nachricht)\s*-{2,}\s*$',
+  caseSensitive: false,
+);
+final _underline = RegExp(r'^\s*_{10,}\s*$');
+final _fromLine = RegExp(
+  r'^\s*\*?(?:von|from)\s*:\*?\s*\S',
+  caseSensitive: false,
+);
+final _sentLine = RegExp(
+  r'^\s*\*?(?:gesendet|sent|datum|date)\s*:\*?\s*\S',
+  caseSensitive: false,
+);
+// "On 12 Oct 2026, Anna <a@b> wrote:", "Am 12.10.2026 um 10:00 schrieb Anna:"
+final _attributionEnd = RegExp(
+  r'(?:\bwrote|\bschrieb\b.*|\bécrit)\s*:$',
+  caseSensitive: false,
+);
+final _attributionStart = RegExp(r'^(?:on|am|le)\b', caseSensitive: false);
+
+bool _historyStartsAt(List<String> lines, int i) {
+  final line = lines[i];
+  if (_originalMessage.hasMatch(line)) return true;
+  if (_underline.hasMatch(line)) {
+    final next = lines
+        .skip(i + 1)
+        .where((l) => l.trim().isNotEmpty)
+        .firstOrNull;
+    return next != null && _fromLine.hasMatch(next);
+  }
+  // Outlook's plain-text header block: Von/From, then Gesendet/Sent.
+  if (_fromLine.hasMatch(line)) {
+    return lines.skip(i + 1).take(4).any(_sentLine.hasMatch);
+  }
+  return false;
+}
+
+/// The first line of a trailing `>` quote and the attribution line above it,
+/// or null when the mail doesn't end in one. A quote answered *below* — an
+/// inline reply — isn't history, so only a trailing one counts.
+int? _trailingQuoteStart(List<String> lines) {
+  var end = lines.length - 1;
+  while (end >= 0 && lines[end].trim().isEmpty) {
+    end--;
+  }
+  if (end < 0 || !lines[end].startsWith('>')) return null;
+  var start = end;
+  while (start > 0 &&
+      (lines[start - 1].startsWith('>') || lines[start - 1].trim().isEmpty)) {
+    start--;
+  }
+  while (start < end && lines[start].trim().isEmpty) {
+    start++;
+  }
+  var a = start - 1;
+  while (a >= 0 && lines[a].trim().isEmpty) {
+    a--;
+  }
+  if (a >= 0) {
+    final line = lines[a].trim();
+    final prev = a > 0 ? lines[a - 1].trim() : '';
+    // Wrapped over two lines: "Am 12.10.2026 um 10:00 schrieb Anna <" /
+    // "anna@th-koeln.de>:".
+    if (_attributionStart.hasMatch(prev) &&
+        !_attributionStart.hasMatch(line) &&
+        _attributionEnd.hasMatch('$prev $line')) {
+      start = a - 1;
+    } else if (_attributionEnd.hasMatch(line)) {
+      start = a;
+    }
+  }
+  return start;
+}
+
+/// A plain-text reply split into what is new and the quoted history below
+/// it, or null when there's no history to fold — or nothing would be left
+/// above the fold.
+({String head, String quote})? splitQuotedPlain(String text) {
+  final lines = text.replaceAll('\r\n', '\n').split('\n');
+  int? cut;
+  for (var i = 0; i < lines.length; i++) {
+    if (_historyStartsAt(lines, i)) {
+      cut = i;
+      break;
+    }
+  }
+  cut ??= _trailingQuoteStart(lines);
+  if (cut == null) return null;
+  final head = lines.sublist(0, cut).join('\n').trimRight();
+  final quote = lines.sublist(cut).join('\n').trim();
+  if (head.trim().isEmpty || quote.isEmpty) return null;
+  return (head: head, quote: quote);
+}
+
+bool _hasContent(dom.Node node) {
+  if (node is dom.Text) return node.text.replaceAll(' ', ' ').trim().isNotEmpty;
+  if (node is! dom.Element) return false;
+  if (node.localName == 'img' || node.querySelector('img') != null) return true;
+  return node.text.replaceAll(' ', ' ').trim().isNotEmpty;
+}
+
+/// Whether [e] starts a reply's quoted history: `true` when everything after
+/// it is the earlier mail (Outlook's separators), `false` for a quote block
+/// that only counts when nothing is written below it, null for neither.
+bool? _quoteMarker(dom.Element e) {
+  final id = e.id.toLowerCase();
+  if (const {
+    'divrplyfwdmsg',
+    'x_divrplyfwdmsg',
+    'appendonsend',
+    'x_appendonsend',
+    'mail-editor-reference-message-container',
+  }.contains(id)) {
+    return true;
+  }
+  if (e.localName == 'div') {
+    final style = (e.attributes['style'] ?? '').toLowerCase().replaceAll(
+      RegExp(r'\s+'),
+      '',
+    );
+    // Outlook desktop: the "Von: / Gesendet:" block under a thin rule.
+    if ((style.contains('border-top:solid#e1e1e1') ||
+            style.contains('border-top:solid#b5c4df')) &&
+        _fromLine.hasMatch(e.text.trimLeft())) {
+      return true;
+    }
+  }
+  final classes = e.classes;
+  if (classes.contains('gmail_quote') ||
+      classes.contains('gmail_quote_container') ||
+      classes.contains('moz-cite-prefix') ||
+      classes.contains('yahoo_quoted')) {
+    return false;
+  }
+  if (e.localName == 'blockquote' &&
+      (e.attributes['type'] ?? '').toLowerCase() == 'cite') {
+    return false;
+  }
+  return null;
+}
+
+dom.Element? _previousElement(dom.Node node) {
+  final siblings = node.parentNode?.nodes;
+  if (siblings == null) return null;
+  for (var i = siblings.indexOf(node) - 1; i >= 0; i--) {
+    final n = siblings[i];
+    if (n is dom.Element && n.localName != 'br') return n;
+    if (n is dom.Text && n.text.trim().isNotEmpty) return null;
+  }
+  return null;
+}
+
+dom.Element? _nextElement(dom.Node node) {
+  final siblings = node.parentNode?.nodes;
+  if (siblings == null) return null;
+  for (var i = siblings.indexOf(node) + 1; i < siblings.length; i++) {
+    final n = siblings[i];
+    if (n is dom.Element && n.localName != 'br') return n;
+    if (n is dom.Text && n.text.trim().isNotEmpty) return null;
+  }
+  return null;
+}
+
+/// Moves a reply's quoted history behind a "•••" toggle at the end of
+/// [body]. Returns false, leaving [body] untouched, when there is none —
+/// or when folding it would leave nothing above the fold.
+bool _foldHtmlQuote(dom.Element body) {
+  dom.Element? marker;
+  var rest = false;
+  for (final e in body.querySelectorAll('*')) {
+    final kind = _quoteMarker(e);
+    if (kind != null) {
+      marker = e;
+      rest = kind;
+      break;
+    }
+  }
+  if (marker == null) return false;
+
+  // The quote unit: the marker, plus the blockquote a cite prefix introduces.
+  var unitEnd = marker;
+  if (!rest && marker.classes.contains('moz-cite-prefix')) {
+    final next = _nextElement(marker);
+    if (next != null && next.localName == 'blockquote') unitEnd = next;
+  }
+  var start = marker;
+  final before = _previousElement(marker);
+  if (rest && before != null && before.localName == 'hr') {
+    start = before; // Outlook on the web rules the history off with an <hr>.
+  } else if (!rest &&
+      marker.localName == 'blockquote' &&
+      before != null &&
+      before.text.length < 300 &&
+      _attributionEnd.hasMatch(before.text.trim())) {
+    start = before; // "On … wrote:" right above the quote.
+  }
+
+  // Everything from [start] to the end of the mail, in document order.
+  final region = <dom.Node>[];
+  dom.Node node = start;
+  final first = start.parentNode!.nodes;
+  region.addAll(first.sublist(first.indexOf(start)));
+  while (node.parentNode != null && node.parentNode != body) {
+    node = node.parentNode!;
+    final siblings = node.parentNode!.nodes;
+    region.addAll(siblings.sublist(siblings.indexOf(node) + 1));
+  }
+
+  if (!rest) {
+    final after = region.indexOf(unitEnd);
+    if (after < 0 || region.skip(after + 1).any(_hasContent)) return false;
+  }
+  // Something has to stay above the fold.
+  final bodyText = body.text.replaceAll(RegExp(r'[\s ]+'), '');
+  final quoteText = region
+      .map((n) => n.text ?? '')
+      .join()
+      .replaceAll(RegExp(r'[\s ]+'), '');
+  final bodyImages = body.querySelectorAll('img').length;
+  final quoteImages = region.fold<int>(
+    0,
+    (n, e) =>
+        n +
+        (e is dom.Element
+            ? (e.localName == 'img' ? 1 : e.querySelectorAll('img').length)
+            : 0),
+  );
+  if (bodyText.length <= quoteText.length && bodyImages <= quoteImages) {
+    return false;
+  }
+
+  final box = dom.Element.tag('div')..classes.add('kisd-qb');
+  for (final n in region) {
+    n.remove();
+    box.append(n);
+  }
+  _trimTail(body);
+  body.append(
+    dom.Element.tag('details')
+      ..classes.add('kisd-quote')
+      ..append(dom.Element.html('<summary>•••</summary>'))
+      ..append(box),
+  );
+  return true;
+}
+
+/// Drops the blank lines and empty wrappers a reply leaves above its quote
+/// (Gmail's `<br>` before `gmail_quote`), so the toggle sits under the text.
+void _trimTail(dom.Element e) {
+  while (e.nodes.isNotEmpty) {
+    final last = e.nodes.last;
+    if (_hasContent(last)) {
+      if (last is dom.Element) _trimTail(last);
+      return;
+    }
+    last.remove();
+  }
+}
+
+String _previewText(String text) {
+  final t = text.replaceAll(RegExp(r'[\s ]+'), ' ').trim();
+  return t.length > 200 ? t.substring(0, 200) : t;
+}
+
 // ── Document ──────────────────────────────────────────────────────────────────
 
 class _MailBody {
@@ -465,18 +865,32 @@ class _MailBody {
     this.headExtras,
     this.bodyAttrs,
     this.content,
-    this.zoom,
-  );
+    this.zoom, {
+    this.preview = '',
+  });
 
   final MailRenderMode mode;
   final String headExtras;
   final String bodyAttrs;
   final String content;
   final double zoom;
+
+  /// The start of the new text, for a folded conversation card. Only filled
+  /// for conversation entries.
+  final String preview;
 }
 
-_MailBody _prepareHtml(String html, MailDocumentSpec spec) {
-  final dark = spec.colors.dark;
+/// [scope] set: the mail shares its document with others (a conversation)
+/// — its CSS is confined to the [scope] wrapper, external stylesheets (which
+/// can't be) are dropped, and with [foldQuotes] its quoted history goes
+/// behind a toggle.
+_MailBody _prepareHtml(
+  String html, {
+  required bool dark,
+  required double viewportWidth,
+  String? scope,
+  bool foldQuotes = false,
+}) {
   final mode = classifyMailHtml(html);
   final source = rewriteColorSchemeQueries(html, dark: dark);
   final doc = html_parser.parse(source);
@@ -503,17 +917,31 @@ _MailBody _prepareHtml(String html, MailDocumentSpec spec) {
 
   final head = StringBuffer();
   for (final e in doc.querySelectorAll('style')) {
-    head.write('<style>${rewriteBodySelectors(e.text)}</style>');
+    final css = scope == null
+        ? rewriteBodySelectors(e.text)
+        : scopeMailCss(e.text, scope);
+    head.write('<style>$css</style>');
     e.remove();
   }
   for (final e in doc.querySelectorAll('link')) {
-    if ((e.attributes['rel'] ?? '').toLowerCase().contains('stylesheet')) {
+    if (scope == null &&
+        (e.attributes['rel'] ?? '').toLowerCase().contains('stylesheet')) {
       head.write(e.outerHtml);
     }
     e.remove();
   }
 
   final body = doc.body;
+  var preview = '';
+  if (scope != null && body != null) {
+    // Folding moves the history out of the body for a moment — the text
+    // left in it is exactly what the folded card previews.
+    final folded = foldQuotes && _foldHtmlQuote(body);
+    final details = folded ? body.nodes.last : null;
+    details?.remove();
+    preview = _previewText(body.text);
+    if (details != null) body.append(details);
+  }
   final attrs = StringBuffer();
   final style = StringBuffer();
   if (body != null) {
@@ -532,8 +960,8 @@ _MailBody _prepareHtml(String html, MailDocumentSpec spec) {
   if (style.isNotEmpty) attrs.write(' style="${escapeHtml(style.toString())}"');
 
   final available = mode == MailRenderMode.original
-      ? spec.viewportWidth - (dark ? 20 : 0)
-      : spec.viewportWidth - 40;
+      ? viewportWidth - (dark ? 20 : 0)
+      : viewportWidth - 40;
   final declared = fixedLayoutWidth(html);
   final zoom = declared != null && declared > available
       ? (available / declared).clamp(0.3, 1.0).toDouble()
@@ -545,6 +973,7 @@ _MailBody _prepareHtml(String html, MailDocumentSpec spec) {
     attrs.toString(),
     body?.innerHtml ?? doc.outerHtml,
     zoom,
+    preview: preview,
   );
 }
 
@@ -553,7 +982,11 @@ String buildMailDocument(MailDocumentSpec spec) {
   final htmlSource = spec.html;
   final _MailBody body;
   if (htmlSource != null && htmlSource.trim().isNotEmpty) {
-    body = _prepareHtml(htmlSource, spec);
+    body = _prepareHtml(
+      htmlSource,
+      dark: c.dark,
+      viewportWidth: spec.viewportWidth,
+    );
   } else {
     body = _MailBody(
       MailRenderMode.themed,
@@ -729,16 +1162,21 @@ String _headerHtml(MailDocumentSpec s) {
       '<h1>${escapeHtml(s.subject)}</h1></div>';
 }
 
-String _attachmentsHtml(List<MailAttachmentTile> tiles) {
+/// With [entry], the tiles of one mail in a conversation: links name the
+/// mail too (see [threadAttachmentOf]).
+String _attachmentsHtml(List<MailAttachmentTile> tiles, {int? entry}) {
   if (tiles.isEmpty) return '';
-  final b = StringBuffer('<div id="kisd-att">');
+  final b = StringBuffer(
+    entry == null ? '<div id="kisd-att">' : '<div class="kisd-att">',
+  );
+  final base = entry == null ? _attachmentPath : '$_attachmentPath$entry/';
   for (final (i, t) in tiles.indexed) {
     final dot = t.name.lastIndexOf('.');
     final ext = dot > 0 && dot < t.name.length - 1
         ? t.name.substring(dot + 1).toUpperCase()
         : 'FILE';
     b.write(
-      '<a class="t" href="$kMailScheme://local$_attachmentPath$i">'
+      '<a class="t" href="$kMailScheme://local$base$i">'
       '<span class="ic">'
       '${escapeHtml(ext.length > 4 ? ext.substring(0, 4) : ext)}</span>'
       '<span class="tx"><span class="n">${escapeHtml(t.name)}</span>'
@@ -749,6 +1187,187 @@ String _attachmentsHtml(List<MailAttachmentTile> tiles) {
   b.write('</div>');
   return b.toString();
 }
+
+// ── Conversation ──────────────────────────────────────────────────────────────
+
+/// Folded cards before the first open one, from which the middle ones
+/// collapse further into a single "N more messages" row (as Gmail).
+const _olderGroupFrom = 4;
+
+_MailBody _entryBody(ThreadEntrySpec e, int i, ThreadDocumentSpec spec) {
+  final html = e.html;
+  if (html != null && html.trim().isNotEmpty) {
+    return _prepareHtml(
+      html,
+      dark: spec.colors.dark,
+      viewportWidth: spec.viewportWidth,
+      scope: '#kisd-b$i',
+      foldQuotes: e.foldQuotes,
+    );
+  }
+  final plain = e.plain ?? '';
+  final split = e.foldQuotes ? splitQuotedPlain(plain) : null;
+  return _MailBody(
+    MailRenderMode.themed,
+    '',
+    ' class="kisd-mode-themed kisd-plain"',
+    split == null
+        ? plainTextToHtml(plain)
+        : '${plainTextToHtml(split.head)}<details class="kisd-quote">'
+              '<summary>•••</summary><div class="kisd-qb">'
+              '${plainTextToHtml(split.quote)}</div></details>',
+    1.0,
+    preview: _previewText(split?.head ?? plain),
+  );
+}
+
+String buildThreadDocument(ThreadDocumentSpec spec) {
+  final c = spec.colors;
+  final scheme = c.dark ? 'dark' : 'light';
+  final css = StringBuffer()
+    ..write(_fontFaces)
+    ..write('''
+html,body{margin:0!important;padding:0!important;background:${c.background}!important;-webkit-text-size-adjust:100%!important;}
+body{color-scheme:$scheme;}
+#kisd-page{padding:${spec.topPadding.round()}px 0 ${spec.bottomPadding.round()}px;}
+''')
+    ..write(_threadCss(c))
+    ..write(_attachmentCss(c).replaceAll('#kisd-att', '#kisd-th .kisd-att'))
+    ..write('#kisd-th .kisd-sc+.kisd-att{padding:0 20px 12px!important;}');
+  final head = StringBuffer();
+
+  final cards = <String>[];
+  for (final (i, e) in spec.entries.indexed) {
+    final unavailable = e.unavailable;
+    final _MailBody body = unavailable != null
+        ? _MailBody(MailRenderMode.themed, '', '', '', 1.0)
+        : _entryBody(e, i, spec);
+    head.write(body.headExtras);
+    css.write(
+      _bodyCss(c, body.mode, body.zoom)
+          .replaceAll('#kisd-body', '#kisd-b$i')
+          .replaceAll('#kisd-scroll', '#kisd-sc$i')
+          .replaceAll('#kisd-card', '#kisd-c$i'),
+    );
+    final inner = '<div id="kisd-b$i"${body.bodyAttrs}>${_zoomed(body)}</div>';
+    final content = unavailable != null
+        ? '<div class="kisd-note">${escapeHtml(unavailable)}</div>'
+        : '<div id="kisd-sc$i" class="kisd-sc">'
+              '${body.mode == MailRenderMode.original && c.dark ? '<div id="kisd-c$i">$inner</div>' : inner}'
+              '</div>${_attachmentsHtml(e.attachments, entry: i)}';
+    cards.add(
+      '<details class="kisd-m"${e.open ? ' open' : ''}>'
+      '${_entryHeader(e, body.preview)}$content</details>',
+    );
+  }
+
+  // Oldest at the top. A long run of folded cards before the first open one
+  // keeps its first and last card and collapses the middle.
+  final firstOpen = spec.entries.indexWhere((e) => e.open);
+  final page = StringBuffer();
+  void card(int i) {
+    if (i > 0) page.write('<div class="kisd-rule"></div>');
+    page.write(cards[i]);
+  }
+
+  for (var i = 0; i < cards.length; i++) {
+    if (firstOpen >= _olderGroupFrom && i == 1) {
+      final hidden = firstOpen - 2;
+      page.write(
+        '<div class="kisd-rule"></div><details class="kisd-older">'
+        '<summary>$hidden more messages</summary>',
+      );
+      for (var j = 1; j <= hidden; j++) {
+        if (j > 1) page.write('<div class="kisd-rule"></div>');
+        page.write(cards[j]);
+      }
+      page.write('</details>');
+      i = hidden;
+      continue;
+    }
+    card(i);
+  }
+
+  return '<!DOCTYPE html><html><head><meta charset="utf-8">'
+      '<meta name="viewport" content="width=device-width, initial-scale=1, '
+      'maximum-scale=5, viewport-fit=cover">'
+      '<meta name="color-scheme" content="$scheme">'
+      '<style>$css</style>$head</head><body>'
+      '<div id="kisd-page"><div id="kisd-th">'
+      '<h1 class="kisd-subj">${escapeHtml(spec.subject)}</h1>'
+      '$page</div></div></body></html>';
+}
+
+String _entryHeader(ThreadEntrySpec e, String preview) {
+  final more = StringBuffer();
+  void row(String k, String v) => more.write(
+    '<div class="kisd-kv"><span class="kisd-k">$k</span>'
+    '<span class="kisd-v">$v</span></div>',
+  );
+  final email = e.senderEmail;
+  final from = email == null || email.isEmpty
+      ? escapeHtml(e.senderName)
+      : email == e.senderName
+      ? '<a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>'
+      : '${escapeHtml(e.senderName)} &lt;<a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>&gt;';
+  row('From', from);
+  if (e.to.isNotEmpty) row('To', e.to.map(escapeHtml).join(', '));
+  if (e.cc.isNotEmpty) row('Cc', e.cc.map(escapeHtml).join(', '));
+  if (e.fullDate != null) row('Date', escapeHtml(e.fullDate!));
+
+  return '<summary class="kisd-mh">'
+      '<span class="kisd-av" style="background:${e.avatarTint}!important;'
+      'color:${e.avatarText}!important">${escapeHtml(e.avatarInitial)}</span>'
+      '<span class="kisd-who"><span class="kisd-r1">'
+      '<span class="kisd-name">${escapeHtml(e.senderName)}</span>'
+      '<span class="kisd-time">${escapeHtml(e.time)}</span></span>'
+      '<span class="kisd-pv">${escapeHtml(preview)}</span></span></summary>'
+      '<details class="kisd-rcp"><summary><span class="kisd-lbl">To:</span>'
+      '<span class="kisd-to">${escapeHtml(e.toSummary)}</span>'
+      '<span class="kisd-chev"></span></summary>'
+      '<div class="kisd-more">$more</div></details>';
+}
+
+// Like the single mail's header: every rule `#kisd-th`-scoped and !important,
+// with a reset first — the mails' own CSS is confined to their bodies, but a
+// quote toggle lives inside one, and a body's `summary{…}` must not reach it.
+String _threadCss(MailHtmlColors c) =>
+    '''
+#kisd-th .kisd-subj,#kisd-th .kisd-rule,#kisd-th .kisd-mh,#kisd-th .kisd-mh *,#kisd-th .kisd-rcp,#kisd-th .kisd-rcp *,#kisd-th .kisd-older>summary,#kisd-th .kisd-note,#kisd-th .kisd-quote>summary,#kisd-th .kisd-att,#kisd-th .kisd-att *{all:revert!important;box-sizing:border-box!important;-webkit-tap-highlight-color:transparent!important;}
+#kisd-th{display:block;}
+#kisd-th details.kisd-m,#kisd-th details.kisd-older{display:block!important;}
+#kisd-th .kisd-subj{display:block!important;margin:8px 20px 12px!important;font:700 24px/1.22 $_grotesk!important;letter-spacing:-0.4px!important;color:${c.text}!important;overflow-wrap:anywhere!important;}
+#kisd-th .kisd-rule{display:block!important;height:0!important;margin:0 20px!important;border-top:0.5px solid ${c.divider}!important;}
+#kisd-th .kisd-mh{display:flex!important;align-items:flex-start!important;gap:12px!important;list-style:none!important;padding:14px 20px!important;cursor:pointer!important;outline:none!important;}
+#kisd-th .kisd-mh::-webkit-details-marker,#kisd-th .kisd-rcp>summary::-webkit-details-marker,#kisd-th .kisd-older>summary::-webkit-details-marker,#kisd-th .kisd-quote>summary::-webkit-details-marker{display:none!important;}
+#kisd-th .kisd-av{flex:none!important;display:flex!important;align-items:center!important;justify-content:center!important;width:40px!important;height:40px!important;border-radius:20px!important;font:600 17px/1 $_grotesk!important;}
+#kisd-th .kisd-who{display:block!important;flex:1!important;min-width:0!important;padding-top:1px!important;}
+#kisd-th .kisd-r1{display:flex!important;align-items:baseline!important;gap:10px!important;}
+#kisd-th .kisd-name{display:block!important;flex:1!important;min-width:0!important;font:600 17px/1.3 $_grotesk!important;letter-spacing:-0.2px!important;color:${c.text}!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}
+#kisd-th .kisd-time{display:block!important;flex:none!important;font:400 15px/1.3 $_inter!important;color:${c.secondary}!important;}
+#kisd-th .kisd-pv{display:block!important;margin-top:3px!important;font:400 15px/1.35 $_inter!important;color:${c.secondary}!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}
+#kisd-th details.kisd-m[open]>.kisd-mh{padding-bottom:0!important;}
+#kisd-th details.kisd-m[open]>.kisd-mh .kisd-pv{display:none!important;}
+#kisd-th .kisd-rcp{display:block!important;margin:-17px 0 0!important;padding:3px 20px 14px 72px!important;font:400 15px/1.35 $_inter!important;}
+#kisd-th .kisd-rcp>summary{display:flex!important;align-items:center!important;list-style:none!important;color:${c.secondary}!important;white-space:nowrap!important;overflow:hidden!important;cursor:pointer!important;outline:none!important;}
+#kisd-th .kisd-rcp[open]>summary{display:none!important;}
+#kisd-th .kisd-lbl{display:inline!important;color:${c.text}!important;margin-right:4px!important;}
+#kisd-th .kisd-to{display:inline!important;overflow:hidden!important;text-overflow:ellipsis!important;}
+#kisd-th .kisd-chev{flex:none!important;display:inline-block!important;margin-left:6px!important;width:7px!important;height:7px!important;border-right:1.5px solid ${c.tertiary}!important;border-bottom:1.5px solid ${c.tertiary}!important;transform:rotate(-45deg)!important;}
+#kisd-th .kisd-more{display:block!important;font:400 14px/1.5 $_inter!important;color:${c.secondary}!important;animation:kisdIn .22s ease-out!important;}
+#kisd-th .kisd-kv{display:flex!important;gap:8px!important;padding:1px 0!important;}
+#kisd-th .kisd-k{display:block!important;flex:none!important;width:42px!important;color:${c.tertiary}!important;}
+#kisd-th .kisd-v{display:block!important;flex:1!important;min-width:0!important;color:${c.text}!important;overflow-wrap:anywhere!important;}
+#kisd-th .kisd-more a{color:${c.accent}!important;text-decoration:none!important;}
+#kisd-th .kisd-sc{padding-bottom:18px;}
+#kisd-th .kisd-note{display:block!important;padding:0 20px 18px!important;font:400 15px/1.45 $_inter!important;color:${c.secondary}!important;}
+#kisd-th .kisd-older>summary{display:block!important;list-style:none!important;margin:10px 20px!important;padding:9px 12px!important;border-radius:10px!important;background:${c.surface}!important;text-align:center!important;font:600 14px/1.3 $_inter!important;color:${c.secondary}!important;cursor:pointer!important;outline:none!important;}
+#kisd-th .kisd-older[open]>summary{display:none!important;}
+#kisd-th details.kisd-quote{display:block!important;margin:12px 0 0!important;}
+#kisd-th .kisd-quote>summary{display:inline-block!important;list-style:none!important;padding:0 10px!important;height:20px!important;border-radius:10px!important;background:${c.surface}!important;font:700 13px/20px $_inter!important;letter-spacing:1px!important;color:${c.secondary}!important;cursor:pointer!important;outline:none!important;}
+#kisd-th .kisd-quote>.kisd-qb{display:block!important;margin-top:10px!important;}
+@keyframes kisdIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:none;}}
+''';
 
 /// For tests and debugging: the parsed DOM of a built document.
 dom.Document parseMailDocument(String html) => html_parser.parse(html);

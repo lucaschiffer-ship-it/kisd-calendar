@@ -7,6 +7,7 @@ import 'package:html/parser.dart' as html_parser;
 
 import 'mail_attachments.dart';
 import 'mail_service.dart' show MailFolder;
+import 'mail_threads.dart';
 
 /// Display helpers for the mail UI — pure functions over [MimeMessage], so the
 /// list rows, the message view and compose all format a mail the same way.
@@ -540,11 +541,18 @@ class ComposeDraft {
     this.body = '',
     this.from,
     this.attachments = const [],
+    this.inReplyTo,
+    this.references = const [],
   });
 
   final String to;
   final String subject;
   final String body;
+
+  /// Set on a reply: the Message-ID it answers and the conversation's chain,
+  /// sent as `In-Reply-To` / `References` so it joins the conversation.
+  final String? inReplyTo;
+  final List<String> references;
 
   /// Files compose opens with: a forwarded mail's attachments.
   final List<MailAttachmentData> attachments;
@@ -591,6 +599,8 @@ ComposeDraft replyDraft(MimeMessage original) {
     to: replyTo?.email ?? '',
     subject: replySubject(original.decodeSubject()),
     body: quoted,
+    inReplyTo: messageIdOf(original),
+    references: replyReferences(original),
   );
 }
 
@@ -629,6 +639,8 @@ ComposeDraft draftFromMessage(MimeMessage draft) => ComposeDraft(
   subject: draft.decodeSubject() ?? '',
   body: messageBodyText(draft),
   from: draft.from?.firstOrNull?.email,
+  inReplyTo: messageIdsIn(draft.getHeaderValue('in-reply-to')).firstOrNull,
+  references: messageIdsIn(draft.getHeaderValue('references')),
 );
 
 // ── Sizes ─────────────────────────────────────────────────────────────────────

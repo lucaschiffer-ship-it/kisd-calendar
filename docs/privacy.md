@@ -52,7 +52,7 @@ This is the same storage mechanism Apple Passwords uses. Signing out wipes all o
 |---|---|---|
 | `login.th-koeln.de`, `mfa.th-koeln.de` | HTTPS (SAML) | Credentials — into the official login form only |
 | `spaces.kisd.de` | HTTPS | Session cookies |
-| `imap.intranet.fh-koeln.de:993` | IMAP over TLS | Credentials, mail. After an inbox fetch, a second short read-only session (EXAMINE + `BODY.PEEK[]`) logs in with the same stored credentials to download the newest mails for offline reading (added 12 October 2026) |
+| `imap.intranet.fh-koeln.de:993` | IMAP over TLS | Credentials, mail. After an inbox fetch, a second short read-only session (EXAMINE + `BODY.PEEK[]`) logs in with the same stored credentials to download the newest mails for offline reading (added 12 October 2026). Opening a mail runs another read-only session (EXAMINE + `UID SEARCH` + `BODY.PEEK`, same credentials) that finds the other mails of its conversation in Inbox and Sent; the result is kept in memory only, never written to disk (added 13 October 2026) |
 | `smtp.intranet.fh-koeln.de:587` | SMTP + STARTTLS | Credentials, mail (TLS established **before** auth). Since 13 October 2026 also a size-limit probe (connect, EHLO, STARTTLS, QUIT — no credentials, nothing sent) the first time an attachment is added |
 | `openmensa.org` | HTTPS | Canteen number + date — nothing personal |
 

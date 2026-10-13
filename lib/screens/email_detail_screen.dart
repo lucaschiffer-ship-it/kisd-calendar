@@ -14,7 +14,8 @@ import '../services/compose_attachments.dart';
 import '../services/mail_actions.dart';
 import '../services/mail_display.dart';
 import '../services/mail_html.dart';
-import '../services/mail_service.dart' show MailFolder;
+import '../services/mail_service.dart' show MailFolder, ThreadMessage;
+import '../services/mail_threads.dart' show hasForwardPrefix;
 import '../services/service_locator.dart';
 import '../services/spaces_browser.dart';
 import '../services/theme_service.dart';
@@ -27,6 +28,11 @@ import '../widgets/page_floating_actions.dart';
 /// so the header scrolls away *with* the mail; it shows sender, time and the
 /// first recipient, and expands to the full details when tapped. Back and the
 /// actions float at the bottom in the app's glass pills.
+///
+/// When the mail is part of a conversation, the page shows the whole
+/// conversation instead: its mails oldest first as cards, the opened one
+/// unfolded, each reply's quoted history behind a "•••" toggle. Back and the
+/// actions still act on the opened mail.
 ///
 /// Lives on the mail route layer (see `MailRouteLayer`), below the Spaces
 /// browser sheet — so a link opens the browser over this screen, and closing
@@ -62,17 +68,26 @@ class EmailDetailScreen extends StatefulWidget {
 }
 
 class _EmailDetailScreenState extends State<EmailDetailScreen> {
+  /// How long opening waits for the conversation lookup before showing the
+  /// mail on its own. A slower lookup still finishes and is remembered, so
+  /// the next open shows the conversation at once.
+  static const _threadWait = Duration(seconds: 3);
+
   MimeMessage? _full;
+
+  /// The conversation on screen, oldest first — null when the mail is shown
+  /// on its own.
+  List<ThreadMessage>? _thread;
   String? _document;
   bool _loadFailed = false;
   bool _routeSettled = false;
   bool _webVisible = false;
   bool _started = false;
 
-  // The mail's attachments on disk for Quick Look, one per tile (null where a
-  // part couldn't be decoded) — written on the first tap, deleted on close.
-  Future<List<String?>>? _attachmentFiles;
-  Directory? _attachmentDir;
+  // Each mail's attachments on disk for Quick Look, one per tile (null where
+  // a part couldn't be decoded) — written on the first tap, deleted on close.
+  final _attachmentFiles = <MimeMessage, Future<List<String?>>>{};
+  final _attachmentDirs = <Directory>[];
 
   static final _fontBytes = <String, Uint8List>{};
 
@@ -101,7 +116,9 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
 
   @override
   void dispose() {
-    _attachmentDir?.delete(recursive: true).ignore();
+    for (final dir in _attachmentDirs) {
+      dir.delete(recursive: true).ignore();
+    }
     super.dispose();
   }
 
@@ -111,13 +128,30 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
         ? await mailService.fetchFullMessage(uid, folder: widget.folder)
         : widget.message;
     if (!mounted) return;
-    final spec = _spec(full ?? widget.message, loaded: full != null);
+    // Offline the lookup could only fail — after waiting out a connect — so
+    // a mail from the offline copy opens at once, as before.
+    final found =
+        full != null &&
+            widget.folder != MailFolder.drafts &&
+            mailService.isConnected
+        ? await mailService
+              .fetchThread(full, widget.folder)
+              .timeout(_threadWait, onTimeout: () => null)
+        : null;
+    if (!mounted) return;
+    final thread = found != null && found.length > 1 ? found : null;
     // Off the UI thread: parsing a big newsletter would drop frames. A
     // top-level function and plain data, so nothing else is copied across.
-    final document = await compute(buildMailDocument, spec);
+    final document = thread != null
+        ? await compute(buildThreadDocument, _threadSpec(thread, full!))
+        : await compute(
+            buildMailDocument,
+            _spec(full ?? widget.message, loaded: full != null),
+          );
     if (!mounted) return;
     setState(() {
       _full = full;
+      _thread = thread;
       _loadFailed = full == null;
       _document = document;
     });
@@ -140,8 +174,97 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
   Color get _readingBackground =>
       _dark ? AppColorScheme.current.background : Colors.white;
 
-  MailDocumentSpec _spec(MimeMessage msg, {required bool loaded}) {
+  MailHtmlColors _htmlColors() {
     final s = AppColorScheme.current;
+    final dark = _dark;
+    return MailHtmlColors(
+      dark: dark,
+      background: _css(_readingBackground),
+      text: _css(s.textPrimary),
+      secondary: _css(s.textSecondary),
+      tertiary: _css(s.textTertiary),
+      divider: dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)',
+      accent: _css(s.accent),
+      surface: dark ? _css(s.surface) : '#F2F2F2',
+    );
+  }
+
+  ThreadDocumentSpec _threadSpec(
+    List<ThreadMessage> thread,
+    MimeMessage opened,
+  ) {
+    final view = View.of(context);
+    final statusH = view.viewPadding.top / view.devicePixelRatio;
+    // A mail left on the server is envelope-only: its subject and date are
+    // in the envelope, not in headers.
+    final first = thread.first.message;
+    final subject = first.envelope?.subject?.trim();
+    return ThreadDocumentSpec(
+      colors: _htmlColors(),
+      subject: subject == null || subject.isEmpty ? subjectOf(first) : subject,
+      // The opened mail and the newest are unfolded.
+      entries: [
+        for (final t in thread)
+          _entrySpec(
+            t,
+            open: identical(t.message, opened) || identical(t, thread.last),
+          ),
+      ],
+      viewportWidth: MediaQuery.sizeOf(context).width,
+      topPadding: statusH + 6,
+      bottomPadding: bottomClusterHeight(context) + 36,
+    );
+  }
+
+  ThreadEntrySpec _entrySpec(ThreadMessage t, {required bool open}) {
+    final msg = t.message;
+    final name = senderName(msg);
+    final avatar = MailAvatarColors.of(name, dark: _dark);
+    final date = (msg.envelope?.date ?? msg.decodeDate())?.toLocal();
+    final to = (msg.to ?? const <MailAddress>[]).map(addressLabel).toList();
+    final cc = (msg.cc ?? const <MailAddress>[]).map(addressLabel).toList();
+
+    String? html;
+    String? plain;
+    if (t.downloaded) {
+      try {
+        html = msg.decodeTextHtmlPart();
+      } catch (_) {}
+      if (html == null || html.trim().isEmpty) {
+        html = null;
+        plain = messageBodyText(msg);
+      }
+    }
+    final size = msg.size;
+
+    return ThreadEntrySpec(
+      senderName: name,
+      senderEmail: senderEmail(msg),
+      avatarInitial: avatarInitial(name),
+      avatarTint: _css(avatar.background),
+      avatarText: _css(avatar.foreground),
+      time: listDateLabel(date),
+      toSummary: to.isEmpty
+          ? 'Undisclosed recipients'
+          : (to.length == 1 ? to.first : '${to.first}, +${to.length - 1}'),
+      to: to,
+      cc: cc,
+      fullDate: date == null ? null : fullDateLabel(date),
+      html: html,
+      plain: plain,
+      attachments: t.downloaded ? _attachments(msg) : const [],
+      open: open,
+      foldQuotes: !hasForwardPrefix(msg.decodeSubject()),
+      unavailable: t.downloaded
+          ? null
+          : size != null
+          ? "This message wasn't downloaded here "
+                '(${byteSizeLabel(size)}). Open it from the list.'
+          : "This message couldn't be downloaded.",
+    );
+  }
+
+  MailDocumentSpec _spec(MimeMessage msg, {required bool loaded}) {
     final dark = _dark;
     final view = View.of(context);
     final statusH = view.viewPadding.top / view.devicePixelRatio;
@@ -167,16 +290,7 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
     }
 
     return MailDocumentSpec(
-      colors: MailHtmlColors(
-        dark: dark,
-        background: _css(_readingBackground),
-        text: _css(s.textPrimary),
-        secondary: _css(s.textSecondary),
-        tertiary: _css(s.textTertiary),
-        divider: dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)',
-        accent: _css(s.accent),
-        surface: dark ? _css(s.surface) : '#F2F2F2',
-      ),
+      colors: _htmlColors(),
       senderName: name,
       senderEmail: senderEmail(msg),
       avatarInitial: avatarInitial(name),
@@ -258,15 +372,20 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
 
   MimePart? _partWithContentId(String cid) {
     final want = cid.trim().replaceAll(RegExp(r'^<|>$'), '').toLowerCase();
-    final message = _full;
-    if (message == null) return null;
-    for (final part in message.allPartsFlat) {
-      final id = part
-          .getHeaderValue('content-id')
-          ?.trim()
-          .replaceAll(RegExp(r'^<|>$'), '')
-          .toLowerCase();
-      if (id == want) return part;
+    // In a conversation, any of its mails — Content-IDs are unique.
+    final messages = [
+      ...?_thread?.where((t) => t.downloaded).map((t) => t.message),
+      if (_thread == null) ?_full,
+    ];
+    for (final message in messages) {
+      for (final part in message.allPartsFlat) {
+        final id = part
+            .getHeaderValue('content-id')
+            ?.trim()
+            .replaceAll(RegExp(r'^<|>$'), '')
+            .toLowerCase();
+        if (id == want) return part;
+      }
     }
     return null;
   }
@@ -281,11 +400,19 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
 
     // An attachment tile.
     final attachment = attachmentIndexOf(url);
-    if (attachment != null) {
-      if (action.isForMainFrame &&
+    final inThread = threadAttachmentOf(url);
+    if (attachment != null || inThread != null) {
+      final thread = _thread;
+      final message = inThread == null
+          ? _full
+          : (thread != null && inThread.entry < thread.length
+                ? thread[inThread.entry].message
+                : null);
+      if (message != null &&
+          action.isForMainFrame &&
           action.navigationType == NavigationType.LINK_ACTIVATED) {
         HapticFeedback.selectionClick();
-        _openAttachment(attachment);
+        _openAttachment(message, inThread?.index ?? attachment!);
       }
       return NavigationActionPolicy.CANCEL;
     }
@@ -321,13 +448,12 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
 
   // ── Attachments ───────────────────────────────────────────────────────────
 
-  /// Quick Look over all the mail's attachments, opened at tile [index], so
-  /// the others are a swipe away.
-  Future<void> _openAttachment(int index) async {
-    final message = _full;
-    if (message == null) return;
+  /// Quick Look over all of [message]'s attachments, opened at tile [index],
+  /// so the others are a swipe away.
+  Future<void> _openAttachment(MimeMessage message, int index) async {
     try {
-      final files = await (_attachmentFiles ??= _writeAttachments(message));
+      final files = await (_attachmentFiles[message] ??=
+          _writeAttachments(message));
       final path = index < files.length ? files[index] : null;
       if (path == null || !mounted) return;
       final paths = files.nonNulls.toList();
@@ -342,7 +468,7 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
     final dir = Directory(
       '${base.path}/mail_attachments/${DateTime.now().microsecondsSinceEpoch}',
     );
-    _attachmentDir = dir;
+    _attachmentDirs.add(dir);
     final files = <String?>[];
     final infos =
         message.findContentInfo(disposition: ContentDisposition.attachment);

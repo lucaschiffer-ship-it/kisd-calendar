@@ -265,7 +265,9 @@ UI keeps its own optimistic state on top.
   via `lib/services/compose_attachments.dart`): `sendEmail`/`saveDraft` take
   `attachments`, and **an empty list must keep running the old
   `buildSimpleTextMessage` path untouched**. Every attachment step sits behind
-  `attachments.isNotEmpty`. Gotchas:
+  `attachments.isNotEmpty`. The one approved exception (13 Oct 2026): a reply's
+  `In-Reply-To`/`References` are set on the built message on both paths
+  (`applyReplyHeaders`, see Conversations). Gotchas:
   - Set the root to multipart/mixed explicitly and add the text with `addTextPlain`.
     `..text` + quoted-printable on the builder writes a QP `Content-Transfer-Encoding`
     onto the multipart root.
@@ -286,6 +288,39 @@ UI keeps its own optimistic state on top.
     reopened drafts (`fromData`) are deliberately never stripped. `CGImageDestinationCopyImageSource` with only `ShouldExcludeGPS` silently
     drops **all** metadata incl. orientation; it needs a `kCGImageDestinationMetadata`
     entry. PNG ignores those options and is re-encoded instead.
+- **Conversations** (`lib/services/mail_threads.dart`, pinned by
+  `test/mail_threads_test.dart`; page in `mail_html.dart` `buildThreadDocument`,
+  pinned by `test/mail_html_test.dart`): opening a mail looks up its
+  conversation (`MailService.fetchThread`) and, with 2+ mails, shows them as
+  `<details>` cards oldest first, the opened and the newest unfolded. The list
+  stays one row per mail; Back and the bottom actions act on the opened mail.
+  - The lookup runs on **its own client, folders EXAMINE'd, bodies via
+    `BODY.PEEK[]`** (same reasons as the offline copy), one at a time, wrapped
+    in a whole-call 25 s `.timeout()`; the client is replaced after 4 min idle.
+    It searches Inbox and Sent with one `UID SEARCH` of ORed `HEADER
+    Message-ID/References/In-Reply-To` and an ASCII-only `SUBJECT` term (no
+    CHARSET literal); if the server refuses HEADER search it retries subject
+    only. `conversationOf` decides: header links first, then same subject +
+    a reply prefix + the same people — never older than the conversation's
+    start (the latest mail that answers nothing). The start can join late, so
+    it gathers twice: once to find the start, once with it as the cutoff.
+  - The message view waits **3 s** (`_threadWait`) and otherwise shows the mail
+    alone — and doesn't look up at all while `mailService.isConnected` is false,
+    so offline opens stay instant; the lookup still finishes into an in-memory cache (8 entries,
+    cleared by `fetchInbox`, a Sent copy landing and the account switch).
+  - Offline bodies are only reused while the lookup's inbox UIDVALIDITY equals
+    the list's, and only when the Message-IDs match.
+  - Each mail's CSS is confined to `#kisd-b<i>` (`scopeMailCss`); external
+    stylesheets are dropped. Attachment links are `attachment/<mail>/<i>`
+    (`threadAttachmentOf`).
+  - Quoted history folds behind "•••": Outlook's `divRplyFwdMsg`/`appendonsend`
+    / Von-Gesendet block (everything after it), `gmail_quote`,
+    `blockquote[type=cite]`, `moz-cite-prefix` (only when nothing is written
+    below), and `splitQuotedPlain` for plain text. Forwards never fold.
+  - Envelope-only entries (a body > 3 MB, or past 8 MB for the whole lookup,
+    newest first, stays on the server): read date and
+    subject from `envelope` — the `HEADER.FIELDS (REFERENCES)` fetch replaces
+    the headers the envelope parse added.
 - **Stale IMAP connection:** the server drops an idle connection, and `_isConnected`
   doesn't notice. `_ensureConnected` therefore also checks enough_mail's own
   `_imap.isConnected`. `_appendToSent` has a size-scaled timeout that resets the

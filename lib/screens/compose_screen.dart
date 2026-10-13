@@ -69,6 +69,9 @@ class _ComposeScreenState extends State<ComposeScreen> {
   final _bodyFocus = FocusNode();
 
   late String _initialBody = widget.draft.body;
+  // A reply's ties to the mail it answers; a reopened draft reads its own.
+  late String? _inReplyTo = widget.draft.inReplyTo;
+  late List<String> _references = widget.draft.references;
   bool _sending = false;
   bool _saving = false;
   String? _error;
@@ -197,6 +200,10 @@ class _ComposeScreenState extends State<ComposeScreen> {
       }
       if (_fromCtrl.text.isEmpty && loaded.from != null) {
         _fromCtrl.text = loaded.from!;
+      }
+      if (_inReplyTo == null) {
+        _inReplyTo = loaded.inReplyTo;
+        _references = loaded.references;
       }
       await _restoreAttachments(attachmentsOf(full));
     } catch (_) {
@@ -382,6 +389,8 @@ class _ComposeScreenState extends State<ComposeScreen> {
         _bodyCtrl.text,
         from: from,
         attachments: files,
+        inReplyTo: _inReplyTo,
+        references: _references,
       );
       final replacing = widget.replacing;
       if (replacing != null && !_draftLoadFailed) {
@@ -587,6 +596,8 @@ class _ComposeScreenState extends State<ComposeScreen> {
           subject: _subjectCtrl.text.trim(),
           body: _bodyCtrl.text,
           attachments: files,
+          inReplyTo: _inReplyTo,
+          references: _references,
         );
         if (!mounted) return;
         if (!ok) {

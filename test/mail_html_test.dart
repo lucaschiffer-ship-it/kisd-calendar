@@ -230,4 +230,298 @@ void main() {
     );
     expect(attachmentIndexOf(Uri.parse('https://x.de/attachment/1')), isNull);
   });
+
+  group('splitQuotedPlain', () {
+    test('a reply from this app folds below its attribution', () {
+      final split = splitQuotedPlain(
+        'Thanks, see you then!\n\n'
+        'On 12 Oct 2026 at 10:00, Anna <anna@th-koeln.de> wrote:\n\n'
+        '> Shall we meet at 3?\n>\n> Anna',
+      );
+      expect(split?.head, 'Thanks, see you then!');
+      expect(split?.quote, startsWith('On 12 Oct 2026'));
+      expect(split?.quote, endsWith('> Anna'));
+    });
+
+    test('a wrapped German attribution comes along', () {
+      final split = splitQuotedPlain(
+        'Passt.\n\nAm 12.10.2026 um 10:00 schrieb Anna Müller <\n'
+        'anna@th-koeln.de>:\n> Treffen um 3?',
+      );
+      expect(split?.head, 'Passt.');
+      expect(split?.quote, startsWith('Am 12.10.2026'));
+    });
+
+    test('Outlook history folds from its separator down', () {
+      expect(
+        splitQuotedPlain(
+          'Danke!\n\n-----Ursprüngliche Nachricht-----\nVon: Anna\n'
+          'Gesendet: Montag\nBetreff: Frage\n\nHallo',
+        )?.head,
+        'Danke!',
+      );
+      expect(
+        splitQuotedPlain(
+          'Danke!\n________________________________\nVon: Anna\n'
+          'Gesendet: Montag, 12. Oktober 2026 10:00\nAn: Luca\n\nHallo',
+        )?.head,
+        'Danke!',
+      );
+      expect(
+        splitQuotedPlain(
+          'Thanks\n\nFrom: Anna <a@b>\nSent: Monday\nTo: Luca\n\nHi',
+        )?.head,
+        'Thanks',
+      );
+    });
+
+    test('an inline answer and a bare quote are left whole', () {
+      expect(splitQuotedPlain('> Question?\nAnswer.\n> Other?\nYes.'), isNull);
+      expect(splitQuotedPlain('> only quoted text'), isNull);
+      expect(splitQuotedPlain('No quote at all.'), isNull);
+    });
+  });
+
+  test('a mail\'s CSS is confined to its own wrapper', () {
+    expect(
+      scopeMailCss(
+        '/* x{} */ <!-- body{a:b} p,.c:is(a, b){c:d} :root{e:f} '
+            '@media (max-width:600px){td{g:h}} '
+            '@keyframes k{from{o:0}50%{o:1}to{o:1}} -->',
+        '#kisd-b2',
+      ),
+      '#kisd-b2{a:b}#kisd-b2 p,#kisd-b2 .c:is(a, b){c:d}#kisd-b2{e:f} '
+      '@media (max-width:600px){#kisd-b2 td{g:h}} '
+      '@keyframes k{from{o:0}50%{o:1}to{o:1}} ',
+    );
+  });
+
+  group('buildThreadDocument', () {
+    ThreadEntrySpec entry(
+      String name, {
+      String? html,
+      String? plain,
+      bool open = false,
+      bool foldQuotes = true,
+      List<MailAttachmentTile> attachments = const [],
+      String? unavailable,
+    }) => ThreadEntrySpec(
+      senderName: name,
+      senderEmail: '${name.toLowerCase()}@th-koeln.de',
+      avatarInitial: name[0],
+      avatarTint: '#333333',
+      avatarText: '#FFFFFF',
+      time: '12 Oct',
+      toSummary: 'Luca',
+      to: const ['Luca'],
+      cc: const [],
+      fullDate: 'Monday, 12 October 2026 at 10:00',
+      html: html,
+      plain: plain,
+      attachments: attachments,
+      open: open,
+      foldQuotes: foldQuotes,
+      unavailable: unavailable,
+    );
+
+    ThreadDocumentSpec thread(List<ThreadEntrySpec> entries) =>
+        ThreadDocumentSpec(
+          colors: _darkColors,
+          subject: 'Projektwoche <&>',
+          entries: entries,
+          viewportWidth: 402,
+          topPadding: 62,
+          bottomPadding: 120,
+        );
+
+    test('cards in order, only the opened one unfolded, previews', () {
+      final dom = parseMailDocument(
+        buildThreadDocument(
+          thread([
+            entry('Anna', plain: 'Shall we meet at 3?'),
+            entry('Luca', plain: 'Sure.\n\nOn Mon, Anna wrote:\n> Shall we'),
+            entry('Anna', html: '<p>Great, see you!</p>', open: true),
+          ]),
+        ),
+      );
+      expect(dom.querySelector('.kisd-subj')?.text, 'Projektwoche <&>');
+      final cards = dom.querySelectorAll('details.kisd-m');
+      expect(cards.map((c) => c.attributes.containsKey('open')), [
+        false,
+        false,
+        true,
+      ]);
+      expect(cards.map((c) => c.querySelector('.kisd-name')?.text), [
+        'Anna',
+        'Luca',
+        'Anna',
+      ]);
+      // The preview is the new text only, without the quoted history.
+      expect(cards[1].querySelector('.kisd-pv')?.text, 'Sure.');
+      expect(cards[2].querySelector('.kisd-pv')?.text, 'Great, see you!');
+      expect(dom.querySelector('#kisd-b2')?.text, contains('Great, see you!'));
+    });
+
+    test('Gmail and Outlook history fold behind a toggle', () {
+      final dom = parseMailDocument(
+        buildThreadDocument(
+          thread([
+            entry(
+              'Anna',
+              html:
+                  '<div dir="ltr">Yes!</div><div class="gmail_quote">'
+                  '<div class="gmail_attr">On Mon, Luca wrote:</div>'
+                  '<blockquote class="gmail_quote">Meet?</blockquote></div>',
+            ),
+            entry(
+              'Bob',
+              open: true,
+              html:
+                  '<div>Passt.</div><div id="appendonsend"></div>'
+                  '<hr tabindex="-1"><div id="divRplyFwdMsg"><b>Von:</b> Anna'
+                  '</div><div>Yes!</div>',
+            ),
+          ]),
+        ),
+      );
+      final gmail = dom.querySelector('#kisd-b0')!;
+      expect(gmail.querySelector('details.kisd-quote .gmail_quote'), isNotNull);
+      expect(gmail.querySelector('details.kisd-quote')?.parent, gmail);
+      final outlook = dom.querySelector('#kisd-b1')!;
+      final fold = outlook.querySelector('details.kisd-quote .kisd-qb')!;
+      expect(fold.querySelector('hr'), isNotNull);
+      expect(fold.querySelector('#divRplyFwdMsg'), isNotNull);
+      expect(fold.text, contains('Yes!'));
+      expect(outlook.text, startsWith('Passt.'));
+    });
+
+    test('Outlook desktop history folds out of its Word wrapper', () {
+      final dom = parseMailDocument(
+        buildThreadDocument(
+          thread([
+            entry(
+              'Anna',
+              open: true,
+              html:
+                  '<div class="WordSection1">'
+                  '<p class="MsoNormal">Danke, passt so.</p>'
+                  '<p class="MsoNormal">&nbsp;</p>'
+                  '<div><div style="border:none;border-top:solid #E1E1E1 '
+                  '1.0pt;padding:3.0pt 0cm 0cm 0cm"><p class="MsoNormal">'
+                  '<b>Von:</b> Luca<br><b>Gesendet:</b> Montag, 12. Oktober '
+                  '2026 10:00<br><b>Betreff:</b> Frage</p></div></div>'
+                  '<p class="MsoNormal">&nbsp;</p>'
+                  '<p class="MsoNormal">Hallo Anna, kurze Frage …</p></div>',
+            ),
+            entry('Bob', plain: 'x'),
+          ]),
+        ),
+      );
+      final body = dom.querySelector('#kisd-b0')!;
+      final fold = body.querySelector('details.kisd-quote .kisd-qb')!;
+      expect(fold.text, contains('Gesendet:'));
+      expect(fold.text, contains('Hallo Anna'));
+      // What stays above the fold is the new text, without the blank
+      // paragraph Outlook leaves before its history.
+      final head = body.text.substring(0, body.text.indexOf('•••'));
+      expect(head.replaceAll('\u00a0', ' ').trim(), 'Danke, passt so.');
+      expect(
+        dom
+            .querySelectorAll('details.kisd-m')[0]
+            .querySelector('.kisd-pv')
+            ?.text,
+        'Danke, passt so.',
+      );
+    });
+
+    test('a quote answered below it, and forwards, stay unfolded', () {
+      final dom = parseMailDocument(
+        buildThreadDocument(
+          thread([
+            entry(
+              'Anna',
+              html:
+                  '<blockquote type="cite">Meet at 3?</blockquote>'
+                  '<div>Yes, at 3.</div>',
+            ),
+            entry(
+              'Bob',
+              open: true,
+              foldQuotes: false,
+              plain: 'FYI\n\n-----Original Message-----\nFrom: Carl\n\nhi',
+            ),
+          ]),
+        ),
+      );
+      expect(dom.querySelectorAll('details.kisd-quote'), isEmpty);
+    });
+
+    test('each mail keeps its CSS and its attachments to itself', () {
+      final dom = parseMailDocument(
+        buildThreadDocument(
+          thread([
+            entry('Anna', html: '<style>p{color:red}</style><p>x</p>'),
+            entry(
+              'Bob',
+              open: true,
+              plain: 'y',
+              attachments: const [MailAttachmentTile(name: 'a.pdf', size: '')],
+            ),
+          ]),
+        ),
+      );
+      final styles = dom.querySelectorAll('style').map((s) => s.text).join();
+      expect(styles, contains('#kisd-b0 p{color:red}'));
+      expect(styles, isNot(contains(RegExp(r'(^|\})\s*p\{color:red'))));
+      final link = dom.querySelector('#kisd-th .kisd-att a.t')!;
+      final target = threadAttachmentOf(Uri.parse(link.attributes['href']!));
+      expect(target?.entry, 1);
+      expect(target?.index, 0);
+    });
+
+    test('a long run of folded cards collapses its middle', () {
+      final dom = parseMailDocument(
+        buildThreadDocument(
+          thread([
+            for (var i = 0; i < 5; i++) entry('M$i', plain: 'm$i'),
+            entry('Last', plain: 'last', open: true),
+          ]),
+        ),
+      );
+      final older = dom.querySelector('details.kisd-older')!;
+      expect(older.querySelector('summary')?.text, '3 more messages');
+      expect(
+        older.querySelectorAll('details.kisd-m .kisd-name').map((e) => e.text),
+        ['M1', 'M2', 'M3'],
+      );
+      expect(dom.querySelectorAll('details.kisd-m'), hasLength(6));
+    });
+
+    test('a mail too large to download shows a note instead', () {
+      final dom = parseMailDocument(
+        buildThreadDocument(
+          thread([
+            entry('Anna', unavailable: 'Too large (12 MB).'),
+            entry('Bob', plain: 'x', open: true),
+          ]),
+        ),
+      );
+      expect(dom.querySelector('.kisd-note')?.text, 'Too large (12 MB).');
+    });
+  });
+
+  test('threadAttachmentOf reads conversation attachment links only', () {
+    expect(threadAttachmentOf(Uri.parse('kisd-mail://local/attachment/2/1')), (
+      entry: 2,
+      index: 1,
+    ));
+    expect(
+      threadAttachmentOf(Uri.parse('kisd-mail://local/attachment/2')),
+      isNull,
+    );
+    expect(
+      attachmentIndexOf(Uri.parse('kisd-mail://local/attachment/2/1')),
+      isNull,
+    );
+  });
 }

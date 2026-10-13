@@ -145,6 +145,25 @@ void main() {
       expect(d.body.startsWith('\n\n'), isTrue);
     });
 
+    test('a reply names the mail it answers; a forward does not', () {
+      final o = original()
+        ..setHeader('Message-ID', '<2@x>')
+        ..setHeader('References', '<1@x>');
+      final d = replyDraft(o);
+      expect(d.inReplyTo, '<2@x>');
+      expect(d.references, ['<1@x>', '<2@x>']);
+      expect(forwardDraft(o).inReplyTo, isNull);
+    });
+
+    test('a reopened draft keeps its reply headers', () {
+      final draft = original()
+        ..setHeader('In-Reply-To', '<2@x>')
+        ..setHeader('References', '<1@x> <2@x>');
+      final d = draftFromMessage(draft);
+      expect(d.inReplyTo, '<2@x>');
+      expect(d.references, ['<1@x>', '<2@x>']);
+    });
+
     test('forward leaves To empty and carries the original', () {
       final d = forwardDraft(original());
       expect(d.to, '');

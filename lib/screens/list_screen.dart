@@ -386,10 +386,14 @@ class _ListScreenState extends State<ListScreen>
   }
 
   Future<void> _maybeScrapeEvents() async {
-    final last = await CacheService().getKisdEventsLastScrape();
+    final cache = CacheService();
+    final last = await cache.getKisdEventsLastScrape();
+    // An empty list is never fresh: a scrape broken by changed Spaces markup
+    // once saved one, and the calendar stayed empty until the next day.
     final stale =
         last == null ||
-        DateTime.now().difference(last) > const Duration(hours: 24);
+        DateTime.now().difference(last) > const Duration(hours: 24) ||
+        (await cache.loadKisdEvents()).isEmpty;
     if (stale) _scrapeEventsBackground();
   }
 

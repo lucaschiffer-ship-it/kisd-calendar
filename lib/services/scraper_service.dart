@@ -109,7 +109,7 @@ class ScraperService extends ChangeNotifier {
             const tbodyInfos = Array.from(document.querySelectorAll('tbody'))
               .map((tb, i) => ({ i, directTrCount: tb.querySelectorAll(':scope > tr').length }));
 
-            const dataRow = document.querySelector('tr:has(td[data-colname="Event"])');
+            const dataRow = document.querySelector('tr:has([data-colname="Event"])');
             const dataRowHtml = dataRow ? dataRow.outerHTML.substring(0, 2000) : null;
 
             const tdEventCount   = document.querySelectorAll('td[data-colname="Event"]').length;
@@ -163,7 +163,7 @@ class ScraperService extends ChangeNotifier {
             if (r['dataRowHtml'] != null) {
               print('[evt-recon] FOUND data row outerHTML=${r['dataRowHtml']}');
             } else {
-              print('[evt-recon] NO row with td[data-colname="Event"] exists');
+              print('[evt-recon] NO row with [data-colname="Event"] exists');
             }
             print(
               '[evt-recon] td[data-colname="Event"] count=${r['tdEventCount']}',
@@ -229,6 +229,16 @@ class ScraperService extends ChangeNotifier {
           print(
             '[evt-scrape] total=${events.length} rows=${list.length} recurring=$recurring',
           );
+          // KISD always has events in the window, so none means the page
+          // changed under the parser (or wasn't the list at all). Fail and
+          // keep the last good list: saving the empty one wiped the iOS
+          // "KISD Events" calendar and set the 24 h stamp.
+          if (events.isEmpty) {
+            throw Exception(
+              '[events] parsed no events from ${list.length} rows — '
+              'the page markup changed',
+            );
+          }
           if (events.isNotEmpty) {
             final sorted = [...events]
               ..sort((a, b) => a.start.compareTo(b.start));
@@ -1080,14 +1090,25 @@ class ScraperService extends ChangeNotifier {
       return 'h' + Math.abs(h).toString();
     }
 
-    // Selector identical to the recon probe that returned 377 rows.
+    // An empty cell reads "—" plus a screen-reader-only label ("No Venue",
+    // "No categories"), which innerText includes; read it without the label.
+    function visibleText(cell) {
+      if (!cell) return '';
+      const clone = cell.cloneNode(true);
+      clone.querySelectorAll('.screen-reader-text').forEach(n => n.remove());
+      return clone.textContent.trim().replace(/\s+/g, ' ');
+    }
+
+    // The title cell is the row's primary column: WordPress renders it as a
+    // `<th scope="row">` now (it was a `<td>`), so match the attribute alone.
+    // Header cells carry no data-colname, so this still only hits data rows.
     const rows = Array.from(document.querySelectorAll('tr'))
-      .filter(row => row.querySelector('td[data-colname="Event"]'));
+      .filter(row => row.querySelector('[data-colname="Event"]'));
 
     const results = [];
 
     for (const row of rows) {
-      const titleCell = row.querySelector('td[data-colname="Event"]');
+      const titleCell = row.querySelector('[data-colname="Event"]');
 
       // Skip drafts (post-state span is present for non-published rows).
       if (titleCell.querySelector('.post-state')) continue;
@@ -1102,14 +1123,14 @@ class ScraperService extends ChangeNotifier {
       // ID: row.id is "post-NNNN" in WP admin.
       let id = row.id;
       if (!id) {
-        const lnk = row.querySelector('a.row-title, td[data-colname="Event"] a');
+        const lnk = row.querySelector('a.row-title, [data-colname="Event"] a');
         const href = lnk ? lnk.getAttribute('href') : '';
         const m = href ? href.match(/[?&]post=(\d+)/) : null;
         id = m ? ('post-' + m[1]) : ('post-' + simpleHash(title));
       }
 
       // URL: use .href property for the full absolute URL.
-      const linkEl = row.querySelector('a.row-title, td[data-colname="Event"] a');
+      const linkEl = row.querySelector('a.row-title, [data-colname="Event"] a');
       const url = linkEl ? linkEl.href : null;
 
       // Dates: innerText converts <br> to \n, giving "Jun, 10 2026\n22:30".
@@ -1122,16 +1143,16 @@ class ScraperService extends ChangeNotifier {
 
       // Venue / Organiser: "—" means empty.
       const venueCell = row.querySelector('td[data-colname="Venue"]');
-      const venueText = venueCell ? venueCell.innerText.trim() : '';
+      const venueText = visibleText(venueCell);
       const venue = (venueText === '—' || !venueText) ? null : venueText;
 
       const orgCell = row.querySelector('td[data-colname="Organiser"]');
-      const orgText = orgCell ? orgCell.innerText.trim() : '';
+      const orgText = visibleText(orgCell);
       const organiser = (orgText === '—' || !orgText) ? null : orgText;
 
       // Categories: "—" means empty.
       const catCell = row.querySelector('td[data-colname="Categories"]');
-      const catText = catCell ? catCell.innerText.trim() : '';
+      const catText = visibleText(catCell);
       const categories = (catText === '—' || !catText)
         ? []
         : catText.split(',').map(s => s.trim()).filter(Boolean);

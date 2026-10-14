@@ -23,7 +23,7 @@ class EventStore {
   static const _kPrefsKey = 'kisd_app_store_v1';
   static const kEventsCollectionId = 'events';
 
-  // Palette for course collections (Events collection uses KISD orange).
+  // Palette for course collections (Custom events uses KISD orange).
   static const kisdOrangeHex = 'FFEB5A01';
   static const palette = <String>[
     'FFEB5A01', // KISD orange
@@ -136,13 +136,20 @@ class EventStore {
   }
 
   void _seedEventsCollection() {
-    if (!collections.any((c) => c.id == kEventsCollectionId)) {
+    const name = 'Custom events';
+    final existing =
+        collections.where((c) => c.id == kEventsCollectionId).firstOrNull;
+    if (existing == null) {
       collections.add(EventCollection(
         id: kEventsCollectionId,
-        name: 'Events',
+        name: name,
         kind: 'events',
         colorHex: kisdOrangeHex,
       ));
+    } else {
+      // Stored as "Events" before Oct 2026, which read like the KISD Events
+      // (university events) switch in Settings. The name isn't editable.
+      existing.name = name;
     }
   }
 

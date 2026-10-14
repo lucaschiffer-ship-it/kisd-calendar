@@ -173,6 +173,18 @@ Uses a headless `InAppWebView` + `callAsyncJavaScript` to extract course cards f
 
 Both paths fetch per-course detail pages for location and Spaces URL via a separate `fetch()` call injected into the same WebView.
 
+### KISD events (`scrapeKisdEvents` → `CalendarService.writeKisdEvents`)
+
+University events come from the Event Organiser list in wp-admin (`/home/wp-admin/edit.php?post_type=event…`), are cached (`kisd_events_v2`) and written to the iOS calendar "KISD Events", which the in-app calendar reads back. Parse helpers pinned by `test/kisd_events_test.dart`. Gotchas:
+
+- **Markup (Oct 2026):** the Event cell is a `<th data-colname="Event">` — select by attribute, never `td[...]` (that matched nothing and emptied the calendar). Empty cells hold `—` plus a `.screen-reader-text` label ("No Venue"); read them with `visibleText`. All-day events show the date with no time line → `allDay`.
+- The list is paged; the scrape follows `a.next-page` (401 events at 400 per page dropped one).
+- **Zero events is a failure, never a result:** it throws, so nothing is saved — an empty save wipes the calendar and sets the 24 h stamp. An empty cache counts as stale at launch.
+- `writeKisdEvents` wipes and rewrites, one write at a time (later calls queue). The wipe deletes each event id once: every occurrence of a series shares its id, and the first delete removes the series.
+- Recurring events the user switched off (Settings › Calendar › Recurring events, `kisd_events_hidden_v1`, by `post-NNNN` id) are filtered at write time. Deleting in Apple Calendar never sticks — the next refresh rewrites everything.
+- Only weekly patterns become an RRULE; "custom recurrence" / "every day" are written as their first date. If those ever matter: `admin-ajax.php?action=eventorganiser-fullcal&start=…&end=` returns every occurrence as JSON (logged-in session).
+- EventKit ends an all-day event at 23:59:59 of its last day; `getAllDayEventsForRange` takes the last day from end − 1 s.
+
 ### Cache (`CacheService`)
 
 `SharedPreferences`, key `kisd_courses`, JSON array. Bump `_currentVersion` (currently `14`) whenever the stored schema changes — the app clears and re-scrapes on version mismatch.

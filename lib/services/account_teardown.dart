@@ -24,8 +24,8 @@ import 'service_locator.dart';
 /// (and with it the iOS "KISD" calendar mirror), pending course reminders,
 /// mail state including the offline mail copy, the favourites prefetch.
 /// Kept, because they are device settings or public: theme, semester choice,
-/// reminder opt-in, KISD events, photo metadata stripping, the semester list,
-/// the offline mensa menu.
+/// reminder opt-in, KISD events (and which recurring ones are hidden), photo
+/// metadata stripping, the semester list, the offline mensa menu.
 class AccountTeardown {
   AccountTeardown._();
 

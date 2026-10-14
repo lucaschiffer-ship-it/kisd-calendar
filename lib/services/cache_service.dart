@@ -185,4 +185,19 @@ class CacheService {
     await prefs.setString(_keyEventsV2Scraped, dt.toIso8601String());
   }
 
+  // Recurring KISD events switched off under Settings › Calendar ›
+  // Recurring events, by event id ("post-NNNN", stable across scrapes).
+  // Applied when the calendar is written, so they stay off after a refresh.
+  static const _keyEventsHidden = 'kisd_events_hidden_v1';
+
+  Future<Set<String>> loadHiddenKisdEvents() async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList(_keyEventsHidden) ?? const []).toSet();
+  }
+
+  Future<void> saveHiddenKisdEvents(Set<String> ids) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_keyEventsHidden, ids.toList());
+  }
+
 }

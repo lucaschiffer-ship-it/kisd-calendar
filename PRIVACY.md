@@ -16,7 +16,7 @@ service.
 | Login/session cookies (incl. the optional "trust this device" MFA cookie) | iOS Keychain | So you don't have to enter your password and one-time code on every launch |
 | Your confirmed sender email address | iOS Keychain | So sent mail carries your real address |
 | Which Campus ID the data on the device belongs to | iOS Keychain | So signing in with a different Campus ID clears the previous account's data |
-| Course list, schedule, favourites, theme settings | Local app storage on your device | App functionality (your liked courses are kept separately, so a refresh never resets them) |
+| Course list, schedule, favourites, university events, theme and calendar settings | Local app storage on your device | App functionality (your liked courses are kept separately, so a refresh never resets them) |
 | Your mail lists — the newest 200 inbox emails and 100 each from Sent, Drafts and Trash (sender, subject, date, a short preview) — and the full text of the newest 50 inbox emails (up to 5 MB each) | The app's own storage on your device (excluded from iCloud and device backups) | So your folders open at once and recent mail can still be read offline |
 | The mensa menu for this week and the next two | Local app storage on your device | So the menu still opens offline |
 

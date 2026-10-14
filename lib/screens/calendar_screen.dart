@@ -2149,7 +2149,9 @@ class _EventListViewState extends State<_EventListView> {
                         ),
                         const SizedBox(height: 3),
                         Text(
-                          '${_fmtTime(event.start)} – ${_fmtTime(event.end)}',
+                          event.allDay
+                              ? 'All day'
+                              : '${_fmtTime(event.start)} – ${_fmtTime(event.end)}',
                           style: GoogleFonts.inter(
                             fontSize: 13,
                             color: tokens.AppThemeTokens.secondaryTextColor,

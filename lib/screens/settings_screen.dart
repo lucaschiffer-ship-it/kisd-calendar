@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../models/app_event.dart';
+import '../models/kisd_event.dart';
 import '../services/account_teardown.dart';
 import '../services/attachment_metadata.dart';
 import '../services/cache_service.dart';
@@ -343,6 +344,15 @@ class _CalendarPage extends StatelessWidget {
                     },
                     activeThumbColor: s.accent,
                   ),
+                  // Kept, but out of reach, while KISD events are off.
+                  IgnorePointer(
+                    ignoring: !show,
+                    child: AnimatedOpacity(
+                      opacity: show ? 1 : 0.4,
+                      duration: const Duration(milliseconds: 200),
+                      child: const _RecurringEventsRow(),
+                    ),
+                  ),
                 ],
               );
             },
@@ -353,6 +363,161 @@ class _CalendarPage extends StatelessWidget {
         const _Caption(
           'The iOS calendar “KISD” is a read-only copy of this app — '
           'changes made in Apple Calendar are overwritten on the next sync.',
+        ),
+        const SizedBox(height: 32),
+      ],
+    );
+  }
+}
+
+/// Drills into the recurring-event switches; shows how many are off.
+class _RecurringEventsRow extends StatefulWidget {
+  const _RecurringEventsRow();
+
+  @override
+  State<_RecurringEventsRow> createState() => _RecurringEventsRowState();
+}
+
+class _RecurringEventsRowState extends State<_RecurringEventsRow> {
+  String? _value;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final cache = CacheService();
+    final running = CalendarService.runningRecurringKisdEvents(
+      await cache.loadKisdEvents(),
+      DateTime.now(),
+    );
+    final hidden = await cache.loadHiddenKisdEvents();
+    final off = running.where((e) => hidden.contains(e.id)).length;
+    if (!mounted) return;
+    setState(() {
+      _value = running.isEmpty
+          ? 'None'
+          : off == 0
+          ? 'All shown'
+          : '$off hidden';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => _NavRow(
+    label: 'Recurring events',
+    value: _value,
+    onTap: () async {
+      await Navigator.push(
+        context,
+        CupertinoPageRoute(builder: (_) => const _RecurringEventsPage()),
+      );
+      _load();
+    },
+  );
+}
+
+/// One switch per recurring KISD event that still has dates ahead. Off
+/// leaves it out of the KISD Events calendar — so out of Apple Calendar and
+/// the app's calendar alike — until it is switched back on.
+class _RecurringEventsPage extends StatefulWidget {
+  const _RecurringEventsPage();
+
+  @override
+  State<_RecurringEventsPage> createState() => _RecurringEventsPageState();
+}
+
+class _RecurringEventsPageState extends State<_RecurringEventsPage> {
+  List<KisdEvent>? _events;
+  Set<String> _hidden = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final cache = CacheService();
+    final events = CalendarService.runningRecurringKisdEvents(
+      await cache.loadKisdEvents(),
+      DateTime.now(),
+    );
+    final hidden = await cache.loadHiddenKisdEvents();
+    if (!mounted) return;
+    setState(() {
+      _events = events;
+      _hidden = hidden;
+    });
+  }
+
+  Future<void> _set(KisdEvent event, bool show) async {
+    setState(() {
+      if (show) {
+        _hidden.remove(event.id);
+      } else {
+        _hidden.add(event.id);
+      }
+    });
+    final cache = CacheService();
+    await cache.saveHiddenKisdEvents({..._hidden});
+    if (ThemeService.instance.showKisdEvents.value) {
+      CalendarService.instance
+          .writeKisdEvents(await cache.loadKisdEvents())
+          .ignore();
+    }
+  }
+
+  // Spaces' own wording ("every week on Tuesday until Feb, 12th 2030"),
+  // with the time of day.
+  static String _pattern(KisdEvent e) {
+    final r = e.recurrence;
+    final text = r.isEmpty ? r : r[0].toUpperCase() + r.substring(1);
+    if (e.allDay) return text;
+    String hm(DateTime d) =>
+        '${d.hour.toString().padLeft(2, '0')}:'
+        '${d.minute.toString().padLeft(2, '0')}';
+    return '$text · ${hm(e.start)}–${hm(e.end)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final events = _events;
+    return _SettingsPage(
+      title: 'Recurring events',
+      builder: (context, s) => [
+        const _SectionHeader('SHOW IN CALENDAR'),
+        if (events != null && events.isEmpty)
+          const _Caption('No recurring KISD events coming up.')
+        else if (events != null)
+          _Padded(
+            _Group(
+              inset: false,
+              children: [
+                for (final e in events)
+                  SwitchListTile(
+                    title: Text(
+                      e.title,
+                      style: AppTextStyles.bodyLarge(
+                        color: s.textPrimary,
+                      ).copyWith(fontWeight: FontWeight.w500),
+                    ),
+                    subtitle: Text(
+                      _pattern(e),
+                      style: AppTextStyles.bodySmall(color: s.textSecondary),
+                    ),
+                    value: !_hidden.contains(e.id),
+                    onChanged: (v) => _set(e, v),
+                    activeThumbColor: s.accent,
+                  ),
+              ],
+            ),
+          ),
+        const _Caption(
+          'Switched-off events are left out of the calendar, here and in '
+          'Apple Calendar, and stay off after every refresh.',
         ),
         const SizedBox(height: 32),
       ],
@@ -654,13 +819,13 @@ class _Group extends StatelessWidget {
 /// A row that drills into a subpage, showing the current value on the right.
 class _NavRow extends StatelessWidget {
   const _NavRow({
-    required this.icon,
     required this.label,
     required this.onTap,
+    this.icon,
     this.value,
   });
 
-  final IconData icon;
+  final IconData? icon;
   final String label;
   final String? value;
   final VoidCallback onTap;
@@ -669,7 +834,7 @@ class _NavRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = AppColorScheme.current;
     return ListTile(
-      leading: Icon(icon, color: s.textSecondary),
+      leading: icon == null ? null : Icon(icon, color: s.textSecondary),
       title: Text(
         label,
         style: AppTextStyles.bodyLarge(

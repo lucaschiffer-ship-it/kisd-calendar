@@ -52,8 +52,8 @@ class PrivacyScreen extends StatelessWidget {
                 'iCloud sync and backups.'),
             _gap(),
             _body(s,
-                'Your course list, favourites and theme settings are kept in '
-                'local app storage. So your mail folders open at once and '
+                'Your course list, favourites, university events and your '
+                'theme and calendar settings are kept in local app storage. So your mail folders open at once and '
                 'still have something to show offline, the lists of your '
                 'newest 200 inbox emails and 100 each from Sent, Drafts and '
                 'Trash (sender, subject, date, a short preview) and the full '

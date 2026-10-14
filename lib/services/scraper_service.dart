@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
-import 'package:flutter/material.dart' show ChangeNotifier, TimeOfDay;
+import 'package:flutter/material.dart'
+    show ChangeNotifier, TimeOfDay, visibleForTesting;
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../models/course_shell.dart';
@@ -44,6 +45,10 @@ class ScraperService extends ChangeNotifier {
     final completer = Completer<List<KisdEvent>>();
     HeadlessInAppWebView? view;
     var processing = false;
+    // WordPress pages the list (at 401 events, a 400-row page dropped one),
+    // so rows gather across pages until there is no next-page link.
+    final rows = <Map<String, dynamic>>[];
+    final seenPages = <String>{};
 
     view = HeadlessInAppWebView(
       initialUrlRequest: URLRequest(url: WebUri(_kEventsUrl)),
@@ -74,11 +79,15 @@ class ScraperService extends ChangeNotifier {
         }
 
         if (!urlStr.contains('wp-admin/edit.php') ||
-            !urlStr.contains('post_type=event')) {
+            !urlStr.contains('post_type=event') ||
+            !seenPages.add(urlStr)) {
           return;
         }
 
         processing = true;
+        // Set when this page hands the view on to the next one, which then
+        // owns disposing it.
+        var handedOn = false;
         try {
           // ── Recon: dump DOM structure before attempting parse ─────────────
           final recon = await ctrl.callAsyncJavaScript(
@@ -196,15 +205,32 @@ class ScraperService extends ChangeNotifier {
           final jsonStr = raw?.value?.toString() ?? '[]';
           final list = (json.decode(jsonStr) as List<dynamic>)
               .cast<Map<String, dynamic>>();
+          rows.addAll(list);
+
+          final next = await ctrl.evaluateJavascript(
+            source: "(document.querySelector('a.next-page') || {}).href || ''",
+          );
+          if (next is String && next.isNotEmpty && seenPages.length < 10) {
+            print('[events] ${list.length} rows on this page, next: $next');
+            processing = false;
+            await ctrl.loadUrl(urlRequest: URLRequest(url: WebUri(next)));
+            handedOn = true;
+            return;
+          }
 
           final cutoff = DateTime.now().subtract(const Duration(days: 365 * 2));
           final events = <KisdEvent>[];
-          for (final m in list) {
-            final start = _parseEventDateTime((m['startRaw'] as String?) ?? '');
+          // A row can repeat across pages when an event is added between
+          // the page loads.
+          final seenIds = <String>{};
+          for (final m in rows) {
+            final startRaw = (m['startRaw'] as String?) ?? '';
+            final start = parseEventDateTime(startRaw);
             final end =
-                _parseEventDateTime((m['endRaw'] as String?) ?? '') ?? start;
+                parseEventDateTime((m['endRaw'] as String?) ?? '') ?? start;
             if (start == null) continue;
             if (end != null && end.isBefore(cutoff)) continue;
+            if (!seenIds.add((m['id'] as String?) ?? '')) continue;
             final recurrence = ((m['recurrence'] as String?) ?? 'one time only')
                 .trim();
             events.add(
@@ -213,6 +239,8 @@ class ScraperService extends ChangeNotifier {
                 title: (m['title'] as String?) ?? '',
                 start: start,
                 end: end ?? start,
+                // All-day events show the date alone, without a time line.
+                allDay: !_kClockTime.hasMatch(startRaw),
                 venue: _nullIfEmpty(m['venue'] as String?),
                 organiser: _nullIfEmpty(m['organiser'] as String?),
                 categories: (m['categories'] as List<dynamic>).cast<String>(),
@@ -226,8 +254,10 @@ class ScraperService extends ChangeNotifier {
           }
 
           final recurring = events.where((e) => e.isRecurring).length;
+          final allDay = events.where((e) => e.allDay).length;
           print(
-            '[evt-scrape] total=${events.length} rows=${list.length} recurring=$recurring',
+            '[evt-scrape] total=${events.length} rows=${rows.length} '
+            'pages=${seenPages.length} recurring=$recurring allDay=$allDay',
           );
           // KISD always has events in the window, so none means the page
           // changed under the parser (or wasn't the list at all). Fail and
@@ -235,7 +265,7 @@ class ScraperService extends ChangeNotifier {
           // "KISD Events" calendar and set the 24 h stamp.
           if (events.isEmpty) {
             throw Exception(
-              '[events] parsed no events from ${list.length} rows — '
+              '[events] parsed no events from ${rows.length} rows — '
               'the page markup changed',
             );
           }
@@ -256,8 +286,10 @@ class ScraperService extends ChangeNotifier {
         } catch (e, st) {
           if (!completer.isCompleted) completer.completeError(e, st);
         } finally {
-          view?.dispose();
-          view = null;
+          if (!handedOn) {
+            view?.dispose();
+            view = null;
+          }
         }
       },
       onReceivedError: (ctrl, req, err) {
@@ -1247,32 +1279,34 @@ class ScraperService extends ChangeNotifier {
 
   // ─── Parse "Jun, 10 2026\n22:30" (innerText of WP admin date cells) ────────
 
-  static DateTime? _parseEventDateTime(String raw) {
+  static final _kClockTime = RegExp(r'\d{1,2}:\d{2}');
+
+  /// All-day events show the date alone ("Oct, 20 2026"); they read as
+  /// midnight. Without that case the fallback took "Oct," for a weekday
+  /// prefix, failed, and every all-day event (the term dates) was dropped.
+  @visibleForTesting
+  static DateTime? parseEventDateTime(String raw) {
     if (raw.isEmpty) return null;
     final parts = raw.split('\n');
-    if (parts.length >= 2) {
-      final datePart = parts[0].trim(); // e.g. "Jun, 10 2026"
-      final timePart = parts[1].trim(); // e.g. "22:30"
-      final commaIdx = datePart.indexOf(',');
-      if (commaIdx >= 0) {
-        final monthStr = datePart.substring(0, commaIdx).trim().toLowerCase();
-        final rest = datePart
-            .substring(commaIdx + 1)
-            .trim()
-            .split(RegExp(r'\s+'));
-        if (rest.length >= 2) {
-          final day = int.tryParse(rest[0]);
-          final year = int.tryParse(rest[1]);
-          final abbr = monthStr.length >= 3
-              ? monthStr.substring(0, 3)
-              : monthStr;
-          final month = _kMonthAbbrs[abbr];
-          if (day != null && year != null && month != null) {
-            final tp = timePart.split(':');
-            final hour = tp.isNotEmpty ? (int.tryParse(tp[0]) ?? 0) : 0;
-            final minute = tp.length > 1 ? (int.tryParse(tp[1]) ?? 0) : 0;
-            return DateTime(year, month, day, hour, minute);
-          }
+    final datePart = parts[0].trim(); // e.g. "Jun, 10 2026"
+    final timePart = parts.length >= 2 ? parts[1].trim() : ''; // e.g. "22:30"
+    final commaIdx = datePart.indexOf(',');
+    if (commaIdx >= 0) {
+      final monthStr = datePart.substring(0, commaIdx).trim().toLowerCase();
+      final rest = datePart
+          .substring(commaIdx + 1)
+          .trim()
+          .split(RegExp(r'\s+'));
+      if (rest.length >= 2) {
+        final day = int.tryParse(rest[0]);
+        final year = int.tryParse(rest[1]);
+        final abbr = monthStr.length >= 3 ? monthStr.substring(0, 3) : monthStr;
+        final month = _kMonthAbbrs[abbr];
+        if (day != null && year != null && month != null) {
+          final tp = timePart.split(':');
+          final hour = tp.isNotEmpty ? (int.tryParse(tp[0]) ?? 0) : 0;
+          final minute = tp.length > 1 ? (int.tryParse(tp[1]) ?? 0) : 0;
+          return DateTime(year, month, day, hour, minute);
         }
       }
     }

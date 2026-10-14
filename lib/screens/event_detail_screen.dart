@@ -55,7 +55,9 @@ class _EventDetailSheet extends StatelessWidget {
     final weekday  = _kWeekdays[date.weekday - 1];
     final month    = _kMonths[date.month - 1];
     final dateLabel = '$weekday, $month ${date.day}';
-    final timeLabel = '${_fmtTime(event.start)} – ${_fmtTime(event.end)}';
+    final timeLabel = event.allDay
+        ? 'All day'
+        : '${_fmtTime(event.start)} – ${_fmtTime(event.end)}';
 
     final content = SafeArea(
       top: false,

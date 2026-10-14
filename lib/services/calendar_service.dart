@@ -9,6 +9,7 @@ import 'package:timezone/timezone.dart' as tz;
 
 import '../models/course_shell.dart';
 import '../models/kisd_event.dart';
+import 'cache_service.dart';
 import 'event_store.dart';
 
 // ─── Simple event model returned to UI ────────────────────────────────────────
@@ -206,20 +207,49 @@ class CalendarService {
     final r = await _plugin.retrieveEvents(
         calId, RetrieveEventsParams(startDate: from, endDate: to));
     if (!r.isSuccess || r.data == null) return;
+    // Every occurrence of a recurring event comes back under the series' id,
+    // and the first delete already removes the whole series — deleting each
+    // occurrence again only failed with "event not found".
+    final ids = {
+      for (final e in r.data!)
+        if (e.eventId != null) e.eventId!,
+    };
     var deleted = 0;
-    for (final e in r.data!) {
-      if (e.eventId != null) {
-        try {
-          await _plugin.deleteEvent(calId, e.eventId!);
-          deleted++;
-        } catch (_) {}
-      }
+    for (final id in ids) {
+      try {
+        await _plugin.deleteEvent(calId, id);
+        deleted++;
+      } catch (_) {}
     }
     print('[cal] _wipeKisdEventsCalendar: deleted $deleted events from $calId');
   }
 
+  // One write at a time: each wipes the calendar and writes it again, so two
+  // at once (a refresh and a settings switch) would leave duplicates. A call
+  // during a write is queued; only the newest queued list is written.
+  bool _kisdWriting = false;
+  List<KisdEvent>? _kisdQueued;
+
   Future<void> writeKisdEvents(List<KisdEvent> events) async {
     if (_isSimulator) return;
+    if (_kisdWriting) {
+      _kisdQueued = events;
+      return;
+    }
+    _kisdWriting = true;
+    try {
+      List<KisdEvent>? next = events;
+      while (next != null) {
+        await _writeKisdEvents(next);
+        next = _kisdQueued;
+        _kisdQueued = null;
+      }
+    } finally {
+      _kisdWriting = false;
+    }
+  }
+
+  Future<void> _writeKisdEvents(List<KisdEvent> events) async {
     print('[cal] writeKisdEvents: ${events.length} events');
     try {
       await _ensureTz();
@@ -230,7 +260,10 @@ class CalendarService {
       await _wipeKisdEventsCalendar(calId);
 
       final loc = tz.local;
-      final toWrite = events.where(_withinWindow).toList();
+      final hidden = await CacheService().loadHiddenKisdEvents();
+      final toWrite = events
+          .where((e) => _withinWindow(e) && !hidden.contains(e.id))
+          .toList();
       var recurringCount = 0;
       var parseFailCount = 0;
 
@@ -244,6 +277,7 @@ class CalendarService {
 
         final calEvt = Event(calId)
           ..title = evt.title
+          ..allDay = evt.allDay
           ..start = evtStart
           ..end = evtEnd
           ..location = evt.venue
@@ -340,19 +374,26 @@ class CalendarService {
     return DateTime(year, month, day, 23, 59, 59);
   }
 
-  Future<void> clearKisdEventsCalendar() async {
-    if (_isSimulator) return;
-    try {
-      await _ensureTz();
-      if (!await _hasPermission()) return;
-      final calId = await _ensureKisdEventsCalendar();
-      if (calId == null) return;
-      await _wipeKisdEventsCalendar(calId);
-      clearCache();
-      writeRevision.value++;
-    } catch (e) {
-      print('[cal] clearKisdEventsCalendar: $e');
-    }
+  /// Empties the KISD Events calendar — a write of nothing, so it queues
+  /// behind a write already running instead of racing it.
+  Future<void> clearKisdEventsCalendar() => writeKisdEvents(const []);
+
+  /// Recurring KISD events that still have dates from [now] on, for the
+  /// switches under Settings › Calendar › Recurring events. A weekly rule
+  /// runs to its until-date (or forever); a pattern we can't read is written
+  /// as its single entry, so that entry's end counts.
+  static List<KisdEvent> runningRecurringKisdEvents(
+    List<KisdEvent> events,
+    DateTime now,
+  ) {
+    final today = DateTime(now.year, now.month, now.day);
+    return events.where((e) {
+      if (!e.isRecurring) return false;
+      final rule = _parseKisdRecurrence(e.recurrence);
+      final last = rule == null ? e.end : rule.endDate;
+      return last == null || !last.isBefore(today);
+    }).toList()
+      ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
   }
 
   // ── Write courses ───────────────────────────────────────────────────────────
@@ -463,13 +504,15 @@ class CalendarService {
           if (e.start == null || e.end == null || (e.title ?? '').isEmpty) continue;
           if (!_isAllDay(e)) continue;
           var startDay = DateTime(e.start!.year, e.start!.month, e.start!.day);
-          var endDay   = DateTime(e.end!.year,   e.end!.month,   e.end!.day);
-          // iOS stores all-day event end as midnight of the *next* day (exclusive).
-          // Subtract 1 day to get the last inclusive calendar day.
-          // Don't guard on .hour == 0 — TZDateTime may not be in local tz yet.
-          if (e.allDay == true && endDay.isAfter(startDay)) {
-            endDay = endDay.subtract(const Duration(days: 1));
-          }
+          // EventKit ends an all-day event at 23:59:59 of its last day (a
+          // whole day was cut off multi-day events when this took it for
+          // the next midnight); a second earlier is that last day under
+          // either convention.
+          final last = e.allDay == true
+              ? e.end!.subtract(const Duration(seconds: 1))
+              : e.end!;
+          var endDay = DateTime(last.year, last.month, last.day);
+          if (endDay.isBefore(startDay)) endDay = startDay;
           events.add(AllDayEvent(
             title: e.title!,
             startDate: startDay,
@@ -523,6 +566,7 @@ class CalendarService {
             calendarColor:
                 cal.color != null ? Color(cal.color as int) : _kisdColor,
             calendarName: cal.name ?? '',
+            allDay: _isAllDay(e),
           ));
         }
       }

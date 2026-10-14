@@ -3,6 +3,9 @@ class KisdEvent {
   final String title;
   final DateTime start;
   final DateTime end;
+  /// Date-only event (term dates); [start] and [end] are midnight of the
+  /// first and last day.
+  final bool allDay;
   final String? venue;
   final String? organiser;
   final List<String> categories;
@@ -15,6 +18,7 @@ class KisdEvent {
     required this.title,
     required this.start,
     required this.end,
+    this.allDay = false,
     this.venue,
     this.organiser,
     required this.categories,
@@ -28,6 +32,7 @@ class KisdEvent {
         title: json['title'] as String,
         start: DateTime.parse(json['start'] as String),
         end: DateTime.parse(json['end'] as String),
+        allDay: json['allDay'] as bool? ?? false,
         venue: json['venue'] as String?,
         organiser: json['organiser'] as String?,
         categories: (json['categories'] as List<dynamic>).cast<String>(),
@@ -41,6 +46,7 @@ class KisdEvent {
         'title': title,
         'start': start.toIso8601String(),
         'end': end.toIso8601String(),
+        'allDay': allDay,
         'venue': venue,
         'organiser': organiser,
         'categories': categories,

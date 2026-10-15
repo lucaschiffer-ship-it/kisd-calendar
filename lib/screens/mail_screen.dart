@@ -9,8 +9,10 @@ import 'package:flutter/services.dart';
 import '../config/app_theme.dart' as tokens;
 import '../services/mail_actions.dart';
 import '../services/mail_display.dart';
+import '../services/mail_notifier.dart';
 import '../services/mail_previews.dart';
 import '../services/mail_service.dart' show MailFolder;
+import '../services/notification_service.dart';
 import '../services/page_actions.dart';
 import '../services/service_locator.dart';
 import '../services/theme_service.dart';
@@ -61,10 +63,19 @@ const double _kHeadlineH = 20.0;
 const double _kHeadlineBottomH = 8.0;
 
 class MailScreen extends StatefulWidget {
-  const MailScreen({super.key, required this.actions, required this.header});
+  const MailScreen({
+    super.key,
+    required this.actions,
+    required this.header,
+    this.onShowPage,
+  });
 
   final PageActionController actions;
   final PageHeaderHandle header;
+
+  /// Brings the Mail page on screen — a tapped notification opens its mail
+  /// from any page.
+  final VoidCallback? onShowPage;
 
   @override
   State<MailScreen> createState() => _MailScreenState();
@@ -107,6 +118,10 @@ class _MailScreenState extends State<MailScreen>
     _mailActions.addListener(_onUpdate);
     MailPreviews.instance.addListener(_onPreviews);
     _recompute();
+    NotificationService.instance.registerTapHandler(
+      'mail',
+      _openFromNotification,
+    );
     // Unconditional: `connect()` guards on its own flags, and it now clears
     // the previous account's state first. Gating here on `isConnected` meant a
     // still-live session from the signed-out account was never replaced.
@@ -115,6 +130,7 @@ class _MailScreenState extends State<MailScreen>
 
   @override
   void dispose() {
+    NotificationService.instance.unregisterTapHandler('mail');
     mailService.removeListener(_onUpdate);
     _mailActions.removeListener(_onUpdate);
     _mailActions.dispose();
@@ -260,6 +276,15 @@ class _MailScreenState extends State<MailScreen>
     // Read on open, as before — here rather than in the opened screen, so
     // the dot clears as the mail slides in and no build is interrupted.
     _mailActions.setSeen(msg, folder, true);
+    final uid = msg.uid;
+    if (folder == MailFolder.inbox && uid != null) {
+      // Read now, so its notification has served its purpose.
+      unawaited(
+        NotificationService.instance
+            .cancel(mailNotificationId(uid))
+            .catchError((_) {}),
+      );
+    }
     MailRouteLayer.push(
       CupertinoPageRoute<void>(
         builder: (_) => EmailDetailScreen(
@@ -273,6 +298,51 @@ class _MailScreenState extends State<MailScreen>
         ),
       ),
     );
+  }
+
+  /// A tapped new-mail notification: the Mail page, the inbox, the mail.
+  void _openFromNotification(String id) {
+    // May fire during initState (cold start from a tap) — wait for a frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_openNotifiedMail(id));
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  /// The mail may not be listed yet — a cold start shows the saved list
+  /// first, and a mail newer than that only comes with the first sync.
+  Future<void> _openNotifiedMail(String id) async {
+    widget.onShowPage?.call();
+    mailNavigatorKey.currentState?.popUntil((r) => r.isFirst);
+    if (_currentFolder != MailFolder.inbox) _selectFilter(_MailFilter.all);
+    final ref = parseMailPayloadId(id);
+    if (ref == null) return;
+    final msg = await _inboxMailWhenListed(ref.$1, ref.$2);
+    if (msg == null || !mounted || _currentFolder != MailFolder.inbox) return;
+    _open(msg);
+  }
+
+  Future<MimeMessage?> _inboxMailWhenListed(int validity, int uid) async {
+    MimeMessage? find() => mailService.inboxUidValidity == validity
+        ? mailService.messages.where((m) => m.uid == uid).firstOrNull
+        : null;
+    final now = find();
+    if (now != null) return now;
+    final found = Completer<MimeMessage?>();
+    void check() {
+      final m = find();
+      if (m != null && !found.isCompleted) found.complete(m);
+    }
+
+    mailService.addListener(check);
+    try {
+      return await found.future.timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => null,
+      );
+    } finally {
+      mailService.removeListener(check);
+    }
   }
 
   void openCompose() => openComposeSheet(context);

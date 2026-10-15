@@ -11,6 +11,8 @@ import UserNotifications
     // flutter_local_notifications: lets the plugin present notifications in
     // the foreground and receive taps.
     UNUserNotificationCenter.current().delegate = self
+    // Before launch finishes, or iOS refuses the background mail check.
+    MailCheckTask.shared.registerTasks()
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
@@ -21,6 +23,7 @@ import UserNotifications
       ComposeAttachmentsBridge.shared.register(with: engineBridge.pluginRegistry)
     }
     registerStorageChannel(with: engineBridge.pluginRegistry)
+    MailCheckTask.shared.register(with: engineBridge.pluginRegistry)
 
     // Registered after GeneratedPluginRegistrant on purpose: flutter_inappwebview
     // initialises WKWebsiteDataStore.default() during its own registration, and

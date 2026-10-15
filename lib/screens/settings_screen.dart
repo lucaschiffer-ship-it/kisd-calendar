@@ -11,6 +11,8 @@ import '../services/cache_service.dart';
 import '../services/calendar_service.dart';
 import '../services/course_reminder_scheduler.dart';
 import '../services/event_store.dart';
+import '../services/mail_display.dart' show listDateLabel, timeLabel;
+import '../services/mail_notifier.dart';
 import '../services/notification_service.dart';
 import '../services/semester.dart';
 import '../services/service_locator.dart';
@@ -116,12 +118,19 @@ class SettingsScreen extends StatelessWidget {
               label: 'Calendar',
               onTap: () => _push(context, const _CalendarPage()),
             ),
-            ValueListenableBuilder<bool?>(
-              valueListenable: CourseReminderScheduler.enabled,
-              builder: (context, on, _) => _NavRow(
+            ListenableBuilder(
+              listenable: Listenable.merge([
+                CourseReminderScheduler.enabled,
+                MailNotifier.enabled,
+              ]),
+              builder: (context, _) => _NavRow(
                 icon: CupertinoIcons.bell,
                 label: 'Notifications',
-                value: on == true ? 'On' : 'Off',
+                value:
+                    CourseReminderScheduler.enabled.value == true ||
+                        MailNotifier.enabled.value
+                    ? 'On'
+                    : 'Off',
                 onTap: () => _push(context, const _NotificationsPage()),
               ),
             ),
@@ -591,6 +600,73 @@ class _NotificationsPageState extends State<_NotificationsPage> {
                 )
               : const SizedBox.shrink(),
         ),
+        const _SectionHeader('MAIL'),
+        _Padded(
+          ValueListenableBuilder<bool>(
+            valueListenable: MailNotifier.enabled,
+            builder: (context, on, _) => _Group(
+              inset: false,
+              children: [
+                SwitchListTile(
+                  title: Text(
+                    'New mail',
+                    style: AppTextStyles.bodyLarge(
+                      color: s.textPrimary,
+                    ).copyWith(fontWeight: FontWeight.w500),
+                  ),
+                  subtitle: Text(
+                    'Sender, subject and preview of new inbox mail',
+                    style: AppTextStyles.bodySmall(color: s.textSecondary),
+                  ),
+                  value: on,
+                  onChanged: (v) async {
+                    await MailNotifier.setEnabled(v);
+                    await _checkSystem();
+                  },
+                  activeThumbColor: s.accent,
+                ),
+                if (on)
+                  _NavRow(
+                    label: 'Background checks',
+                    onTap: () => Navigator.push(
+                      context,
+                      CupertinoPageRoute(
+                        builder: (_) => const _MailChecksPage(),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        ValueListenableBuilder<bool>(
+          valueListenable: MailNotifier.enabled,
+          builder: (context, on, _) => on && _systemAllowed == false
+              ? const _Caption(
+                  'Notifications are turned off for KISD Calendar in iOS '
+                  'Settings, so new mail won\'t be announced.',
+                )
+              : const SizedBox.shrink(),
+        ),
+        // What iOS allows a mail app without a server of its own — shown
+        // before switching on, so nobody expects Gmail-speed push.
+        const _Caption(
+          '• While the app is open, new mail is announced within seconds.',
+        ),
+        const _Caption(
+          '• In the background, iOS decides when the app may check: often '
+          'every 15 to 60 minutes during the day, less often at night or '
+          'when the app is rarely opened. No fixed interval is possible.',
+        ),
+        const _Caption(
+          '• Checks stop after you swipe the app away in the app switcher, '
+          'in Low Power Mode, or with Background App Refresh off — until you '
+          'open the app again.',
+        ),
+        const _Caption(
+          '• The app checks your inbox directly with the TH Köln server. No '
+          'other server is involved, so there is no instant push.',
+        ),
         if (kDebugMode) ...[
           const SizedBox(height: 24),
           _Group(
@@ -603,6 +679,85 @@ class _NotificationsPageState extends State<_NotificationsPage> {
             ],
           ),
         ],
+        const SizedBox(height: 32),
+      ],
+    );
+  }
+}
+
+/// When iOS let the background mail check run, newest first, with the gap
+/// to the run before — what the timing really is on this phone.
+class _MailChecksPage extends StatefulWidget {
+  const _MailChecksPage();
+
+  @override
+  State<_MailChecksPage> createState() => _MailChecksPageState();
+}
+
+class _MailChecksPageState extends State<_MailChecksPage> {
+  List<(DateTime, String)>? _runs;
+
+  @override
+  void initState() {
+    super.initState();
+    MailNotifier.runLog().then((r) {
+      if (mounted) setState(() => _runs = r);
+    });
+  }
+
+  static String _when(DateTime d) {
+    final day = listDateLabel(d);
+    final time = timeLabel(d);
+    return day == time ? time : '$day $time';
+  }
+
+  static String _gap(Duration d) {
+    if (d.inMinutes < 60) return '+${d.inMinutes} min';
+    final m = d.inMinutes % 60;
+    return '+${d.inHours} h${m == 0 ? '' : ' $m min'}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final runs = _runs;
+    return _SettingsPage(
+      title: 'Background checks',
+      builder: (context, s) => [
+        const SizedBox(height: 16),
+        if (runs != null && runs.isEmpty)
+          const _Caption(
+            'No background check yet. iOS schedules the first one some time '
+            'after the app was last in the background.',
+          )
+        else if (runs != null)
+          _Group(
+            children: [
+              for (var i = 0; i < runs.length; i++)
+                ListTile(
+                  dense: true,
+                  title: Text(
+                    _when(runs[i].$1),
+                    style: AppTextStyles.bodyLarge(color: s.textPrimary),
+                  ),
+                  subtitle: Text(
+                    runs[i].$2,
+                    style: AppTextStyles.bodySmall(color: s.textSecondary),
+                  ),
+                  trailing: i + 1 < runs.length
+                      ? Text(
+                          _gap(runs[i].$1.difference(runs[i + 1].$1)),
+                          style: AppTextStyles.bodySmall(
+                            color: s.textSecondary,
+                          ),
+                        )
+                      : null,
+                ),
+            ],
+          ),
+        const _Caption(
+          'Only times and outcomes are kept, on this phone — no addresses or '
+          'subjects.',
+        ),
         const SizedBox(height: 32),
       ],
     );

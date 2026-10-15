@@ -47,6 +47,17 @@
 			</array>
 		</dict>
 	</dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<!-- The background mail check (MailCheckTask.swift). -->
+		<string>fetch</string>
+		<string>processing</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>de.th-koeln.kisd-calendar.mailcheck</string>
+		<string>de.th-koeln.kisd-calendar.mailcheck.idle</string>
+	</array>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>NSCalendarsUsageDescription</key>

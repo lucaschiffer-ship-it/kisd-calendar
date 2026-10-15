@@ -10,9 +10,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'imap_preview_fix.dart';
 import 'imap_session.dart';
 import 'mail_attachments.dart';
+import 'mail_notifier.dart';
 import 'mail_offline_cache.dart';
 import 'mail_sync.dart';
 import 'mail_threads.dart';
+import 'notification_service.dart';
 import 'service_locator.dart';
 
 /// Which IMAP folder a message lives in — used for folder-aware operations.
@@ -104,8 +106,11 @@ void _log(String message) {
 }
 
 class MailService extends ChangeNotifier {
-  static const _imapHost = 'imap.intranet.fh-koeln.de';
-  static const _imapPort = 993;
+  // Public for the background check (mail_background_check.dart).
+  static const imapHost = 'imap.intranet.fh-koeln.de';
+  static const imapPort = 993;
+  static const _imapHost = imapHost;
+  static const _imapPort = imapPort;
   static const _smtpHost = 'smtp.intranet.fh-koeln.de';
   static const _smtpPort = 587;
   static const _smtpResponseTimeout = Duration(seconds: 30);
@@ -174,6 +179,13 @@ class MailService extends ChangeNotifier {
   /// The folder the Mail tab shows — refreshed with the inbox on resume.
   MailFolder activeFolder = MailFolder.inbox;
 
+  /// Whether the Mail page is the one on screen (set by HomeScreen). New
+  /// mail isn't announced while its inbox is in view.
+  bool mailPageVisible = false;
+
+  // Announcements in order: each reads and moves the shared mark.
+  Future<void> _notifyChain = Future.value();
+
   final _offline = MailOfflineCache();
   // Bumped by resetForAccountSwitch, so a fetch, cache load or sync still in
   // flight sees its account is gone and drops what it has instead of
@@ -239,6 +251,10 @@ class MailService extends ChangeNotifier {
     return null;
   }
 
+  /// The inbox UIDVALIDITY its list belongs to — a notification's UID only
+  /// names one of these mails while it matches.
+  int? get inboxUidValidity => _inboxUidValidity;
+
   List<MimeMessage> get _inbox => _folders[MailFolder.inbox]!.messages;
   // The inbox UIDVALIDITY the list belongs to — a cached UID only names the
   // same mail while this is unchanged.
@@ -300,6 +316,8 @@ class MailService extends ChangeNotifier {
       throw const MailConnectException('signed out', rejected: false);
     }
     _cachedUsername = username;
+    // The password works again: the background check may resume.
+    unawaited(MailNotifier.setPaused(false).catchError((_) {}));
     final idle = imap.serverInfo.supportsIdle;
     if (_idleSupported == null) {
       _log(
@@ -481,7 +499,7 @@ class MailService extends ChangeNotifier {
           .then((stale) {
             // Outside the op: these call back into the session.
             if (stale) {
-              unawaited(_autoRefresh(MailFolder.inbox));
+              unawaited(_autoRefresh(MailFolder.inbox, announce: true));
             } else if (_idleOn != null) {
               _armIdleRearm();
             }
@@ -499,7 +517,9 @@ class MailService extends ChangeNotifier {
       _lostInARow = 0;
       // Leaving IDLE checks the connection; the delta sync catches
       // anything a silently dead one missed.
-      if (_foreground) unawaited(_autoRefresh(MailFolder.inbox));
+      if (_foreground) {
+        unawaited(_autoRefresh(MailFolder.inbox, announce: true));
+      }
     });
   }
 
@@ -527,16 +547,20 @@ class MailService extends ChangeNotifier {
     }
   }
 
+  // Only ever while the app is open: whatever it finds arrived just now.
   void _scheduleInboxRefresh(Duration delay) {
     _eventTimer?.cancel();
-    _eventTimer = Timer(delay, () => unawaited(_autoRefresh(MailFolder.inbox)));
+    _eventTimer = Timer(
+      delay,
+      () => unawaited(_autoRefresh(MailFolder.inbox, announce: true)),
+    );
   }
 
   void _updatePolling() {
     final want = _started && _foreground && _idleSupported == false;
     if (want && _pollTimer == null) {
       _pollTimer = Timer.periodic(_pollEvery, (_) {
-        unawaited(_autoRefresh(MailFolder.inbox));
+        unawaited(_autoRefresh(MailFolder.inbox, announce: true));
       });
     } else if (!want) {
       _pollTimer?.cancel();
@@ -598,13 +622,22 @@ class MailService extends ChangeNotifier {
       _refresh(folder, ignoreFresh: force, ignoreBackoff: force);
 
   /// IDLE, polling and resume: always fetches, but respects the backoff.
-  Future<void> _autoRefresh(MailFolder folder) =>
-      _refresh(folder, ignoreFresh: true, ignoreBackoff: false);
+  /// With [announce] (IDLE and polling — the app was open as the mail
+  /// came), new inbox mail gets a notification; otherwise it is only marked
+  /// as known, since the list is about to show it.
+  Future<void> _autoRefresh(MailFolder folder, {bool announce = false}) =>
+      _refresh(
+        folder,
+        ignoreFresh: true,
+        ignoreBackoff: false,
+        announce: announce,
+      );
 
   Future<void> _refresh(
     MailFolder folder, {
     required bool ignoreFresh,
     required bool ignoreBackoff,
+    bool announce = false,
   }) {
     final s = _folders[folder]!;
     final running = s.refreshing;
@@ -618,7 +651,12 @@ class MailService extends ChangeNotifier {
       }
     }
     if (!ignoreBackoff && _autoBlocked) return Future.value();
-    final future = _fetchAndApply(folder, s, older: false);
+    final future = _fetchAndApply(
+      folder,
+      s,
+      older: false,
+      announce: announce,
+    );
     s.refreshing = future;
     notifyListeners();
     return future.whenComplete(() {
@@ -655,6 +693,7 @@ class MailService extends ChangeNotifier {
     MailFolder folder,
     _FolderState s, {
     required bool older,
+    bool announce = false,
   }) async {
     final generation = _generation;
     final current = List.of(s.messages);
@@ -682,7 +721,7 @@ class MailService extends ChangeNotifier {
         s.syncedAt = DateTime.now();
         return;
       }
-      _apply(folder, s, result);
+      _apply(folder, s, result, announce: announce);
     } catch (e) {
       if (generation != _generation) return;
       _log(
@@ -806,7 +845,12 @@ class MailService extends ChangeNotifier {
     return sortNewestFirst(result.messages);
   }
 
-  void _apply(MailFolder folder, _FolderState s, _FolderFetch r) {
+  void _apply(
+    MailFolder folder,
+    _FolderState s,
+    _FolderFetch r, {
+    bool announce = false,
+  }) {
     final before = {for (final m in s.messages) ?m.uid};
     final replace = r.replace;
     // Read before applyDelta, which updates the flags in place.
@@ -852,6 +896,7 @@ class MailService extends ChangeNotifier {
       // Bodies even when nothing changed: a download cut short last time
       // is finished now.
       unawaited(_updateOfflineCopy(fetchBodies: true, saveList: changed));
+      _queueNotifications(announce: announce, listChanged: changed);
     } else if (changed) {
       unawaited(_saveFolderIndex(folder));
     }
@@ -868,6 +913,89 @@ class MailService extends ChangeNotifier {
     if (folder == MailFolder.inbox) return c.selectInbox();
     if (box == null) return null;
     return c.selectMailbox(box);
+  }
+
+  // ── New-mail notifications ───────────────────────────────────────────────
+
+  /// After an inbox sync: announces mail above the shared mark (only for
+  /// [announce] refreshes, with notifications on and the inbox not in
+  /// view), always moves the mark to the newest mail — so the background
+  /// check never announces what the app already showed — and removes the
+  /// notifications of mails read or deleted since.
+  void _queueNotifications({required bool announce, required bool listChanged}) {
+    final owner = _cachedUsername;
+    final validity = _inboxUidValidity;
+    if (owner == null || validity == null) return;
+    final generation = _generation;
+    final inbox = List.of(_inbox);
+    final uidNext = _folders[MailFolder.inbox]!.uidNext;
+    final quiet =
+        _foreground && mailPageVisible && activeFolder == MailFolder.inbox;
+    _notifyChain = _notifyChain
+        .then((_) async {
+          if (generation != _generation) return;
+          final plan = planMailAnnouncements(
+            stored: await MailNotifier.readMark(),
+            owner: owner,
+            uidValidity: validity,
+            uidNext: uidNext,
+            inbox: [
+              for (final m in inbox)
+                if (m.uid != null) (uid: m.uid!, seen: m.isSeen),
+            ],
+          );
+          if (announce && !quiet && MailNotifier.enabled.value) {
+            final byUid = {for (final m in inbox) m.uid: m};
+            for (final uid in plan.uids) {
+              final m = byUid[uid];
+              if (m == null) continue;
+              final c = mailNotificationContent(m);
+              await NotificationService.instance.show(
+                mailNotificationId(uid),
+                c.title,
+                c.body,
+                NotificationPayload(
+                  type: 'mail',
+                  id: mailPayloadId(validity, uid),
+                ),
+                subtitle: c.subtitle,
+                threadIdentifier: mailThreadIdentifier,
+              );
+            }
+          }
+          if (generation != _generation) return;
+          await MailNotifier.writeMark(plan.mark);
+          if (listChanged) await _removeStaleNotifications(inbox, validity);
+        })
+        .catchError((Object e) {
+          _log('[mail] notifications failed: $e');
+        });
+  }
+
+  /// Notification Centre keeps a mail's notification until it is opened
+  /// from there; once the mail is read here (or elsewhere) or deleted, it
+  /// goes.
+  Future<void> _removeStaleNotifications(
+    List<MimeMessage> inbox,
+    int validity,
+  ) async {
+    final svc = NotificationService.instance;
+    final delivered = await svc.delivered('mail');
+    if (delivered.isEmpty) return;
+    final byUid = {for (final m in inbox) m.uid: m};
+    final lowest = inbox.isEmpty
+        ? null
+        : inbox.map((m) => m.uid ?? 0).reduce(min);
+    for (final MapEntry(key: id, value: payloadId) in delivered.entries) {
+      final ref = parseMailPayloadId(payloadId);
+      final m = ref == null ? null : byUid[ref.$2];
+      final stale =
+          ref == null ||
+          ref.$1 != validity ||
+          (m != null && m.isSeen) ||
+          (m == null && lowest != null && ref.$2 >= lowest);
+      if (stale) await svc.cancel(id);
+    }
   }
 
   // ── Offline copy ─────────────────────────────────────────────────────────

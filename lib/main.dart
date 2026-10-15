@@ -1,3 +1,5 @@
+import 'dart:ui' show DartPluginRegistrant;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -7,6 +9,8 @@ import 'screens/login_screen.dart';
 import 'services/account_teardown.dart';
 import 'services/calendar_service.dart';
 import 'services/course_reminder_scheduler.dart';
+import 'services/mail_background_check.dart';
+import 'services/mail_notifier.dart';
 import 'services/mensa_service.dart';
 import 'services/notification_service.dart';
 import 'services/service_locator.dart';
@@ -22,6 +26,7 @@ void main() async {
   await ThemeService.instance.init();
   await NotificationService.instance.init();
   await CourseReminderScheduler.loadPrefs();
+  await MailNotifier.loadPrefs();
   await loginService.initialize();
   await AccountTeardown.adoptExistingOwner();
   CalendarService.instance.performStartupCleanup().ignore();
@@ -38,6 +43,19 @@ void main() async {
   );
 
   runApp(const KisdCalendarApp());
+}
+
+/// Entry point of the headless engine `MailCheckTask.swift` starts when iOS
+/// grants the app a background refresh: checks the inbox once, then tells
+/// the native side, which ends the task and the engine.
+@pragma('vm:entry-point')
+Future<void> mailCheckMain() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
+  final ok = await runMailBackgroundCheck();
+  try {
+    await MailNotifier.channel.invokeMethod<void>('done', ok);
+  } catch (_) {}
 }
 
 void _syncColorScheme(String colorKey) {

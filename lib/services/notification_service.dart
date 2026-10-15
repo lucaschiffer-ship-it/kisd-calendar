@@ -40,6 +40,7 @@ class NotificationService {
   static const int courseIdMin = 100000;
   static const int courseIdMax = 499999;
   static const int mailIdMin = 500000;
+  static const int mailIdMax = 899999;
 
   /// KISD times are Cologne local time, whatever zone the phone is in.
   static tz.Location get berlin => tz.getLocation('Europe/Berlin');
@@ -132,8 +133,28 @@ class NotificationService {
     int id,
     String title,
     String body,
-    NotificationPayload payload,
-  ) => _plugin.show(id, title, body, _details, payload: payload.encode());
+    NotificationPayload payload, {
+    String? subtitle,
+    String? threadIdentifier,
+  }) => _plugin.show(
+    id,
+    title,
+    body,
+    subtitle == null && threadIdentifier == null
+        ? _details
+        : NotificationDetails(
+            iOS: DarwinNotificationDetails(
+              presentAlert: true,
+              presentBanner: true,
+              presentList: true,
+              presentSound: true,
+              presentBadge: true,
+              subtitle: subtitle,
+              threadIdentifier: threadIdentifier,
+            ),
+          ),
+    payload: payload.encode(),
+  );
 
   Future<void> cancel(int id) => _plugin.cancel(id);
 
@@ -142,6 +163,31 @@ class NotificationService {
     final pending = await _plugin.pendingNotificationRequests();
     for (final p in pending) {
       if (p.id >= min && p.id <= max) await _plugin.cancel(p.id);
+    }
+  }
+
+  /// The notifications of [type] still in Notification Centre, by id, with
+  /// their payload ids.
+  Future<Map<int, String>> delivered(String type) async {
+    final out = <int, String>{};
+    for (final n in await _plugin.getActiveNotifications()) {
+      final id = n.id;
+      final payload = NotificationPayload.decode(n.payload);
+      if (id != null && payload != null && payload.type == type) {
+        out[id] = payload.id;
+      }
+    }
+    return out;
+  }
+
+  /// Removes every mail notification, delivered or pending.
+  Future<void> cancelMail() async {
+    final ids = <int>{
+      for (final n in await _plugin.getActiveNotifications()) ?n.id,
+      for (final p in await _plugin.pendingNotificationRequests()) p.id,
+    };
+    for (final id in ids) {
+      if (id >= mailIdMin && id <= mailIdMax) await _plugin.cancel(id);
     }
   }
 
@@ -165,14 +211,9 @@ class NotificationService {
     final payload = NotificationPayload.decode(raw);
     if (payload == null) return;
     switch (payload.type) {
-      case 'course':
-        final h = _handlers['course'];
+      case 'course' || 'mail':
+        final h = _handlers[payload.type];
         h != null ? h(payload.id) : _pending.add(payload);
-      case 'mail':
-        // TODO: route to the mail thread once mail notifications exist.
-        if (kDebugMode) {
-          debugPrint('[notif] mail tap ${payload.id} — not routed yet');
-        }
       default:
         if (kDebugMode) {
           debugPrint('[notif] unknown payload type ${payload.type}');

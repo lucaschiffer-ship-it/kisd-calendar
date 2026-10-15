@@ -357,6 +357,22 @@ UI keeps its own optimistic state on top.
   enough_mail's own `responseTimeout` only starts *after* the write, so the
   whole call needs the Dart timeout.
 
+### New-mail notifications (`lib/services/mail_notifier.dart`, pinned by `test/mail_notifier_test.dart`)
+
+Off by default (Settings › Notifications › Mail). Two announcers share one stored mark, `(owner, inbox UIDVALIDITY, upTo)`:
+
+- **App open:** inbox refreshes started by IDLE, polling or the IDLE re-arm (`_autoRefresh(…, announce: true)`) post through `NotificationService.show`. Every other inbox sync (connect, resume, pull to refresh) only moves the mark, so mail the app has shown is never announced later. Quiet while the Mail page shows the inbox (`mailService.mailPageVisible`, set by HomeScreen).
+- **Background:** `ios/Runner/MailCheckTask.swift` registers a BGAppRefresh and a BGProcessing task. Both are resubmitted (earliest in 15 min) on every run and every `didEnterBackground`, and iOS decides when they actually run. Each run starts a headless engine on `mailCheckMain` (`main.dart`), which calls `runMailBackgroundCheck` (`mail_background_check.dart`): its own client, EXAMINE, `BODY.PEEK`, a 20 s budget. A 27 s native watchdog backs it up.
+
+Gotchas:
+
+- **The background engine registers only secure storage and shared_preferences.** Never flutter_local_notifications: a second instance registers as an app delegate and takes the app engine's taps. Swift posts the notifications itself with the plugin's userInfo keys (`NotificationId`, `payload`, `present*`), so the app's plugin presents, routes and cancels them like its own.
+- The two isolates share the mark, the log and the pause flag through `SharedPreferencesAsync`, which has no cache. Never move them to the legacy API with `reload()`: a reload in flight replaces the app's whole preferences cache and can drop another feature's write (a heart tap's course cache) made meanwhile. Only the opt-in is legacy, because Swift reads its `flutter.` key. `writeMark` never moves the mark back.
+- No mark for this account and UIDVALIDITY (first check, account switch, renumbered inbox) announces nothing; the mark starts at the newest mail.
+- A refused login pauses the background check (`mail_notify_paused`) until the main connection logs in again, so a changed password doesn't cost a failed login every quarter hour.
+- Notification ids are `mailIdMin + uid % span` (inside `mailIdMin..mailIdMax`); the payload id is `<uidValidity>:<uid>`. A tap opens the mail via `MailScreen._openFromNotification`, which waits up to 15 s for the list to have it. Root routes (compose, Settings) stay open, because a notification must never close a draft.
+- BG tasks never run on the simulator. On a device, pause in Xcode and run `e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@"de.th-koeln.kisd-calendar.mailcheck"]`. Settings › Notifications › Background checks lists the real run times.
+
 ### Mensa (`MensaService`)
 
 openmensa.org, canteen 383. Network first; on failure falls back to an offline copy (SharedPreferences `mensa_offline_days`) of this week + the next two (Mon–Sun). `startOfflineSync()` (from `main.dart`) refreshes that window at launch and on resume, at most every 3 h after a complete pass. Pinned by `test/mensa_offline_test.dart`.

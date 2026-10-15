@@ -55,6 +55,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   int _currentPage = _initialPage;
 
+  // The bottom bar owns the pager position; a notification tap moves it.
+  final _barKey = GlobalKey<_BottomBarState>();
+
   // The "last opened tab" shown on the right half of the mini bar. Only pages
   // other than the Spaces home (and never IdP/MFA pages) are recorded, so the
   // tab survives the user going Home in between.
@@ -102,7 +105,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     MensaScreen(
         actions: _pageActions[0], header: PageHeaderHandle(0, _headerPager)),
     MailScreen(
-        actions: _pageActions[1], header: PageHeaderHandle(1, _headerPager)),
+        actions: _pageActions[1],
+        header: PageHeaderHandle(1, _headerPager),
+        onShowPage: _showMailPage),
     ListScreen(
         actions: _pageActions[2], header: PageHeaderHandle(2, _headerPager)),
     CalendarScreen(
@@ -119,6 +124,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
     _snapBackAnim = Tween<double>(begin: 0.0, end: 0.0).animate(_snapBackCtrl);
     _snapBackCtrl.addListener(_onSnapBackTick);
+    mailService.mailPageVisible = _currentPage == _BottomBarState._mailIndex;
     _lastLoggedIn = loginService.isLoggedIn;
     _browserLoadedPreAuth = !loginService.isLoggedIn;
     loginService.addListener(_onLoginChanged);
@@ -448,6 +454,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // (badge, bar prop). Content follows _pagePos continuously.
   void _onPageSettled(int index) {
     setState(() => _currentPage = index);
+    mailService.mailPageVisible = index == _BottomBarState._mailIndex;
+  }
+
+  // A tapped mail notification: the Mail page, with the browser sheet out
+  // of the way. Root routes (Settings, a compose sheet) are left alone — a
+  // draft must never be closed by a notification.
+  void _showMailPage() {
+    if (_sheetAnim.value > 0) _closeSheet();
+    _barKey.currentState?._jumpTo(_BottomBarState._mailIndex);
   }
 
   void _onBarPosition(double pos) {
@@ -526,6 +541,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   ),
                 ),
                 bottomNavigationBar: _BottomBar(
+                  key: _barKey,
                   currentPage: _currentPage,
                   onPageSelected: _onPageSettled,
                   onPositionChanged: _onBarPosition,
@@ -955,6 +971,7 @@ class _MiniBrowserBar extends StatelessWidget {
 
 class _BottomBar extends StatefulWidget {
   const _BottomBar({
+    super.key,
     required this.currentPage,
     required this.onPageSelected,
     required this.onPositionChanged,

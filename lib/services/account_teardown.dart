@@ -6,6 +6,7 @@ import 'course_choices.dart';
 import 'calendar_service.dart';
 import 'course_reminder_scheduler.dart';
 import 'event_store.dart';
+import 'mail_notifier.dart';
 import 'service_locator.dart';
 
 /// The one place that knows which local data belongs to a Campus ID.
@@ -22,9 +23,10 @@ import 'service_locator.dart';
 /// Cleared: courses and their scrape/semester stamps, the liked courses
 /// (`CourseChoices`), the whole EventStore
 /// (and with it the iOS "KISD" calendar mirror), pending course reminders,
-/// mail state including the offline mail copy, the favourites prefetch.
+/// mail state including the offline mail copy, new-mail notifications and
+/// what they have announced, the favourites prefetch.
 /// Kept, because they are device settings or public: theme, semester choice,
-/// reminder opt-in, KISD events (and which recurring ones are hidden), photo
+/// reminder and new-mail opt-ins, KISD events (and which recurring ones are hidden), photo
 /// metadata stripping, the semester list, the offline mensa menu.
 class AccountTeardown {
   AccountTeardown._();
@@ -54,6 +56,7 @@ class AccountTeardown {
     await _step('calendar', () => EventStore.instance.resetForAccountSwitch());
     await _step('reminders', CourseReminderScheduler.clearAll);
     await _step('mail', () => mailService.resetForAccountSwitch());
+    await _step('mail notifications', MailNotifier.clear);
     await _step('prefetch', () async => pagePrefetcher.resetForAccountSwitch());
     await _step(
       'calendar cache',

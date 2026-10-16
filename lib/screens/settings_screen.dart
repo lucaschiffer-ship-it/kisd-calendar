@@ -717,6 +717,19 @@ class _MailChecksPageState extends State<_MailChecksPage> {
     return '+${d.inHours} h${m == 0 ? '' : ' $m min'}';
   }
 
+  static bool _isCheck((DateTime, String) run) =>
+      !run.$2.startsWith(appLoginLogPrefix);
+
+  /// The gap from run [i] to the check before it — the app's own logins
+  /// are notes in between and have none.
+  static Duration? _gapAt(List<(DateTime, String)> runs, int i) {
+    if (!_isCheck(runs[i])) return null;
+    for (var j = i + 1; j < runs.length; j++) {
+      if (_isCheck(runs[j])) return runs[i].$1.difference(runs[j].$1);
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final runs = _runs;
@@ -743,14 +756,13 @@ class _MailChecksPageState extends State<_MailChecksPage> {
                     runs[i].$2,
                     style: AppTextStyles.bodySmall(color: s.textSecondary),
                   ),
-                  trailing: i + 1 < runs.length
-                      ? Text(
-                          _gap(runs[i].$1.difference(runs[i + 1].$1)),
-                          style: AppTextStyles.bodySmall(
-                            color: s.textSecondary,
-                          ),
-                        )
-                      : null,
+                  trailing: switch (_gapAt(runs, i)) {
+                    final gap? => Text(
+                      _gap(gap),
+                      style: AppTextStyles.bodySmall(color: s.textSecondary),
+                    ),
+                    null => null,
+                  },
                 ),
             ],
           ),

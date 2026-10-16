@@ -71,7 +71,10 @@ Future<bool> runMailBackgroundCheck() async {
 
 Future<String> _check() async {
   if (!await MailNotifier.isEnabledInBackground()) return 'off';
-  if (await MailNotifier.isPaused()) return 'paused: login refused';
+  final backoff = await MailNotifier.readBackoff();
+  if (backoff != null && DateTime.now().isBefore(backoff.notBefore)) {
+    return 'waiting until ${_hhmm(backoff.notBefore)} (login refused)';
+  }
   final username = await _storage.read(key: 'kisd_username');
   final password = await _storage.read(key: 'kisd_password');
   if (username == null || password == null) return 'signed out';
@@ -86,9 +89,20 @@ Future<String> _check() async {
     );
     try {
       await imap.login(username, password);
-    } on ImapException {
-      await MailNotifier.setPaused(true);
-      return 'login refused';
+    } on ImapException catch (e) {
+      final refusals = await MailNotifier.noteRefused(DateTime.now());
+      if (refusals == mailPausedNoticeAfter &&
+          await MailNotifier.isEnabledInBackground()) {
+        await MailNotifier.channel
+            .invokeMethod<void>('post', [_pausedNotice])
+            .catchError((_) {});
+      }
+      return 'login refused ${refusalCode(e.message)}';
+    }
+    if (await MailNotifier.clearBackoff() >= mailPausedNoticeAfter) {
+      await MailNotifier.channel
+          .invokeMethod<void>('unpost', [mailPausedNoticeId])
+          .catchError((_) {});
     }
     final box = await imap.examineMailbox(_inbox);
     final validity = box.uidValidity;
@@ -149,6 +163,22 @@ Future<String> _check() async {
     );
   }
 }
+
+String _hhmm(DateTime t) =>
+    '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+/// Posted after [mailPausedNoticeAfter] refused logins in a row. A tap opens
+/// the inbox (the id isn't a mail's), where the app's own login then either
+/// works — and ends the wait — or shows the error.
+final _pausedNotice = {
+  'id': mailPausedNoticeId,
+  'title': 'Mail notifications paused',
+  'body':
+      'The TH Köln mail server refused the login several times, so new '
+      'mail isn\'t announced. Open KISD Calendar to check.',
+  'thread': mailThreadIdentifier,
+  'payload': const NotificationPayload(type: 'mail', id: 'paused').encode(),
+};
 
 Map<String, Object?> _post(MimeMessage m, int validity, int uid) {
   final c = mailNotificationContent(m);

@@ -5,6 +5,7 @@ import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kisd_calendar/services/mail_notifier.dart';
 import 'package:kisd_calendar/services/notification_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
 
@@ -203,11 +204,76 @@ void main() {
       expect(log.first.$1, t.add(const Duration(minutes: 40)));
     });
 
-    test('pause is set and cleared', () async {
-      await MailNotifier.setPaused(true);
-      expect(await MailNotifier.isPaused(), isTrue);
-      await MailNotifier.setPaused(false);
-      expect(await MailNotifier.isPaused(), isFalse);
+    test('a refused login waits longer each time in a row', () async {
+      final t = DateTime(2026, 10, 16, 3, 24);
+      expect(await MailNotifier.readBackoff(), isNull);
+      expect(await MailNotifier.noteRefused(t), 1);
+      expect(
+        (await MailNotifier.readBackoff())!.notBefore,
+        t.add(const Duration(hours: 1)),
+      );
+      expect(await MailNotifier.noteRefused(t), 2);
+      expect(await MailNotifier.noteRefused(t), 3);
+      final third = (await MailNotifier.readBackoff())!;
+      expect(third.refusals, 3);
+      expect(third.notBefore, t.add(const Duration(hours: 4)));
+    });
+
+    test('a working login ends the wait and starts a new streak', () async {
+      final t = DateTime(2026, 10, 16, 3, 24);
+      await MailNotifier.noteRefused(t);
+      await MailNotifier.noteRefused(t);
+      expect(await MailNotifier.clearBackoff(), 2);
+      expect(await MailNotifier.readBackoff(), isNull);
+      expect(await MailNotifier.clearBackoff(), 0);
+      expect(await MailNotifier.noteRefused(t), 1);
+    });
+
+    test('the old indefinite pause is dropped', () async {
+      final store = SharedPreferencesAsync();
+      await store.setBool(MailNotifier.legacyPausedKey, true);
+      expect(await MailNotifier.readBackoff(), isNull);
+      expect(await store.containsKey(MailNotifier.legacyPausedKey), isFalse);
+    });
+  });
+
+  group('refused logins', () {
+    test('the wait doubles from 1 h up to 8 h', () {
+      expect(
+        [for (var n = 1; n <= 6; n++) refusalBackoff(n).inHours],
+        [1, 2, 4, 8, 8, 8],
+      );
+    });
+
+    test('no mail id is the paused notice', () {
+      const span =
+          NotificationService.mailIdMax - NotificationService.mailIdMin;
+      for (final uid in [span - 1, span, 2 * span - 1, 0]) {
+        expect(mailNotificationId(uid), isNot(mailPausedNoticeId));
+      }
+      expect(
+        mailPausedNoticeId,
+        inInclusiveRange(
+          NotificationService.mailIdMin,
+          NotificationService.mailIdMax,
+        ),
+      );
+    });
+
+    test('the log keeps a response code or a known phrase, nothing else', () {
+      expect(
+        refusalCode('[AUTHENTICATIONFAILED] Authentication failed.'),
+        '[AUTHENTICATIONFAILED]',
+      );
+      expect(refusalCode('[unavailable] try later'), '[UNAVAILABLE]');
+      expect(
+        refusalCode('Login failed: authentication failure'),
+        'authentication failure',
+      );
+      // Unknown brackets and free text never reach the log as they are.
+      expect(refusalCode('[LSCHIFFE] locked'), 'other');
+      expect(refusalCode('user lschiffe@smail.th-koeln.de blocked'), 'other');
+      expect(refusalCode(null), 'other');
     });
   });
 }

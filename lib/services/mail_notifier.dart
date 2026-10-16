@@ -126,12 +126,104 @@ MailAnnouncements planMailAnnouncements({
 }
 
 /// The notification id of inbox mail [uid] — inside the mail range, so a
-/// mail notification only ever replaces or cancels another mail's.
+/// mail notification only ever replaces or cancels another mail's. The top
+/// of the range is left to [mailPausedNoticeId].
 int mailNotificationId(int uid) {
-  const span =
-      NotificationService.mailIdMax - NotificationService.mailIdMin + 1;
+  const span = NotificationService.mailIdMax - NotificationService.mailIdMin;
   return NotificationService.mailIdMin + uid % span;
 }
+
+/// The "notifications paused" notice — in the mail range, so an account
+/// switch (`cancelMail`) removes it too, but never a mail's id.
+const mailPausedNoticeId = NotificationService.mailIdMax;
+
+/// Refused logins in a row after which the background check posts the
+/// paused notice — once per streak.
+const mailPausedNoticeAfter = 3;
+
+/// How long the background check waits after its [refusals]th refused login
+/// in a row: 1 h, 2 h, 4 h, then 8 h each time.
+///
+/// A refusal isn't always a wrong password — this server also answers
+/// "authentication failure" while it throttles logins, and that clears in
+/// about an hour — so the check tries again by itself. The growing gap keeps
+/// a really changed password to a few failed logins a day.
+Duration refusalBackoff(int refusals) =>
+    Duration(hours: 1 << (refusals.clamp(1, 4) - 1));
+
+// RFC 5530 response codes, plus ALERT.
+const _refusalCodes = {
+  'ALERT',
+  'UNAVAILABLE',
+  'AUTHENTICATIONFAILED',
+  'AUTHORIZATIONFAILED',
+  'EXPIRED',
+  'PRIVACYREQUIRED',
+  'CONTACTADMIN',
+  'NOPERM',
+  'INUSE',
+  'LIMIT',
+  'SERVERBUG',
+  'CANNOT',
+};
+
+const _refusalPhrases = [
+  'authentication failure',
+  'authentication failed',
+  'invalid credentials',
+  'too many',
+  'try again',
+  'unavailable',
+];
+
+/// What the check log keeps of a refused login: the server's response code
+/// (`[UNAVAILABLE]`, `[LIMIT]`…) or one of a few known phrases, else
+/// `other` — never the server's own words, which can echo the username. It
+/// is what tells a throttle from a wrong password on the phone.
+String refusalCode(String? serverText) {
+  final text = serverText ?? '';
+  final code = RegExp(r'\[([A-Za-z]+)').firstMatch(text)?.group(1);
+  if (code != null && _refusalCodes.contains(code.toUpperCase())) {
+    return '[${code.toUpperCase()}]';
+  }
+  final lower = text.toLowerCase();
+  for (final phrase in _refusalPhrases) {
+    if (lower.contains(phrase)) return phrase;
+  }
+  return 'other';
+}
+
+/// The background check's wait after refused logins: [refusals] in a row,
+/// the last one answered with a wait until [notBefore].
+@immutable
+class MailLoginBackoff {
+  const MailLoginBackoff({required this.refusals, required this.notBefore});
+
+  final int refusals;
+  final DateTime notBefore;
+
+  Map<String, Object> toJson() => {
+    'refusals': refusals,
+    'notBefore': notBefore.millisecondsSinceEpoch,
+  };
+
+  static MailLoginBackoff? fromJson(String? raw) {
+    if (raw == null) return null;
+    try {
+      final j = jsonDecode(raw) as Map<String, dynamic>;
+      return MailLoginBackoff(
+        refusals: j['refusals'] as int,
+        notBefore: DateTime.fromMillisecondsSinceEpoch(j['notBefore'] as int),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+/// Log entries the app writes when its own connection logs in start with
+/// this — notes between the checks, not checks.
+const appLoginLogPrefix = 'app logged in';
 
 /// The tap payload's id: the UID is only meaningful with its UIDVALIDITY.
 String mailPayloadId(int uidValidity, int uid) => '$uidValidity:$uid';
@@ -175,7 +267,7 @@ MailNotificationContent mailNotificationContent(MimeMessage m) {
 /// The settings and stored state behind mail notifications.
 ///
 /// The background check runs in a second isolate and writes the mark, the
-/// pause flag and the log, so those go through [SharedPreferencesAsync],
+/// login backoff and the log, so those go through [SharedPreferencesAsync],
 /// which has no cache: each isolate reads what the other wrote. Not the
 /// legacy API with `reload()` — a reload in flight replaces the app's whole
 /// cache and can drop another feature's write made meanwhile. Only the
@@ -185,7 +277,10 @@ class MailNotifier {
 
   static const enabledKey = 'mail_notify_enabled';
   static const markKey = 'mail_notify_mark_v1';
-  static const pausedKey = 'mail_notify_paused';
+  static const backoffKey = 'mail_notify_backoff_v1';
+  // Before 16 Oct 2026 a refused login paused the check until the app logged
+  // in; that flag is dropped wherever the backoff is read.
+  static const legacyPausedKey = 'mail_notify_paused';
   static const logKey = 'mail_check_log_v1';
   static const _logSize = 100;
 
@@ -246,14 +341,33 @@ class MailNotifier {
     await _store.setString(markKey, jsonEncode(mark.toJson()));
   }
 
-  /// Set by the background check when the server refuses the stored
-  /// password: it stops checking until the app logs in again, so a changed
-  /// password doesn't cost a failed login every quarter hour.
-  static Future<bool> isPaused() async =>
-      await _store.getBool(pausedKey) ?? false;
+  /// The background check's wait after refused logins, if one is running.
+  static Future<MailLoginBackoff?> readBackoff() async {
+    final store = _store;
+    await store.remove(legacyPausedKey);
+    return MailLoginBackoff.fromJson(await store.getString(backoffKey));
+  }
 
-  static Future<void> setPaused(bool v) =>
-      v ? _store.setBool(pausedKey, true) : _store.remove(pausedKey);
+  /// Records a refused login at [now] and returns how many there have been
+  /// in a row; the check waits [refusalBackoff] of that before the next.
+  static Future<int> noteRefused(DateTime now) async {
+    final refusals = ((await readBackoff())?.refusals ?? 0) + 1;
+    final backoff = MailLoginBackoff(
+      refusals: refusals,
+      notBefore: now.add(refusalBackoff(refusals)),
+    );
+    await _store.setString(backoffKey, jsonEncode(backoff.toJson()));
+    return refusals;
+  }
+
+  /// A login worked — the check's or the app's: the wait ends. Returns the
+  /// refusals it cleared, 0 when there was no wait.
+  static Future<int> clearBackoff() async {
+    final backoff = await readBackoff();
+    if (backoff == null) return 0;
+    await _store.remove(backoffKey);
+    return backoff.refusals;
+  }
 
   /// Records when a background check ran and how it went — only times and
   /// outcomes, never an address or a subject. Settings shows it, so the
@@ -282,11 +396,12 @@ class MailNotifier {
     return out.reversed.toList();
   }
 
-  /// Account switch: the mark, the pause and the log belong to the old
+  /// Account switch: the mark, the backoff and the log belong to the old
   /// account; its notifications go too. The opt-in stays.
   static Future<void> clear() async {
     await _store.remove(markKey);
-    await _store.remove(pausedKey);
+    await _store.remove(backoffKey);
+    await _store.remove(legacyPausedKey);
     await _store.remove(logKey);
     await NotificationService.instance.cancelMail();
   }

@@ -3,7 +3,8 @@ import 'dart:math' show min, max;
 
 import 'package:enough_mail/enough_mail.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart' show AppLifecycleListener;
+import 'package:flutter/widgets.dart'
+    show AppLifecycleListener, AppLifecycleState, WidgetsBinding;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -316,8 +317,7 @@ class MailService extends ChangeNotifier {
       throw const MailConnectException('signed out', rejected: false);
     }
     _cachedUsername = username;
-    // The password works again: the background check may resume.
-    unawaited(MailNotifier.setPaused(false).catchError((_) {}));
+    unawaited(_noteAppLogin().catchError((_) {}));
     final idle = imap.serverInfo.supportsIdle;
     if (_idleSupported == null) {
       _log(
@@ -336,6 +336,28 @@ class MailService extends ChangeNotifier {
                 '${_pollEvery.inSeconds} s'})',
     );
     return imap;
+  }
+
+  /// The stored password works: the background check's wait after refused
+  /// logins ends and its paused notice goes. The check log notes the login
+  /// when it ended a wait, or when the app wasn't in the foreground — a
+  /// background launch logging in next to the check's own login is what
+  /// that row is there to catch.
+  Future<void> _noteAppLogin() async {
+    final cleared = await MailNotifier.clearBackoff();
+    if (cleared >= mailPausedNoticeAfter) {
+      await NotificationService.instance.cancel(mailPausedNoticeId);
+    }
+    final state = WidgetsBinding.instance.lifecycleState;
+    final background =
+        state != AppLifecycleState.resumed &&
+        state != AppLifecycleState.inactive;
+    if (!background && cleared == 0) return;
+    await MailNotifier.logRun(
+      DateTime.now(),
+      '$appLoginLogPrefix${background ? ' (background)' : ''}'
+      '${cleared > 0 ? ': checks resumed' : ''}',
+    );
   }
 
   /// Runs [op] on the main connection, after checking the account is still

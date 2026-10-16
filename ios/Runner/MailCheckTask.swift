@@ -131,6 +131,11 @@ final class MailCheckTask {
       switch call.method {
       case "post":
         self?.post(call.arguments as? [[String: Any]] ?? []) { result(nil) }
+      case "unpost":
+        // The paused notice, once a login works again.
+        let ids = (call.arguments as? [Int] ?? []).map(String.init)
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ids)
+        result(nil)
       case "done":
         result(nil)
         // Not from inside the engine's own callback: it is torn down here.

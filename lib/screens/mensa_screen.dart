@@ -8,6 +8,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_theme.dart' as tokens;
+import '../services/calendar_days.dart';
 import '../services/mensa_service.dart';
 import '../services/page_actions.dart';
 import '../services/theme_service.dart';
@@ -75,22 +76,18 @@ class _MensaScreenState extends State<MensaScreen>
     super.dispose();
   }
 
-  DateTime _dateForPage(int page) =>
-      _baseDate.add(Duration(days: page - _initialPage));
+  /// Local midnight of the page's date. Calendar days, never 24 h steps: past a
+  /// DST switch those drift an hour, and from a launch near midnight onto the
+  /// neighbouring date (a day shown twice, or skipped).
+  DateTime _dateForPage(int page) => addDays(_baseDate, page - _initialPage);
 
   /// The page showing *today*, which is only [_initialPage] until the app lives
   /// past midnight — [_baseDate] is captured once, in initState.
   int get _todayPage => _pageForDate(DateTime.now());
 
   /// The page showing [day]'s calendar date, whatever its time of day.
-  ///
-  /// Diffed through UTC so a DST boundary between the two dates can't shift the
-  /// day count by one.
-  int _pageForDate(DateTime day) {
-    final d = DateTime.utc(day.year, day.month, day.day);
-    final base = DateTime.utc(_baseDate.year, _baseDate.month, _baseDate.day);
-    return _initialPage + d.difference(base).inDays;
-  }
+  int _pageForDate(DateTime day) =>
+      _initialPage + daysBetween(_baseDate, day);
 
   /// Slides to [target] the way the calendar's day view does: one step away is
   /// a plain page animation; further away jumps next to the target first and
@@ -376,8 +373,8 @@ class _WeekStripState extends State<_WeekStrip>
         final cellW    = stripW / 7.0;
         final colorKey = ThemeService.instance.currentColor.value;
 
-        // Date-only throughout: the pager's dates carry the time of day the
-        // app was opened, and Duration arithmetic drifts across DST.
+        // Date-only throughout: the first focused day is DateTime.now(), time
+        // of day included, and Duration arithmetic drifts across DST.
         final today   = _dateOnly(DateTime.now());
         final focused = _dateOnly(widget.focusedDay);
         final monday  = DateTime(

@@ -1,4 +1,5 @@
-// Calendar-day arithmetic for the day view, pinned by test/calendar_days_test.dart.
+// Calendar-day arithmetic for the calendar's and the mensa's day pagers, pinned
+// by test/calendar_days_test.dart.
 //
 // A local DateTime plus Duration(days: n) adds n × 24 h, but a DST switch makes
 // one day 23 or 25 h long. Past the October switch, `_today.add(...)` landed on

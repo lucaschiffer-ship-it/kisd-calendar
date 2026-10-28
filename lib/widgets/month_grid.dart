@@ -13,13 +13,22 @@ import '../services/theme_service.dart';
 // row (38px line, 36px circles, Inter 18, cells = width/7) so the flying row
 // only has to translate vertically during the morph — no font or x lerp.
 
-const double kMonthHeaderH = 64.0;
-const double kWeekRowH = 96.0;
+const double kMonthLabelH = 30.0;
+// Apple Calendar's tall rows: about two weeks per screen, room for ~6 timed
+// events a day with their start times.
+const double kWeekRowH = 340.0;
 const double kNumberLineH = 38.0;
 
-const List<String> _kMonthNames = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
+// Event chips have fixed heights, so a row's capacity is known up front.
+const double _kAllDayChipH = 20.0;
+const double _kTimedChipH = 44.0;
+const double _kChipGap = 3.0;
+const double _kMoreLineH = 14.0;
+const double _kChipsH = kWeekRowH - kNumberLineH - 6.0;
+
+const List<String> _kShortMonthNames = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
 ];
 
 // Day arithmetic via constructor normalisation — immune to DST hour shifts.
@@ -31,19 +40,21 @@ int _dayKey(DateTime d) => d.year * 10000 + d.month * 100 + d.day;
 int _monthKey(DateTime d) => d.year * 12 + d.month - 1;
 
 // ─── Layout table ─────────────────────────────────────────────────────────────
+//
+// Pinned by test/month_grid_layout_test.dart.
 
 class MonthGridItem {
-  const MonthGridItem.header(this.month) : monday = null;
+  const MonthGridItem.label(this.month) : monday = null;
   const MonthGridItem.week(this.monday, this.month);
 
-  /// Owner month of the item. A week row is owned by the month containing its
-  /// Sunday, so every calendar week appears exactly once and the month header
-  /// always sits directly above the row containing the 1st.
+  /// The month this item belongs to. A week that straddles two months is two
+  /// rows, one per month, each showing only its own days — so every day sits
+  /// in exactly one row, below its own month's label (Apple Calendar's split).
   final DateTime month;
   final DateTime? monday;
 
-  bool get isHeader => monday == null;
-  double get height => isHeader ? kMonthHeaderH : kWeekRowH;
+  bool get isLabel => monday == null;
+  double get height => isLabel ? kMonthLabelH : kWeekRowH;
 }
 
 class MonthGridLayout {
@@ -52,15 +63,16 @@ class MonthGridLayout {
     for (var y = today.year - _yearsBack; y <= today.year + _yearsForward; y++) {
       for (var m = 1; m <= 12; m++) {
         final month = DateTime(y, m);
-        _monthIndex[_monthKey(month)] = list.length;
-        list.add(MonthGridItem.header(month));
-        var monday = _mondayOf(DateTime(y, m, 1));
-        while (true) {
-          final sunday = _addDays(monday, 6);
-          if (sunday.year != y || sunday.month != m) break;
-          _weekIndex[_dayKey(monday)] = list.length;
+        list.add(MonthGridItem.label(month));
+        final lastKey = _dayKey(DateTime(y, m + 1, 0));
+        for (var monday = _mondayOf(DateTime(y, m, 1));
+            _dayKey(monday) <= lastKey;
+            monday = _addDays(monday, 7)) {
+          for (var i = 0; i < 7; i++) {
+            final day = _addDays(monday, i);
+            if (day.month == m) _dayRow[_dayKey(day)] = list.length;
+          }
           list.add(MonthGridItem.week(monday, month));
-          monday = _addDays(monday, 7);
         }
       }
     }
@@ -79,24 +91,28 @@ class MonthGridLayout {
 
   /// offsets[i] = content offset of item i; offsets.last = total height.
   late final List<double> offsets;
-  final _monthIndex = <int, int>{};
-  final _weekIndex = <int, int>{};
+  final _dayRow = <int, int>{};
 
   double get totalHeight => offsets.last;
 
-  static DateTime ownerMonthOf(DateTime monday) {
-    final sunday = _addDays(monday, 6);
-    return DateTime(sunday.year, sunday.month);
+  /// Content offset of the row holding [day]; null outside the grid's range.
+  double? offsetOfDayRowOrNull(DateTime day) {
+    final i = _dayRow[_dayKey(day)];
+    return i == null ? null : offsets[i];
   }
 
-  static DateTime mondayOf(DateTime d) => _mondayOf(d);
-
-  double offsetOfMonthHeader(DateTime month) =>
-      offsets[_monthIndex[_monthKey(month)] ?? 0];
-
-  double? offsetOfWeekOrNull(DateTime monday) {
-    final i = _weekIndex[_dayKey(monday)];
-    return i == null ? null : offsets[i];
+  /// Month of the item at content offset [y] — what the header's title shows.
+  DateTime monthAt(double y) {
+    var lo = 0, hi = items.length - 1;
+    while (lo < hi) {
+      final mid = (lo + hi + 1) ~/ 2;
+      if (offsets[mid] <= y) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return items[lo].month;
   }
 }
 
@@ -110,7 +126,7 @@ class MonthGrid extends StatefulWidget {
     required this.topInset,
     required this.bottomInset,
     required this.today,
-    this.hiddenNumbersWeek,
+    this.hiddenNumbersDay,
     required this.onDayTapped,
     this.onEventTap,
   });
@@ -121,9 +137,9 @@ class MonthGrid extends StatefulWidget {
   final double bottomInset;
   final DateTime today;
 
-  /// Monday of the week whose number line is suppressed while the flying
-  /// overlay covers it during the morph.
-  final DateTime? hiddenNumbersWeek;
+  /// A day of the row whose number line is suppressed while the flying
+  /// overlay covers it during the morph. Only that day's half of a split week.
+  final DateTime? hiddenNumbersDay;
   final void Function(DateTime day) onDayTapped;
   final void Function(DeviceCalendarEvent, DateTime)? onEventTap;
 
@@ -188,61 +204,64 @@ class _MonthGridState extends State<MonthGrid> {
             i < layout.items.length ? layout.items[i].height : null,
         itemBuilder: (context, i) {
           final item = layout.items[i];
-          return item.isHeader
-              ? _buildMonthHeader(item.month)
+          return item.isLabel
+              ? _buildMonthLabel(item.month)
               : _buildWeekRow(item.monday!, item.month);
         },
       ),
     );
   }
 
-  Widget _buildMonthHeader(DateTime month) {
-    final showYear = month.year != widget.today.year;
+  /// The short month name above the 1st's column, like Apple's "Nov".
+  Widget _buildMonthLabel(DateTime month) {
+    final firstCol = DateTime(month.year, month.month, 1).weekday - 1;
     return SizedBox(
-      height: kMonthHeaderH,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-        child: Align(
-          alignment: Alignment.bottomLeft,
-          child: Text(
-            showYear
-                ? '${_kMonthNames[month.month - 1]} ${month.year}'
-                : _kMonthNames[month.month - 1],
-            style: GoogleFonts.spaceGrotesk(
-              fontSize: 30,
-              fontWeight: FontWeight.w700,
-              color: AppThemeTokens.titleColor,
-              letterSpacing: -0.4,
-            ),
-          ),
-        ),
+      height: kMonthLabelH,
+      child: Row(
+        children: List.generate(7, (i) => Expanded(
+          child: i != firstCol
+              ? const SizedBox.shrink()
+              : Align(
+                  alignment: Alignment.bottomCenter,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      _kShortMonthNames[month.month - 1],
+                      maxLines: 1,
+                      softWrap: false,
+                      style: GoogleFonts.inter(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: AppThemeTokens.titleColor,
+                      ),
+                    ),
+                  ),
+                ),
+        )),
       ),
     );
   }
 
-  Widget _buildWeekRow(DateTime monday, DateTime ownerMonth) {
-    // A boundary week needs events from both months it touches.
-    _ensureMonth(DateTime(monday.year, monday.month));
-    final sunday = _addDays(monday, 6);
-    _ensureMonth(DateTime(sunday.year, sunday.month));
+  Widget _buildWeekRow(DateTime monday, DateTime month) {
+    _ensureMonth(month);
 
-    final hideNumbers = widget.hiddenNumbersWeek != null &&
-        _sameDay(widget.hiddenNumbersWeek!, monday);
+    final hidden = widget.hiddenNumbersDay;
+    final hideNumbers = hidden != null &&
+        _sameDay(_mondayOf(hidden), monday) &&
+        _monthKey(hidden) == _monthKey(month);
 
-    return Container(
+    return SizedBox(
       height: kWeekRowH,
-      decoration: BoxDecoration(
-        border: Border(
-          top: BorderSide(color: AppThemeTokens.dividerColor, width: 0.5),
-        ),
-      ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: List.generate(7, (i) {
           final day = _addDays(monday, i);
+          // The other month's days of a split week are blank: they live in
+          // that month's own row.
           return Expanded(
-            child: _buildDayCell(day, ownerMonth,
-                isWeekend: i >= 5, hideNumber: hideNumbers),
+            child: _monthKey(day) != _monthKey(month)
+                ? const SizedBox.shrink()
+                : _buildDayCell(day, isWeekend: i >= 5, hideNumber: hideNumbers),
           );
         }),
       ),
@@ -250,113 +269,180 @@ class _MonthGridState extends State<MonthGrid> {
   }
 
   Widget _buildDayCell(
-    DateTime day,
-    DateTime ownerMonth, {
+    DateTime day, {
     required bool isWeekend,
     required bool hideNumber,
   }) {
     final isToday = _sameDay(day, widget.today);
-    final inOwner =
-        day.month == ownerMonth.month && day.year == ownerMonth.year;
-    final numberColor = !inOwner && !isToday
-        ? AppThemeTokens.secondaryTextColor.withValues(alpha: 0.35)
-        : isWeekend
-            ? AppThemeTokens.secondaryTextColor
-            : AppThemeTokens.titleColor;
+    final numberColor = isWeekend
+        ? AppThemeTokens.secondaryTextColor
+        : AppThemeTokens.titleColor;
 
     final events = _eventsFor(day);
-    final maxChips = events.length > 3 ? 2 : events.length;
-    final overflow = events.length > 3 ? events.length - 2 : 0;
+    final shown = _chipsThatFit(events);
+    final overflow = events.length - shown;
 
-    return GestureDetector(
-      onTap: () => widget.onDayTapped(day),
-      behavior: HitTestBehavior.opaque,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Opacity(
-            opacity: hideNumber ? 0.0 : 1.0,
-            child: SizedBox(
-              height: kNumberLineH,
-              child: Center(
-                child: isToday
-                    ? Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: AppThemeTokens.accentColor,
-                          shape: BoxShape.circle,
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
+    // Per-cell top divider, so it spans only the row's own month's days.
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: AppThemeTokens.dividerColor, width: 0.5),
+        ),
+      ),
+      child: GestureDetector(
+        onTap: () => widget.onDayTapped(day),
+        behavior: HitTestBehavior.opaque,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Opacity(
+              opacity: hideNumber ? 0.0 : 1.0,
+              child: SizedBox(
+                height: kNumberLineH,
+                child: Center(
+                  child: isToday
+                      ? Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: AppThemeTokens.accentColor,
+                            shape: BoxShape.circle,
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            '${day.day}',
+                            style: GoogleFonts.inter(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                        )
+                      : Text(
                           '${day.day}',
                           style: GoogleFonts.inter(
                             fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
+                            fontWeight: FontWeight.w500,
+                            color: numberColor,
                           ),
                         ),
-                      )
-                    : Text(
-                        '${day.day}',
-                        style: GoogleFonts.inter(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w500,
-                          color: numberColor,
-                        ),
-                      ),
+                ),
               ),
             ),
-          ),
-          for (final e in events.take(maxChips))
-            GestureDetector(
-              onTap: widget.onEventTap != null
-                  ? () => widget.onEventTap!(e, day)
-                  : null,
-              child: Container(
-                height: 16,
-                margin: const EdgeInsets.only(left: 2, right: 2, bottom: 2),
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                alignment: Alignment.centerLeft,
-                decoration: BoxDecoration(
-                  color: e.calendarColor.withValues(alpha: 0.22),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  e.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.inter(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    color: e.calendarColor,
+            for (final e in events.take(shown))
+              GestureDetector(
+                onTap: widget.onEventTap != null
+                    ? () => widget.onEventTap!(e, day)
+                    : null,
+                child: e.allDay ? _allDayChip(e) : _timedChip(e),
+              ),
+            if (overflow > 0)
+              SizedBox(
+                height: _kMoreLineH,
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 6),
+                  child: Text(
+                    '+$overflow',
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: AppThemeTokens.secondaryTextColor,
+                    ),
                   ),
                 ),
               ),
-            ),
-          if (overflow > 0)
-            Padding(
-              padding: const EdgeInsets.only(left: 6),
-              child: Text(
-                '+$overflow',
-                style: GoogleFonts.inter(
-                  fontSize: 9,
-                  fontWeight: FontWeight.w500,
-                  color: AppThemeTokens.secondaryTextColor,
-                ),
-              ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
+
+  /// How many of [events] fit under the number line, leaving room for the
+  /// "+N" line whenever some don't. Chip heights are fixed for exactly this.
+  static int _chipsThatFit(List<DeviceCalendarEvent> events) {
+    var used = 0.0;
+    for (var i = 0; i < events.length; i++) {
+      final h = (events[i].allDay ? _kAllDayChipH : _kTimedChipH) + _kChipGap;
+      final more = i == events.length - 1 ? 0.0 : _kMoreLineH;
+      if (used + h + more > _kChipsH) return i;
+      used += h;
+    }
+    return events.length;
+  }
+
+  /// All-day event: a one-line pill, clipped like Apple's.
+  Widget _allDayChip(DeviceCalendarEvent e) => Container(
+        height: _kAllDayChipH,
+        margin: const EdgeInsets.only(left: 2, right: 2, bottom: _kChipGap),
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        alignment: Alignment.centerLeft,
+        decoration: BoxDecoration(
+          color: e.calendarColor.withValues(alpha: 0.22),
+          borderRadius: BorderRadius.circular(_kAllDayChipH / 2),
+        ),
+        child: Text(
+          e.title,
+          maxLines: 1,
+          softWrap: false,
+          overflow: TextOverflow.fade,
+          style: GoogleFonts.inter(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: e.calendarColor,
+          ),
+        ),
+      );
+
+  /// Timed event: up to two lines of title, then the start time. Same height
+  /// for a one-line title, so the rows' capacity stays a constant.
+  Widget _timedChip(DeviceCalendarEvent e) => Container(
+        height: _kTimedChipH,
+        margin: const EdgeInsets.only(left: 2, right: 2, bottom: _kChipGap),
+        padding: const EdgeInsets.fromLTRB(4, 3, 3, 3),
+        decoration: BoxDecoration(
+          color: e.calendarColor.withValues(alpha: 0.22),
+          borderRadius: BorderRadius.circular(5),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Text(
+                e.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: e.calendarColor,
+                  height: 1.15,
+                ),
+              ),
+            ),
+            Text(
+              _fmtTime(e.start),
+              maxLines: 1,
+              style: GoogleFonts.inter(
+                fontSize: 10,
+                fontWeight: FontWeight.w500,
+                color: e.calendarColor.withValues(alpha: 0.75),
+                height: 1.15,
+              ),
+            ),
+          ],
+        ),
+      );
+
+  static String _fmtTime(TimeOfDay t) =>
+      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 }
 
 // ─── Flying week row — the morphing numbers row of the week↔month transition ──
 //
 // v = 0 renders pixel-identical to the header week strip's numbers row
 // (pill + focus circle + strip colors); v = 1 renders pixel-identical to the
-// month grid's number line (no pill, today circle, dimmed out-of-month days).
+// month grid's number line (no pill, today circle, the other month's days of
+// a split week gone).
 // Styling dissolves over the first 40% of the flight; the rest is pure travel.
 
 class FlyingWeekRow extends StatelessWidget {
@@ -373,6 +459,9 @@ class FlyingWeekRow extends StatelessWidget {
   final DateTime monday;
   final DateTime focusedDay;
   final DateTime today;
+
+  /// Month of the grid row this lands on — the focused day's: a week that
+  /// straddles two months has a row per month.
   final DateTime ownerMonth;
 
   /// Morph progress: 0 = header strip look, 1 = month grid look.
@@ -461,8 +550,10 @@ class FlyingWeekRow extends StatelessWidget {
                 ),
               ),
             // Today accent circle — persistent when focused, otherwise fades
-            // in toward the month look.
-            if (todayIndex >= 0)
+            // in toward the month look. Never when today is in the other half
+            // of a split week: the row this lands on doesn't hold it.
+            if (todayIndex >= 0 &&
+                _monthKey(_addDays(monday, todayIndex)) == _monthKey(ownerMonth))
               Positioned(
                 left: todayIndex * cellW + (cellW - 36) / 2,
                 top: (kNumberLineH - 36) / 2,
@@ -496,10 +587,12 @@ class FlyingWeekRow extends StatelessWidget {
                         : isWeekend
                             ? secondary
                             : title;
-                final monthColor = isToday
-                    ? Colors.white
-                    : !inOwner
-                        ? secondary.withValues(alpha: 0.35)
+                // The other month's days of a split week are blank in the
+                // grid row this lands on, so they fade out completely.
+                final monthColor = !inOwner
+                    ? secondary.withValues(alpha: 0.0)
+                    : isToday
+                        ? Colors.white
                         : isWeekend
                             ? secondary
                             : title;

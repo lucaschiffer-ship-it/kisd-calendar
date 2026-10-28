@@ -187,6 +187,32 @@ University events come from the Event Organiser list in wp-admin (`/home/wp-admi
 - Only weekly patterns become an RRULE; "custom recurrence" / "every day" are written as their first date. If those ever matter: `admin-ajax.php?action=eventorganiser-fullcal&start=…&end=` returns every occurrence as JSON (logged-in session).
 - EventKit ends an all-day event at 23:59:59 of its last day; `getAllDayEventsForRange` takes the last day from end − 1 s.
 
+### Month grid (`lib/widgets/month_grid.dart`, pinned by `test/month_grid_layout_test.dart`)
+
+The calendar's month mode (the month/"Week" pill; the week strip's numbers row
+morphs into a grid row) is laid out like Apple Calendar. The old `month_view.dart`
+is only reachable through the hidden View button.
+
+- **A row is (monday, month).** A week straddling two months is two rows, each
+  showing only its own month's days (the other cells blank, dividers only over the
+  month's days), and every month starts with a short label item ("Nov") above its
+  1st. Look rows up by **day** (`offsetOfDayRowOrNull`), never by Monday.
+- The month name is a large title in the header (`_buildMonthTitle`, driven by
+  `layout.monthAt` from the grid's scroll through a `ValueNotifier`). Its height
+  `_kMonthTitleH` has to be counted in three places at once: `_headerHeight`,
+  `_monthTopInset`, and `_exitMonth`'s `headerY` (measured at v = 1, where the
+  title still pushes the letters down).
+- The flight lands on the **focused day's half-row**: `FlyingWeekRow` fades the
+  other month's numbers (and today's circle, if today is there) to nothing, and
+  `hiddenNumbersDay` hides only that half in the grid.
+- Rows are 340 pt, so entry, Today and the Week pill settle on the day's row
+  (`_settleScrollFor`), not on the month's start. That would leave a late week
+  far below the screen. It leaves `AppGlass.headerOverhang` above the row, which
+  the glass header paints past its reported height.
+- Event chips have fixed heights (all-day pill, two-line timed block with start
+  time), so `_chipsThatFit` knows a row's capacity without measuring; the rest
+  becomes "+N".
+
 ### Cache (`CacheService`)
 
 `SharedPreferences`, key `kisd_courses`, JSON array. Bump `_currentVersion` (currently `14`) whenever the stored schema changes — the app clears and re-scrapes on version mismatch.

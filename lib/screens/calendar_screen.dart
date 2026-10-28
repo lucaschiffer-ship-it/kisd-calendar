@@ -96,6 +96,9 @@ class _CalendarScreenState extends State<CalendarScreen>
   static const double _kButtonsRowH = 60.0;
   static const double _kDayBarH     = 70.0;
   static const double _kColLabelH   = 28.0;
+  // Month mode's large month title, above the weekday letters. _headerHeight,
+  // _monthTopInset and _exitMonth's headerY all have to count it.
+  static const double _kMonthTitleH = 52.0;
 
   // Timeline constants
   static const int _kTodayPage = 500;
@@ -187,6 +190,9 @@ class _CalendarScreenState extends State<CalendarScreen>
   double _monthMaxScroll = 0.0;
   final _stripNumbersKey = GlobalKey();
   final _stripLettersKey = GlobalKey();
+  // The month the header's title shows, following the grid's scroll. A
+  // notifier so scrolling rebuilds only the title, not the screen.
+  final _monthTitle = ValueNotifier<DateTime>(DateTime(2000));
 
   Offset _slideBegin = const Offset(0.15, 0);
 
@@ -212,6 +218,7 @@ class _CalendarScreenState extends State<CalendarScreen>
   // morph, which is why _monthTopInset below stays the week-strip-only height.
   double _headerHeight(double statusH) =>
       statusH + _kTitleRowH +
+      _kMonthTitleH * _monthCurved.value +
       (_kDayBarH - 42.0 * _monthCurved.value) * _dayBarCurved.value +
       _bandBlockH;
 
@@ -284,6 +291,7 @@ class _CalendarScreenState extends State<CalendarScreen>
     _allDayAnim.dispose();
     _editController.dispose();
     _monthScrollCtrl?.dispose();
+    _monthTitle.dispose();
     _monthCurved.dispose();
     _monthAnim.dispose();
     _timelineScrollController.dispose();
@@ -458,13 +466,10 @@ class _CalendarScreenState extends State<CalendarScreen>
   void _goToToday() {
     if (_monthAnim.isAnimating) return;
     if (_monthActive) {
-      // Stay in month mode; scroll the grid to today's month.
-      final layout = _monthLayout;
+      // Stay in month mode; scroll today's row to the top.
       final ctrl = _monthScrollCtrl;
-      if (layout != null && ctrl != null && ctrl.hasClients) {
-        final target = layout
-            .offsetOfMonthHeader(DateTime(_today.year, _today.month))
-            .clamp(0.0, _monthMaxScroll);
+      final target = _settleScrollFor(_today);
+      if (target != null && ctrl != null && ctrl.hasClients) {
         ctrl.animateTo(
           target,
           duration: const Duration(milliseconds: 350),
@@ -809,6 +814,27 @@ class _CalendarScreenState extends State<CalendarScreen>
     }
   }
 
+  /// Scroll offset that puts [day]'s row at the top, right under the header.
+  /// Rows are tall, so anchoring on the month's start would leave a late week
+  /// below the screen. Null outside the grid's range.
+  double? _settleScrollFor(DateTime day) {
+    final row = _monthLayout?.offsetOfDayRowOrNull(day);
+    // Clear of the glass header's painted overhang, which would otherwise
+    // cover the top of the row's day numbers.
+    return row == null
+        ? null
+        : (row - AppGlass.headerOverhang).clamp(0.0, _monthMaxScroll);
+  }
+
+  void _onMonthScroll() {
+    final layout = _monthLayout;
+    final ctrl = _monthScrollCtrl;
+    if (layout == null || ctrl == null || !ctrl.hasClients) return;
+    // The title turns once the last month's final row is mostly scrolled away.
+    final month = layout.monthAt(ctrl.offset + kWeekRowH / 3);
+    if (month != _monthTitle.value) _monthTitle.value = month;
+  }
+
   void _onMonthAnimStatus(AnimationStatus s) {
     if (s == AnimationStatus.completed) {
       // Month settled: drop the overlay, the grid reveals its own (identical)
@@ -865,14 +891,15 @@ class _CalendarScreenState extends State<CalendarScreen>
     final monday = _weekMonday(focusedDay);
     _monthLayout ??= MonthGridLayout(today: _today);
     final layout = _monthLayout!;
-    final rowOffset = layout.offsetOfWeekOrNull(monday);
+    final rowOffset = layout.offsetOfDayRowOrNull(focusedDay);
     if (rowOffset == null) return; // outside the grid's 5-year range
-    final ownerMonth = MonthGridLayout.ownerMonthOf(monday);
+    final month = DateTime(focusedDay.year, focusedDay.month);
 
     final insets = ScreenInsets.of(context);
     final statusH = insets.top;
     final bottomSafe = insets.bottom;
-    _monthTopInset = statusH + _kTitleRowH + (_kDayBarH - 42.0);
+    _monthTopInset =
+        statusH + _kTitleRowH + _kMonthTitleH + (_kDayBarH - 42.0);
     _monthBottomInset = bottomSafe + 120.0;
     _monthMaxScroll = (_monthTopInset +
             layout.totalHeight +
@@ -880,11 +907,10 @@ class _CalendarScreenState extends State<CalendarScreen>
             screenObj.size.height)
         .clamp(0.0, double.infinity);
 
-    final settleScroll =
-        layout.offsetOfMonthHeader(ownerMonth).clamp(0.0, _monthMaxScroll);
+    final settleScroll = _settleScrollFor(focusedDay)!;
     final flight = _MonthFlight(
       monday: monday,
-      ownerMonth: ownerMonth,
+      ownerMonth: month,
       focusedDay: focusedDay,
       headerY: numbersRect.top,
       gridY: _monthTopInset + rowOffset - settleScroll,
@@ -896,7 +922,9 @@ class _CalendarScreenState extends State<CalendarScreen>
 
     _monthScrollCtrl?.dispose();
     _monthScrollCtrl =
-        ScrollController(initialScrollOffset: flight.scrollFor(0.0));
+        ScrollController(initialScrollOffset: flight.scrollFor(0.0))
+          ..addListener(_onMonthScroll);
+    _monthTitle.value = month;
 
     setState(() {
       _monthActive = true;
@@ -915,7 +943,7 @@ class _CalendarScreenState extends State<CalendarScreen>
     if (screenObj is! RenderBox) return;
 
     final monday = _weekMonday(day);
-    final rowOffset = layout.offsetOfWeekOrNull(monday);
+    final rowOffset = layout.offsetOfDayRowOrNull(day);
     final lettersCtx = _stripLettersKey.currentContext;
     if (rowOffset == null || lettersCtx == null) {
       // No flight geometry available — exit without the morph.
@@ -939,9 +967,11 @@ class _CalendarScreenState extends State<CalendarScreen>
 
     final flight = _MonthFlight(
       monday: monday,
-      ownerMonth: MonthGridLayout.ownerMonthOf(monday),
+      ownerMonth: DateTime(day.year, day.month),
       focusedDay: day,
-      headerY: lettersRect.bottom + 4.0,
+      // Measured at v = 1, where the month title still pushes the letters
+      // down; at v = 0 it is gone and the numbers sit that much higher.
+      headerY: lettersRect.bottom + 4.0 - _kMonthTitleH,
       gridY: _monthTopInset + rowOffset - ctrl.offset,
       rowOffset: rowOffset,
       topInset: _monthTopInset,
@@ -976,20 +1006,16 @@ class _CalendarScreenState extends State<CalendarScreen>
         ctrl != null &&
         ctrl.hasClients &&
         screenObj is RenderBox) {
-      final monday = _weekMonday(day);
-      final rowOffset = layout.offsetOfWeekOrNull(monday);
+      final rowOffset = layout.offsetOfDayRowOrNull(day);
       if (rowOffset != null) {
-        // If the target row scrolled off-screen, bring it back to its natural
-        // month-anchored position before flying it into the header.
+        // If the target row scrolled off-screen, bring it back to the top
+        // before flying it into the header.
         final screenY = _monthTopInset + rowOffset - ctrl.offset;
         final offScreen = screenY < _monthTopInset - kWeekRowH ||
             screenY > screenObj.size.height;
         if (offScreen) {
-          final target = layout
-              .offsetOfMonthHeader(MonthGridLayout.ownerMonthOf(monday))
-              .clamp(0.0, _monthMaxScroll);
           await ctrl.animateTo(
-            target,
+            _settleScrollFor(day)!,
             duration: const Duration(milliseconds: 220),
             curve: Curves.easeOut,
           );
@@ -1148,7 +1174,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                 topInset: _monthTopInset,
                 bottomInset: _monthBottomInset,
                 today: _today,
-                hiddenNumbersWeek: _flight?.monday,
+                hiddenNumbersDay: _flight?.focusedDay,
                 onDayTapped: _exitMonth,
                 onEventTap: (e, d) => showEventDetail(context, e, d),
               ),
@@ -1170,6 +1196,10 @@ class _CalendarScreenState extends State<CalendarScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(height: statusH + _kTitleRowH),
+
+          // ── Month title: grows in with the month morph, above the letters
+          // row that becomes the grid's weekday header ─────────────────────
+          if (_monthActive) _buildMonthTitle(),
 
           // ── Week strip (animates in/out when toggling list mode and when
           // leaving day level; stays mounted until fully collapsed) ─────────
@@ -1200,6 +1230,51 @@ class _CalendarScreenState extends State<CalendarScreen>
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  /// The month the grid's top row belongs to, Apple-style. The year only shows
+  /// outside today's year.
+  Widget _buildMonthTitle() {
+    final mv = _monthCurved.value;
+    return SizedBox(
+      height: _kMonthTitleH * mv,
+      child: ClipRect(
+        child: OverflowBox(
+          alignment: Alignment.bottomLeft,
+          minHeight: _kMonthTitleH,
+          maxHeight: _kMonthTitleH,
+          child: Opacity(
+            opacity: mv,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+              child: ValueListenableBuilder<DateTime>(
+                valueListenable: _monthTitle,
+                builder: (context, month, _) => AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 180),
+                  layoutBuilder: (current, previous) => Stack(
+                    alignment: Alignment.bottomLeft,
+                    children: [...previous, ?current],
+                  ),
+                  child: Text(
+                    month.year == _today.year
+                        ? _kMonthNames[month.month - 1]
+                        : '${_kMonthNames[month.month - 1]} ${month.year}',
+                    key: ValueKey(month),
+                    maxLines: 1,
+                    style: GoogleFonts.spaceGrotesk(
+                      fontSize: 32,
+                      fontWeight: FontWeight.w700,
+                      color: tokens.AppThemeTokens.titleColor,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

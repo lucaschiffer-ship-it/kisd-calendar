@@ -122,7 +122,7 @@ Quick once-over that the hardening broke nothing:
   screen (`lib/screens/privacy_screen.dart`).
 - [ ] Decide on **open-sourcing the repo** — strongest possible answer to the
   Spaces admin's concern (see `docs/privacy.md`, Verdict section).
-- [ ] Consider the display name ("Kisd Calendar") — an unofficial app using the
+- [ ] Consider the display name ("KISDesk") — an unofficial app using the
   KISD name is the most likely App Review question, not privacy.
 - [ ] Optional: show the admin `docs/privacy.md` + `PRIVACY.md` — it answers his
   concern point by point, in his own terms (RFC 8252).

@@ -1,8 +1,8 @@
-# Privacy Notice — KISD Calendar
+# Privacy Notice — KISDesk
 
 *Last updated: 13 October 2026. The German version below is identical in substance.*
 
-KISD Calendar is an unofficial student app for KISD / TH Köln. It is not
+KISDesk is an unofficial student app for KISD / TH Köln. It is not
 affiliated with, or endorsed by, TH Köln. Everything the app does happens
 **on your device**. The developer operates **no server**, and no data about
 you or your usage is ever transmitted to the developer or to any analytics
@@ -79,9 +79,9 @@ account. Questions: Luca Schiffer, luca.schiffer@smail.th-koeln.de.
 
 ---
 
-# Datenschutzhinweis — KISD Calendar (Deutsch)
+# Datenschutzhinweis — KISDesk (Deutsch)
 
-KISD Calendar ist eine inoffizielle Studierenden-App für die KISD /
+KISDesk ist eine inoffizielle Studierenden-App für die KISD /
 TH Köln und steht in keiner Verbindung zur TH Köln. Alles passiert **lokal
 auf deinem Gerät**: Der Entwickler betreibt keinen Server und erhält
 keinerlei Daten über dich oder deine Nutzung — keine Analytics, kein

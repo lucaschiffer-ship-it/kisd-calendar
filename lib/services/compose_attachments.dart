@@ -173,7 +173,7 @@ class ComposeAttachments {
       throw AttachmentException(switch (e.code) {
         'camera_denied' =>
           'Camera access is off. Allow it in Settings › '
-              'KISD Calendar › Camera.',
+              'KISDesk › Camera.',
         'busy' => 'A picker is already open.',
         _ => e.message ?? "Couldn't add the attachment.",
       });

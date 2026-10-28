@@ -34,7 +34,7 @@ class PrivacyScreen extends StatelessWidget {
           const SizedBox(height: 24),
           _card(s, [
             _body(s,
-                'KISD Calendar is an unofficial student app for KISD / '
+                'KISDesk is an unofficial student app for KISD / '
                 'TH Köln and is not affiliated with or endorsed by TH Köln. '
                 'Everything the app does happens on your device: the '
                 'developer operates no server and never receives any data '

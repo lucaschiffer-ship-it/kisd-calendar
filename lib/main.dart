@@ -72,7 +72,7 @@ class KisdCalendarApp extends StatelessWidget {
       valueListenable: ThemeService.instance.currentColor,
       builder: (context, colorKey, child) {
         return MaterialApp(
-          title: 'KISD Calendar',
+          title: 'KISDesk',
           debugShowCheckedModeBanner: false,
           navigatorKey: navigatorKey,
           theme: buildLightTheme(),

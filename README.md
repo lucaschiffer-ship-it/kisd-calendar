@@ -1,4 +1,4 @@
-# KISD Calendar
+# KISDesk
 
 A Flutter app that helps **KISD (Köln International School of Design)** students organize their semester. It logs into Spaces, pulls your enrolled courses, and turns them into a clean timetable — with a calendar view, a list view, an integrated Spaces browser, a native TH Köln mail client, and the Mensa menu, all in one place.
 

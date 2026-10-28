@@ -175,7 +175,7 @@ final _pausedNotice = {
   'title': 'Mail notifications paused',
   'body':
       'The TH Köln mail server refused the login several times, so new '
-      'mail isn\'t announced. Open KISD Calendar to check.',
+      'mail isn\'t announced. Open KISDesk to check.',
   'thread': mailThreadIdentifier,
   'payload': const NotificationPayload(type: 'mail', id: 'paused').encode(),
 };

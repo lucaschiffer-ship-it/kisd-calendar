@@ -595,7 +595,7 @@ class _NotificationsPageState extends State<_NotificationsPage> {
           valueListenable: CourseReminderScheduler.enabled,
           builder: (context, on, _) => on == true && _systemAllowed == false
               ? const _Caption(
-                  'Notifications are turned off for KISD Calendar in iOS '
+                  'Notifications are turned off for KISDesk in iOS '
                   'Settings, so reminders won\'t appear.',
                 )
               : const SizedBox.shrink(),
@@ -643,7 +643,7 @@ class _NotificationsPageState extends State<_NotificationsPage> {
           valueListenable: MailNotifier.enabled,
           builder: (context, on, _) => on && _systemAllowed == false
               ? const _Caption(
-                  'Notifications are turned off for KISD Calendar in iOS '
+                  'Notifications are turned off for KISDesk in iOS '
                   'Settings, so new mail won\'t be announced.',
                 )
               : const SizedBox.shrink(),

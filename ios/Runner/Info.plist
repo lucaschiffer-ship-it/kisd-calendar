@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Kisd Calendar</string>
+	<string>KISDesk</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>kisd_calendar</string>
+	<string>KISDesk</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -61,11 +61,11 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>NSCalendarsUsageDescription</key>
-	<string>KISD Calendar möchte Kurstermine in deinen Kalender eintragen.</string>
+	<string>KISDesk möchte Kurstermine in deinen Kalender eintragen.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>KISD Calendar benötigt vollen Kalenderzugriff, um Kurstermine zu schreiben und zu verwalten.</string>
+	<string>KISDesk benötigt vollen Kalenderzugriff, um Kurstermine zu schreiben und zu verwalten.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>KISD Calendar nutzt die Kamera, um Fotos und Dokument-Scans an E-Mails anzuhängen.</string>
+	<string>KISDesk nutzt die Kamera, um Fotos und Dokument-Scans an E-Mails anzuhängen.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<!-- ATS stays fully enforced for app-level networking (mensa API,

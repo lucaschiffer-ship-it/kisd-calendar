@@ -61,23 +61,13 @@ class _LoginScreenState extends State<LoginScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  'KISD',
+                  'KISDesk',
                   textAlign: TextAlign.center,
                   style: TextStyle( // logo/login-specific, no canonical token
                     fontSize: 48,
                     fontWeight: FontWeight.w700,
                     color: cs.onSurface,
                     letterSpacing: -1.5,
-                  ),
-                ),
-                Text(
-                  'Calendar',
-                  textAlign: TextAlign.center,
-                  style: TextStyle( // logo/login-specific, no canonical token
-                    fontSize: 20,
-                    fontWeight: FontWeight.w300,
-                    color: cs.onSurface.withAlpha(128),
-                    letterSpacing: 4,
                   ),
                 ),
                 const SizedBox(height: 56),

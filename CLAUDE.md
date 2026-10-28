@@ -464,7 +464,7 @@ Key routing rules:
 
 ## Licensing & Privacy
 
-- Do NOT default to MIT. This project ships under a restrictive source-available license (`LICENSE` — "KISD Calendar Source-Available License") — reuse the existing LICENSE file wording.
+- Do NOT default to MIT. This project ships under a restrictive source-available license (`LICENSE` — "KISDesk Source-Available License") — reuse the existing LICENSE file wording.
 - Campus-ID credentials must be stored in the iOS Keychain / `flutter_secure_storage` only, never in `SharedPreferences` or logs. Any change touching auth requires a note in the privacy/DSGVO doc.
 
 ---

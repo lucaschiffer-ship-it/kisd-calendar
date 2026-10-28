@@ -1,4 +1,4 @@
-# KISD Calendar Agent Guide
+# KISDesk Agent Guide
 
 ## Project Overview
 This is an iOS-only Flutter application for Köln International School of Design (KISD) students that integrates university course scheduling with calendar, email, and campus information systems.

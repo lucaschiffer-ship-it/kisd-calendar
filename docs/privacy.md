@@ -1,4 +1,4 @@
-# KISD Calendar — Privacy, Security & Legality Assessment
+# KISDesk — Privacy, Security & Legality Assessment
 
 > **Verdict up front: distributing the app is legal.**
 > The app stores the Campus-ID only locally, sends it only to official TH Köln servers,
@@ -121,9 +121,9 @@ app the answer is benign: nothing is exfiltrated, and that claim is verifiable
 
 [Studo](https://studo.com/en/privacy) — a commercial student app at German and
 Austrian universities — asks for university credentials and even **routes traffic
-through its own servers** (strictly more invasive than KISD Calendar's fully-local
+through its own servers** (strictly more invasive than KISDesk's fully-local
 design). It has distributed lawfully on both app stores for years; initial
-university warnings later became partnerships in several cases. KISD Calendar
+university warnings later became partnerships in several cases. KISDesk
 sits at the *conservative* end of an already-accepted category.
 
 ---

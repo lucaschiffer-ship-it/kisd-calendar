@@ -9,6 +9,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../config/app_theme.dart' as tokens;
 import '../screens/event_detail_screen.dart';
 import '../services/cache_service.dart';
+import '../services/calendar_days.dart';
 import '../services/calendar_service.dart';
 import '../services/page_actions.dart';
 import '../services/semester.dart';
@@ -180,11 +181,12 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   Offset _slideBegin = const Offset(0.15, 0);
 
+  // Calendar days, never 24 h steps: past a DST switch those land at 23:00 of
+  // the day before (see calendar_days.dart).
   DateTime _dayForMultiDayPage(int page) =>
-      _today.add(Duration(days: page - _kTodayPage));
+      addDays(_today, page - _kTodayPage);
 
-  DateTime _weekMonday(DateTime d) =>
-      d.subtract(Duration(days: d.weekday - 1));
+  DateTime _weekMonday(DateTime d) => mondayOf(d);
 
   // ── Computed header dimensions ─────────────────────────────────────────────
 
@@ -345,8 +347,8 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   Future<void> _loadAllDay(DateTime day) async {
     final events = await CalendarService.instance.getAllDayEventsForRange(
-      day.subtract(const Duration(days: 1)),
-      day.add(const Duration(days: 1)),
+      addDays(day, -1),
+      addDays(day, 1),
     );
     // A faster swipe may have moved on while this was in flight.
     if (!mounted || _allDayLoadedFor != day) return;
@@ -422,7 +424,7 @@ class _CalendarScreenState extends State<CalendarScreen>
     _slideBegin = const Offset(0.15, 0);
     if (_dayViewMode != _DayViewMode.list) _dayBarAnim.forward();
 
-    final targetPage = _kTodayPage + day.difference(_today).inDays;
+    final targetPage = _kTodayPage + daysBetween(_today, day);
 
     if (_navLevel == _NavLevel.day && _dayViewMode != _DayViewMode.list) {
       _jumpToPage(targetPage);
@@ -778,8 +780,7 @@ class _CalendarScreenState extends State<CalendarScreen>
     final monday = _weekMonday(center);
     // Preload the full Mon–Sun week containing centerPage, plus one buffer day each side.
     for (int delta = -1; delta <= 7; delta++) {
-      CalendarService.instance.prefetchEventsForDay(
-          monday.add(Duration(days: delta)));
+      CalendarService.instance.prefetchEventsForDay(addDays(monday, delta));
     }
   }
 
@@ -944,7 +945,7 @@ class _CalendarScreenState extends State<CalendarScreen>
   void _retargetMultiDay(DateTime day) {
     setState(() {
       _selectedDate = day;
-      _focusedMultiDayPage = _kTodayPage + day.difference(_today).inDays;
+      _focusedMultiDayPage = _kTodayPage + daysBetween(_today, day);
       _slotKeys = List.generate(5, (_) => GlobalKey());
       _swipeFraction = 0.0;
     });
@@ -1240,8 +1241,8 @@ class _CalendarScreenState extends State<CalendarScreen>
         // Builds one week's content. [showPill] enables the focus capsule.
         Widget buildWeek(DateTime mon, {required bool showPill}) {
           final focusedDay  = _dayForMultiDayPage(_focusedMultiDayPage);
-          final focusIndex  = showPill ? focusedDay.difference(mon).inDays.clamp(0, 6) : -1;
-          final todayDiff   = _today.difference(mon).inDays;
+          final focusIndex  = showPill ? daysBetween(mon, focusedDay).clamp(0, 6) : -1;
+          final todayDiff   = daysBetween(mon, _today);
           final todayIndex  = (todayDiff >= 0 && todayDiff <= 6) ? todayDiff : -1;
           final focusLeft   = focusIndex >= 0 ? focusIndex.toDouble() * cellW : 0.0;
 
@@ -1281,7 +1282,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                     ),
                   Row(
                     children: List.generate(7, (i) {
-                      final day = mon.add(Duration(days: i));
+                      final day = addDays(mon, i);
                       final isToday   = todayIndex == i;
                       final isWeekend = i >= 5;
                       return Expanded(
@@ -1328,7 +1329,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                     child: GestureDetector(
                       onTap: monthMode
                           ? null
-                          : () => _drillToDay(mon.add(Duration(days: i))),
+                          : () => _drillToDay(addDays(mon, i)),
                       behavior: HitTestBehavior.opaque,
                       child: Center(
                         child: Text(
@@ -1398,7 +1399,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                 Positioned(
                   left: (-1 + _weekStripFx) * stripW,
                   width: stripW, top: 0, bottom: 0,
-                  child: buildWeek(monday.subtract(const Duration(days: 7)), showPill: false),
+                  child: buildWeek(addDays(monday, -7), showPill: false),
                 ),
                 Positioned(
                   left: _weekStripFx * stripW,
@@ -1408,7 +1409,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                 Positioned(
                   left: (1 + _weekStripFx) * stripW,
                   width: stripW, top: 0, bottom: 0,
-                  child: buildWeek(monday.add(const Duration(days: 7)), showPill: false),
+                  child: buildWeek(addDays(monday, 7), showPill: false),
                 ),
               ],
             ),
@@ -1866,10 +1867,8 @@ class _AllDayBand extends StatelessWidget {
                 for (var i = 0; i < sorted.length; i++) {
                   final evt = sorted[i];
                   final row = rowOf[i];
-                  final startOffset =
-                      evt.startDate.difference(focusedDay).inDays;
-                  final endOffset =
-                      evt.endDate.difference(focusedDay).inDays;
+                  final startOffset = daysBetween(focusedDay, evt.startDate);
+                  final endOffset   = daysBetween(focusedDay, evt.endDate);
                   final capLeft  = centerPos +
                       startOffset * effectiveStep + s * effectiveStep + 2;
                   final capWidth =
@@ -2028,7 +2027,7 @@ class _EventListViewState extends State<_EventListView> {
   Future<void> _load() async {
     final items = <_ListItem>[];
     for (var i = 0; i < 30; i++) {
-      final day = widget.today.add(Duration(days: i));
+      final day = addDays(widget.today, i);
       final events = await CalendarService.instance.getEventsForDay(day);
       if (events.isEmpty) continue;
       items.add(_HeaderItem(day));

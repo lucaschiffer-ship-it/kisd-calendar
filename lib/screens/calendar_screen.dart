@@ -853,9 +853,9 @@ class _CalendarScreenState extends State<CalendarScreen>
     if (rowOffset == null) return; // outside the grid's 5-year range
     final ownerMonth = MonthGridLayout.ownerMonthOf(monday);
 
-    final view = View.of(context);
-    final statusH = view.viewPadding.top / view.devicePixelRatio;
-    final bottomSafe = view.viewPadding.bottom / view.devicePixelRatio;
+    final insets = ScreenInsets.of(context);
+    final statusH = insets.top;
+    final bottomSafe = insets.bottom;
     _monthTopInset = statusH + _kTitleRowH + (_kDayBarH - 42.0);
     _monthBottomInset = bottomSafe + 120.0;
     _monthMaxScroll = (_monthTopInset +

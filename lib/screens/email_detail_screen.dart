@@ -193,8 +193,7 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
     List<ThreadMessage> thread,
     MimeMessage opened,
   ) {
-    final view = View.of(context);
-    final statusH = view.viewPadding.top / view.devicePixelRatio;
+    final statusH = ScreenInsets.of(context).top;
     // A mail left on the server is envelope-only: its subject and date are
     // in the envelope, not in headers.
     final first = thread.first.message;
@@ -266,8 +265,7 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
 
   MailDocumentSpec _spec(MimeMessage msg, {required bool loaded}) {
     final dark = _dark;
-    final view = View.of(context);
-    final statusH = view.viewPadding.top / view.devicePixelRatio;
+    final statusH = ScreenInsets.of(context).top;
     final name = senderName(msg);
     final avatar = MailAvatarColors.of(name, dark: dark);
     final date = msg.decodeDate()?.toLocal();
@@ -522,8 +520,7 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
   Widget build(BuildContext context) {
     final s = AppColorScheme.current;
     final bg = _readingBackground;
-    final view = View.of(context);
-    final statusH = view.viewPadding.top / view.devicePixelRatio;
+    final statusH = ScreenInsets.of(context).top;
     final document = _document;
     final showWeb = document != null && _routeSettled;
 

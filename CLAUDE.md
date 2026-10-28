@@ -213,6 +213,32 @@ is only reachable through the hidden View button.
   time), so `_chipsThatFit` knows a row's capacity without measuring; the rest
   becomes "+N".
 
+### Day timeline zoom (`lib/widgets/timeline_zoom.dart`, pinned by `test/timeline_zoom_test.dart`)
+
+The day/3-day timeline pinch-zooms vertically, Apple-style: 50 pt per hour by
+default, 35.5–90 with a hard stop (Apple Calendar's own limits, measured on the
+iOS 26.4 simulator). The zoom is `_hourHeight` in `CalendarScreen`, remembered in
+`ThemeService.calendarHourHeight` (written once per pinch, never per frame).
+
+- **Hour height is live.** `DayColumn.hourHeight` / `EventEditLayer.hourHeight`
+  are parameters now; `DayColumn.defaultHourHeight` is only the default. Lane
+  layout stays in minutes on purpose — the lane topology never changes mid-pinch.
+- **The timeline is padded.** `SingleChildScrollView.padding` holds 00:00 below
+  the header (`_timelineTopInset`, + `AppGlass.headerOverhang`) and the closing
+  24:00 line above the floating pills (`floatingActionsTop`). Content y still maps
+  straight to time; anything converting to *viewport* y adds `contentTop`
+  (`EventEditLayer._autoScrollDirection`).
+- **All-day rows don't move the grid**: `_onAllDayTick` takes the band's change
+  back out of the offset — except scrolled to the very top, where 00:00 follows
+  the band, and never during a user scroll (jumpTo would end the drag).
+- **Two fingers = zoom.** The scale recognizer claims the arena as soon as a
+  second finger lands (otherwise a resting two-finger touch became the 400 ms
+  long-press create). One finger still loses to the scroll drag.
+- The zoom factor comes from a `Listener`'s own finger spread, floored at 48 pt:
+  Flutter's `verticalScale` divides by the starting vertical spread, ~0 for
+  side-by-side fingers. The recognizer skips `onEnd` when the last finger lifts
+  without moving after a finger change, so the Listener also finishes the pinch.
+
 ### Cache (`CacheService`)
 
 `SharedPreferences`, key `kisd_courses`, JSON array. Bump `_currentVersion` (currently `14`) whenever the stored schema changes — the app clears and re-scrapes on version mismatch.

@@ -17,6 +17,10 @@ void main() {
   late ScrollController scroll;
   late EventEditController ctrl;
   late int swipes;
+  // The timeline's (pinch-zoomed) hour height and the scroll offset the test
+  // started at, for the current holdBlock.
+  late double h;
+  late double startOffset;
 
   // 10:00 on days[2]. Recurring, so a drop asks first and the test can cancel
   // it instead of writing to the event store.
@@ -44,8 +48,16 @@ void main() {
     );
   }
 
-  /// Holds a [minutes]-long block and returns its centre (global).
-  Future<Offset> holdBlock(WidgetTester tester, {int minutes = 60}) async {
+  /// Holds a [minutes]-long block and returns its centre (global). The
+  /// timeline runs at [hourHeight] with [contentTop] of scroll padding above
+  /// 00:00, as the calendar's does.
+  Future<Offset> holdBlock(
+    WidgetTester tester, {
+    int minutes = 60,
+    double hourHeight = DayColumn.defaultHourHeight,
+    double contentTop = 0,
+  }) async {
+    h = hourHeight;
     scroll = ScrollController();
     ctrl = EventEditController();
     swipes = 0;
@@ -62,8 +74,9 @@ void main() {
         home: Scaffold(
           body: SingleChildScrollView(
             controller: scroll,
+            padding: EdgeInsets.only(top: contentTop),
             child: SizedBox(
-              height: DayColumn.hourHeight * 24,
+              height: h * 24,
               child: GestureDetector(
                 onHorizontalDragStart: (_) => swipes++,
                 child: Stack(
@@ -76,6 +89,8 @@ void main() {
                       slotWidth: slotWidth,
                       scrollController: scroll,
                       headerInset: 0,
+                      hourHeight: h,
+                      contentTop: contentTop,
                     ),
                   ],
                 ),
@@ -86,7 +101,8 @@ void main() {
       ),
     );
     // Put 10:00 mid-viewport, clear of the auto-scroll zones.
-    scroll.jumpTo(300);
+    startOffset = contentTop + 10 * h - 200;
+    scroll.jumpTo(startOffset);
     await tester.pump();
 
     final origin = tester.getTopLeft(find.byKey(stackKey));
@@ -94,7 +110,7 @@ void main() {
         origin +
         Offset(
           slotLefts[2] + slotWidth / 2,
-          (10 + minutes / 120) * DayColumn.hourHeight,
+          (10 + minutes / 120) * h,
         );
     ctrl.pickup(occurrence(minutes), centre);
     ctrl.pickupEnd(); // long-press released in place → held
@@ -126,7 +142,7 @@ void main() {
 
     final after = tester.getTopLeft(find.text('Seminar'));
     expect(after.dy - before.dy, moreOrLessEquals(40, epsilon: 1));
-    expect(scroll.offset, 300);
+    expect(scroll.offset, startOffset);
   });
 
   testWidgets('a held block moves to the next day instead of swiping', (
@@ -187,14 +203,14 @@ void main() {
     ) async {
       final centre = await holdBlock(tester, minutes: minutes);
       final before = tester.getTopLeft(find.text('Seminar'));
-      final edge = centre.dy - minutes / 120 * DayColumn.hourHeight;
+      final edge = centre.dy - minutes / 120 * h;
 
       await drag(tester, Offset(centre.dx, edge + inset), const Offset(0, -25));
 
       // The edge jumps to the finger, then follows it.
       final after = tester.getTopLeft(find.text('Seminar'));
       expect(before.dy - after.dy, moreOrLessEquals(25 - inset, epsilon: 1));
-      expect(scroll.offset, 300);
+      expect(scroll.offset, startOffset);
     });
   }
 
@@ -202,12 +218,50 @@ void main() {
     tester,
   ) async {
     final centre = await holdBlock(tester);
-    final edge = centre.dy + 0.5 * DayColumn.hourHeight;
+    final edge = centre.dy + 0.5 * h;
 
     // Finger ends 31 px below 11:00 → 11:37, snapped to 11:30.
     await drag(tester, Offset(centre.dx, edge + 6), const Offset(0, 25));
 
     expect(find.text('11:30'), findsOneWidget); // the live end chip
-    expect(scroll.offset, 300);
+    expect(scroll.offset, startOffset);
+  });
+
+  // The timeline pinch-zooms its hour height and pads 00:00 below the header:
+  // the layer's minute maths must follow both.
+  testWidgets('a zoomed, padded timeline resizes to the right time', (
+    tester,
+  ) async {
+    final centre = await holdBlock(
+      tester,
+      hourHeight: DayColumn.maxHourHeight,
+      contentTop: 180,
+    );
+    final edge = centre.dy + 0.5 * h;
+
+    // 90 pt per hour: 45 pt below 11:00 is 11:30.
+    await drag(tester, Offset(centre.dx, edge + 6), const Offset(0, 39));
+
+    expect(find.text('11:30'), findsOneWidget);
+    expect(scroll.offset, startOffset);
+  });
+
+  testWidgets('a zoomed, padded timeline moves a block with the finger', (
+    tester,
+  ) async {
+    final centre = await holdBlock(
+      tester,
+      hourHeight: DayColumn.maxHourHeight,
+      contentTop: 180,
+    );
+    final before = tester.getTopLeft(find.text('Seminar'));
+
+    // 90 pt = one hour.
+    await drag(tester, centre, const Offset(0, 90));
+
+    final after = tester.getTopLeft(find.text('Seminar'));
+    expect(after.dy - before.dy, moreOrLessEquals(90, epsilon: 1));
+    expect(find.text('11:00'), findsOneWidget); // the live start chip
+    expect(scroll.offset, startOffset);
   });
 }

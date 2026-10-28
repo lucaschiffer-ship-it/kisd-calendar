@@ -82,6 +82,15 @@ double bottomClusterInset(BuildContext context) {
 double bottomClusterHeight(BuildContext context) =>
     kFloatingButtonSize + bottomClusterInset(context);
 
+/// Height from the bottom of the screen to the top of a page's floating
+/// buttons (one row of [PageFloatingActions]) — the highest thing the bottom
+/// cluster puts over page content, so content that must stay readable has to
+/// be able to scroll clear of it.
+double floatingActionsTop(BuildContext context) =>
+    bottomClusterHeight(context) +
+    PageFloatingActions._kBottomGap +
+    kFloatingButtonSize;
+
 /// The page-specific floating buttons that sit above the bottom cluster, on the
 /// right-hand side opposite the Spaces mini bar.
 ///

@@ -41,6 +41,7 @@ class DayColumn extends StatefulWidget {
     this.embedded = false,
     this.topInset = 0,
     this.editController,
+    this.hourHeight = defaultHourHeight,
   });
 
   final DateTime day;
@@ -61,7 +62,15 @@ class DayColumn extends StatefulWidget {
   /// position 8:00 at the first visible row below the header on initial load.
   final double topInset;
 
-  static const double hourHeight = 50.0;
+  /// Height of one hour — live, the timeline pinch-zooms it.
+  final double hourHeight;
+
+  // Apple Calendar's day view, measured on the iOS 26.4 simulator: 50 pt per
+  // hour by default, pinch-zoomable from ~35.5 to 90 with a hard stop at both
+  // ends (no rubber band).
+  static const double defaultHourHeight = 50.0;
+  static const double minHourHeight = 35.5;
+  static const double maxHourHeight = 90.0;
   static const double labelWidth = 52.0;
 
   @override
@@ -159,7 +168,7 @@ class _DayColumnState extends State<DayColumn> {
     if (_scrollController == null || !_scrollController!.hasClients) return;
     // Position 8:00 at the first pixel visible below the glass header.
     const kStartHour = 8.0;
-    final target = (kStartHour * DayColumn.hourHeight - widget.topInset)
+    final target = (kStartHour * widget.hourHeight - widget.topInset)
         .clamp(0.0, _scrollController!.position.maxScrollExtent);
     _scrollController!.jumpTo(target);
   }
@@ -178,7 +187,7 @@ class _DayColumnState extends State<DayColumn> {
   Widget _buildContent() {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final totalHeight = DayColumn.hourHeight * 24;
+        final totalHeight = widget.hourHeight * 24;
         final leftOffset = widget.showHourLabels ? DayColumn.labelWidth : 0.0;
         final eventAreaWidth = constraints.maxWidth - leftOffset;
 
@@ -244,45 +253,43 @@ class _DayColumnState extends State<DayColumn> {
     );
   }
 
+  // One painter instead of 24 bordered rows: a pinch changes the hour height
+  // every frame, and repainting lines is far cheaper than relaying out rows.
   Widget _buildGrid() {
-    final dividerColor = AppThemeTokens.dividerColor;
+    final leftOffset = widget.showHourLabels ? DayColumn.labelWidth : 0.0;
+    final grid = SizedBox.expand(
+      child: CustomPaint(
+        painter: _HourGridPainter(
+          hourHeight: widget.hourHeight,
+          left: leftOffset,
+          color: AppThemeTokens.dividerColor,
+        ),
+      ),
+    );
+    if (!widget.showHourLabels) return grid;
     final labelStyle = GoogleFonts.inter(
       fontSize: 11,
       fontWeight: FontWeight.w400,
       color: AppThemeTokens.secondaryTextColor,
     );
-    return Column(
-      children: List.generate(24, (hour) {
-        return SizedBox(
-          height: DayColumn.hourHeight,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (widget.showHourLabels)
-                SizedBox(
-                  width: DayColumn.labelWidth,
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 3, right: 8),
-                    child: Text(
-                      '${hour.toString().padLeft(2, '0')}:00',
-                      textAlign: TextAlign.right,
-                      style: labelStyle,
-                    ),
-                  ),
-                ),
-              Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    border: Border(
-                      top: BorderSide(color: dividerColor, width: 0.5),
-                    ),
-                  ),
-                ),
+    return Stack(
+      children: [
+        grid,
+        for (var hour = 0; hour < 24; hour++)
+          Positioned(
+            top: hour * widget.hourHeight + 3,
+            left: 0,
+            width: DayColumn.labelWidth,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Text(
+                '${hour.toString().padLeft(2, '0')}:00',
+                textAlign: TextAlign.right,
+                style: labelStyle,
               ),
-            ],
+            ),
           ),
-        );
-      }),
+      ],
     );
   }
 
@@ -398,9 +405,9 @@ class _DayColumnState extends State<DayColumn> {
           : (eventAreaWidth - 4 - gap * (totalLanes - 1)) / totalLanes;
       final left = leftOffset + 2 + indent +
           (totalLanes == 1 ? 0.0 : lane[idx] * (laneWidth + gap));
-      final top = item.startMin / 60.0 * DayColumn.hourHeight;
-      final height = ((item.endMin - item.startMin) / 60.0 * DayColumn.hourHeight)
-          .clamp(20.0, DayColumn.hourHeight * 24);
+      final top = item.startMin / 60.0 * widget.hourHeight;
+      final height = ((item.endMin - item.startMin) / 60.0 * widget.hourHeight)
+          .clamp(20.0, widget.hourHeight * 24);
 
       final occ = item.occ;
       final hidden = occ != null && occ.key == activeKey;
@@ -432,7 +439,7 @@ class _DayColumnState extends State<DayColumn> {
 
   Widget _buildTimeIndicator(double totalWidth, double leftOffset) {
     final totalMinutes = _now.hour * 60 + _now.minute;
-    final top = totalMinutes / 60.0 * DayColumn.hourHeight;
+    final top = totalMinutes / 60.0 * widget.hourHeight;
     return Positioned(
       top: top - 4,
       left: 0,
@@ -460,6 +467,113 @@ class _DayColumnState extends State<DayColumn> {
       ),
     );
   }
+}
+
+// ─── Hour grid ────────────────────────────────────────────────────────────────
+
+/// The hour lines, 00:00 through the closing 24:00 line (Apple draws one too).
+class _HourGridPainter extends CustomPainter {
+  _HourGridPainter({
+    required this.hourHeight,
+    required this.left,
+    required this.color,
+  });
+
+  final double hourHeight;
+  final double left;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 0.5;
+    for (var hour = 0; hour <= 24; hour++) {
+      // Inside the box: the top line hangs below 0, the closing one sits
+      // above the bottom edge (the timeline clips the columns there).
+      final y = hour < 24 ? hour * hourHeight + 0.25 : size.height - 0.25;
+      canvas.drawLine(Offset(left, y), Offset(size.width, y), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_HourGridPainter old) =>
+      old.hourHeight != hourHeight || old.left != left || old.color != color;
+}
+
+// ─── Card text ────────────────────────────────────────────────────────────────
+
+/// A card's title, time and location lines. The time and location lines fade
+/// in over the [_kLineFade] pt below the heights they used to appear at (30,
+/// 44) instead of switching on there, so a card growing under a pinch reveals
+/// them rather than popping them in on one frame. Fully shown from those
+/// heights on, as before; a card resting inside the band shows the line faint.
+const double _kLineFade = 10.0;
+
+Widget _cardText({
+  required String title,
+  required String time,
+  String? location,
+}) {
+  return LayoutBuilder(
+    builder: (context, constraints) {
+      final h = constraints.maxHeight.isFinite ? constraints.maxHeight : 999.0;
+      // 0 → 1 across the fade band ending at [full].
+      double fade(double full) =>
+          ((h - (full - _kLineFade)) / _kLineFade).clamp(0.0, 1.0);
+      final timeAlpha = fade(30);
+      final locationAlpha =
+          location != null && location.isNotEmpty ? fade(44) : 0.0;
+      final secondary = AppThemeTokens.secondaryTextColor;
+      final locationColor = AppThemeTokens.locationColor;
+      // Unbounded height: a half-revealed line is cut by the card's clip
+      // instead of overflowing the column.
+      return OverflowBox(
+        alignment: Alignment.topLeft,
+        minHeight: 0,
+        maxHeight: double.infinity,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (h >= 12)
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppThemeTokens.titleColor,
+                ),
+              ),
+            // Alpha on the colour, not an Opacity widget: no layer per card.
+            if (timeAlpha > 0)
+              Text(
+                time,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.inter(
+                  fontSize: 10,
+                  color: secondary.withValues(alpha: secondary.a * timeAlpha),
+                ),
+              ),
+            if (locationAlpha > 0)
+              Text(
+                location!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.inter(
+                  fontSize: 10,
+                  color: locationColor.withValues(
+                      alpha: locationColor.a * locationAlpha),
+                ),
+              ),
+          ],
+        ),
+      );
+    },
+  );
 }
 
 // ─── Store event card (interactive app-store occurrence) ─────────────────────
@@ -505,54 +619,10 @@ class _StoreEventCard extends StatelessWidget {
           Expanded(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final h = constraints.maxHeight.isFinite
-                      ? constraints.maxHeight
-                      : 999.0;
-                  final showTitle = h >= 12;
-                  final showTime = h >= 30;
-                  final showLocation = h >= 44 &&
-                      occ.event.location != null &&
-                      occ.event.location!.isNotEmpty;
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (showTitle)
-                        Text(
-                          occ.event.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.inter(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: AppThemeTokens.titleColor,
-                          ),
-                        ),
-                      if (showTime)
-                        Text(
-                          '${_fmt(occ.start)} – ${_fmt(occ.end)}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.inter(
-                            fontSize: 10,
-                            color: AppThemeTokens.secondaryTextColor,
-                          ),
-                        ),
-                      if (showLocation)
-                        Text(
-                          occ.event.location!,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.inter(
-                            fontSize: 10,
-                            color: AppThemeTokens.locationColor,
-                          ),
-                        ),
-                    ],
-                  );
-                },
+              child: _cardText(
+                title: occ.event.title,
+                time: '${_fmt(occ.start)} – ${_fmt(occ.end)}',
+                location: occ.event.location,
               ),
             ),
           ),
@@ -638,52 +708,10 @@ class _EventCard extends StatelessWidget {
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(6, 4, 6, 4),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final h = constraints.maxHeight.isFinite
-                        ? constraints.maxHeight
-                        : 999.0;
-                    final showTitle = h >= 12;
-                    final showTime = h >= 30;
-                    final showLocation = h >= 44 && event.location != null;
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (showTitle)
-                          Text(
-                            event.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.inter(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: AppThemeTokens.titleColor,
-                            ),
-                          ),
-                        if (showTime)
-                          Text(
-                            '${_fmt(event.start)} – ${_fmt(event.end)}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.inter(
-                              fontSize: 10,
-                              color: AppThemeTokens.secondaryTextColor,
-                            ),
-                          ),
-                        if (showLocation)
-                          Text(
-                            event.location!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.inter(
-                              fontSize: 10,
-                              color: AppThemeTokens.locationColor,
-                            ),
-                          ),
-                      ],
-                    );
-                  },
+                child: _cardText(
+                  title: event.title,
+                  time: '${_fmt(event.start)} – ${_fmt(event.end)}',
+                  location: event.location,
                 ),
               ),
             ),

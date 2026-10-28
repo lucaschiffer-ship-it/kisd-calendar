@@ -15,6 +15,7 @@ class ThemeService {
   static const _semesterKey      = 'kisd_semester_override';
   static const _metadataStripKey = 'mail_metadata_strip';
   static const _stripSourcesKey  = 'mail_metadata_sources';
+  static const _hourHeightKey    = 'calendar_hour_height_v1';
 
   // Accepts 'light' or 'dark' only.
   // A persisted 'pastel' value migrates to 'dark' on first read.
@@ -28,6 +29,9 @@ class ThemeService {
       ValueNotifier<MetadataStrip>(MetadataStrip.keep);
   final ValueNotifier<Set<StripSource>> stripSources =
       ValueNotifier<Set<StripSource>>(kDefaultStripSources);
+  // The calendar day timeline's pinch zoom (pt per hour); null = default.
+  // Read once when the calendar builds, so a plain field.
+  double? calendarHourHeight;
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
@@ -46,6 +50,7 @@ class ThemeService {
         : {...sources.map((name) => sourceNames[name]).nonNulls};
     // Read straight into the resolver's notifier — `Semester` is the read
     // model for the override, this class is its only writer.
+    calendarHourHeight   = prefs.getDouble(_hourHeightKey);
     final semester = prefs.getString(_semesterKey);
     Semester.overrideId.value = isSemesterId(semester) ? semester : null;
   }
@@ -62,6 +67,12 @@ class ThemeService {
     } else {
       await prefs.setString(_semesterKey, value);
     }
+  }
+
+  Future<void> setCalendarHourHeight(double value) async {
+    calendarHourHeight = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_hourHeightKey, value);
   }
 
   Future<void> setColor(String color) async {

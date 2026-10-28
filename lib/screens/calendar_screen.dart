@@ -24,6 +24,7 @@ import '../widgets/month_grid.dart';
 import '../widgets/month_view.dart';
 import '../widgets/morphing_glass_header.dart';
 import '../widgets/page_floating_actions.dart';
+import '../widgets/timeline_zoom.dart';
 import '../widgets/year_view.dart';
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
@@ -102,6 +103,11 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   // Timeline constants
   static const int _kTodayPage = 500;
+  // Scrolled all the way up, 00:00 sits this far below the header; all the
+  // way down, the closing 24:00 line this far above the floating pills
+  // (Apple Calendar: 19 and 30, with its labels centred on the lines).
+  static const double _kTimelineTopGap = 12.0;
+  static const double _kTimelineEndGap = 30.0;
 
   _NavLevel _navLevel = _NavLevel.day;
   _DayViewMode _dayViewMode = _DayViewMode.multiDay;
@@ -159,6 +165,17 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   // Shared vertical scroll controller — survives mode switches
   final _timelineScrollController = ScrollController();
+
+  // The timeline's hour height, pinch-zoomed by TimelineZoom and remembered
+  // across launches. A notifier so a pinch rebuilds only the timeline.
+  final _hourHeight = ValueNotifier<double>(
+    (ThemeService.instance.calendarHourHeight ?? DayColumn.defaultHourHeight)
+        .clamp(DayColumn.minHourHeight, DayColumn.maxHourHeight),
+  );
+
+  // The all-day height the timeline's top padding last included, so a band
+  // change can be cancelled out of the scroll offset (_onAllDayTick).
+  double _allDayHShown = 0.0;
 
   // Drag-to-move / resize / long-press-create state for the timeline.
   final _editController = EventEditController();
@@ -222,6 +239,19 @@ class _CalendarScreenState extends State<CalendarScreen>
       (_kDayBarH - 42.0 * _monthCurved.value) * _dayBarCurved.value +
       _bandBlockH;
 
+  /// Scroll padding above the timeline's 00:00: the header as it stands in
+  /// day view. Leaves out the month-morph terms of [_headerHeight], so the
+  /// (hidden) timeline doesn't shift while the week↔month morph runs.
+  double _timelineTopInset(double statusH) =>
+      statusH + _kTitleRowH +
+      (_kDayBarH + _kColLabelH + _allDayH) * _dayBarCurved.value +
+      // The glass edge sits headerOverhang below the reported height.
+      AppGlass.headerOverhang + _kTimelineTopGap;
+
+  /// Scroll padding below the timeline's closing 24:00 line.
+  double _timelineBottomInset(BuildContext context) =>
+      floatingActionsTop(context) + _kTimelineEndGap;
+
   /// Column-label bar + all-day rows, as the header currently renders them.
   double get _bandBlockH =>
       (_kColLabelH + _allDayH) *
@@ -259,6 +289,7 @@ class _CalendarScreenState extends State<CalendarScreen>
       value: 1.0,
     );
     _allDayCurved = CurvedAnimation(parent: _allDayAnim, curve: Curves.easeOut);
+    _allDayAnim.addListener(_onAllDayTick);
     CalendarService.instance.writeRevision.addListener(_onAllDayRevisionChanged);
     Semester.overrideId.addListener(_onSemesterOverrideChanged);
     _semesterAnchorPending = Semester.isOverridden;
@@ -289,6 +320,7 @@ class _CalendarScreenState extends State<CalendarScreen>
     _todayNotifier.dispose();
     _allDayCurved.dispose();
     _allDayAnim.dispose();
+    _hourHeight.dispose();
     _editController.dispose();
     _monthScrollCtrl?.dispose();
     _monthTitle.dispose();
@@ -409,6 +441,24 @@ class _CalendarScreenState extends State<CalendarScreen>
         _allDayAnim.forward(from: 0.0);
       }
     });
+  }
+
+  /// Keeps the hour grid still while the all-day rows grow or shrink (the
+  /// timeline's top padding includes them): each tick takes the band's change
+  /// back out of the scroll offset. Runs on the animation tick, before the
+  /// frame builds the new padding, so the grid never moves for a frame.
+  ///
+  /// Scrolled all the way up, it lets the grid follow the band instead, so
+  /// 00:00 stays in view below it, as in Apple Calendar. A scroll in progress
+  /// is left alone: jumpTo would end the user's drag or fling.
+  void _onAllDayTick() {
+    final delta = (_allDayH - _allDayHShown) * _dayBarCurved.value;
+    _allDayHShown = _allDayH;
+    if (delta == 0 || !_timelineScrollController.hasClients) return;
+    final pos = _timelineScrollController.position;
+    if (pos.pixels <= 0 || pos.isScrollingNotifier.value) return;
+    _timelineScrollController
+        .jumpTo((pos.pixels + delta).clamp(0.0, double.infinity));
   }
 
   // ── Navigation ─────────────────────────────────────────────────────────────
@@ -620,7 +670,8 @@ class _CalendarScreenState extends State<CalendarScreen>
     if (!_timelineScrollController.hasClients) return;
     const kHour = 12.0;
     final viewH = _timelineScrollController.position.viewportDimension;
-    final target = (kHour * DayColumn.hourHeight - viewH / 2)
+    final top = _timelineTopInset(ScreenInsets.of(context).top);
+    final target = (top + kHour * _hourHeight.value - viewH / 2)
         .clamp(0.0, _timelineScrollController.position.maxScrollExtent);
     _timelineScrollController.jumpTo(target);
   }
@@ -1683,73 +1734,96 @@ class _CalendarScreenState extends State<CalendarScreen>
       final days = List.generate(5, (i) =>
           _dayForMultiDayPage(_focusedMultiDayPage + i - 2));
 
-      return SingleChildScrollView(
+      final contentTop = _timelineTopInset(ScreenInsets.of(context).top);
+      final contentBottom = _timelineBottomInset(context);
+
+      return TimelineZoom(
+        hourHeight: _hourHeight,
         controller: _timelineScrollController,
-        // Below the content, so scroll offset → hour stays exactly as it was
-        // (EventEditLayer and _scrollToDefaultTime both rely on that mapping);
-        // it only extends the scroll range far enough for the last hour to
-        // clear the floating pills.
-        padding: EdgeInsets.only(bottom: bottomClusterHeight(context)),
-        child: SizedBox(
-          height: DayColumn.hourHeight * 24,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildHourAxisWidget(),
-              Expanded(
-                child: GestureDetector(
-                  onHorizontalDragStart: (_) {
-                    _dragStartPage = _focusedMultiDayPage;
-                  },
-                  onHorizontalDragUpdate: (d) =>
-                      _onHorizontalDragUpdate(d, effectiveStep),
-                  onHorizontalDragEnd: (d) =>
-                      _onHorizontalDragEnd(d, effectiveStep),
-                  child: ClipRect(
-                    child: Stack(
-                      children: [
-                        ...List.generate(5, (i) => Positioned(
-                          left: slotLefts[i],
-                          top: 0,
-                          width: slotW,
-                          height: DayColumn.hourHeight * 24,
-                          child: DayColumn(
-                            key: _slotKeys[i],
-                            day: days[i],
-                            showHourLabels: false,
-                            embedded: true,
-                            editController: _editController,
-                            onEventTap: (e, d) =>
-                                showEventDetail(context, e, d),
-                          ),
-                        )),
-                        // Interaction layer: renders the picked-up / draft
-                        // block above the columns; ignores pointers when idle.
-                        EventEditLayer(
-                          controller: _editController,
-                          days: days,
-                          slotLefts: slotLefts,
-                          slotWidth: slotW,
-                          scrollController: _timelineScrollController,
-                          // topOffset is the full header now — week strip,
-                          // column labels and all-day rows. It used to stop at
-                          // the week strip, hence the extra _kColLabelH here
-                          // (which silently ignored the all-day rows' height).
-                          headerInset: topOffset,
+        contentTop: contentTop,
+        contentBottom: contentBottom,
+        minHourHeight: DayColumn.minHourHeight,
+        maxHourHeight: DayColumn.maxHourHeight,
+        // Not while an event is picked up or selected for resizing.
+        canStart: () => _editController.activeKey == null,
+        onZoomEnd: ThemeService.instance.setCalendarHourHeight,
+        child: ValueListenableBuilder<double>(
+          valueListenable: _hourHeight,
+          builder: (context, hourHeight, _) => SingleChildScrollView(
+            controller: _timelineScrollController,
+            // Padding, not a taller child, so the content's own y still maps
+            // straight to the time (EventEditLayer relies on that; it takes
+            // contentTop for its viewport maths). Top: 00:00 clears the
+            // header; bottom: the closing 24:00 line clears the pills.
+            padding:
+                EdgeInsets.only(top: contentTop, bottom: contentBottom),
+            child: SizedBox(
+              height: hourHeight * 24,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildHourAxisWidget(hourHeight),
+                  Expanded(
+                    child: GestureDetector(
+                      onHorizontalDragStart: (_) {
+                        _dragStartPage = _focusedMultiDayPage;
+                      },
+                      onHorizontalDragUpdate: (d) =>
+                          _onHorizontalDragUpdate(d, effectiveStep),
+                      onHorizontalDragEnd: (d) =>
+                          _onHorizontalDragEnd(d, effectiveStep),
+                      child: ClipRect(
+                        child: Stack(
+                          children: [
+                            ...List.generate(5, (i) => Positioned(
+                              left: slotLefts[i],
+                              top: 0,
+                              width: slotW,
+                              height: hourHeight * 24,
+                              child: DayColumn(
+                                key: _slotKeys[i],
+                                day: days[i],
+                                showHourLabels: false,
+                                embedded: true,
+                                hourHeight: hourHeight,
+                                editController: _editController,
+                                onEventTap: (e, d) =>
+                                    showEventDetail(context, e, d),
+                              ),
+                            )),
+                            // Interaction layer: renders the picked-up / draft
+                            // block above the columns; ignores pointers when idle.
+                            EventEditLayer(
+                              controller: _editController,
+                              days: days,
+                              slotLefts: slotLefts,
+                              slotWidth: slotW,
+                              scrollController: _timelineScrollController,
+                              // topOffset is the full header now — week strip,
+                              // column labels and all-day rows. It used to stop at
+                              // the week strip, hence the extra _kColLabelH here
+                              // (which silently ignored the all-day rows' height).
+                              headerInset: topOffset,
+                              hourHeight: hourHeight,
+                              contentTop: contentTop,
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
                   ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       );
     });
   }
 
-  Widget _buildHourAxisWidget() {
+  /// The hour labels, plus the closing 00:00 under the 24:00 line (it hangs
+  /// below the 24 h box, into the scroll view's bottom padding).
+  Widget _buildHourAxisWidget(double hourHeight) {
     final labelStyle = GoogleFonts.inter(
       fontSize: 11,
       fontWeight: FontWeight.w400,
@@ -1757,18 +1831,21 @@ class _CalendarScreenState extends State<CalendarScreen>
     );
     return SizedBox(
       width: DayColumn.labelWidth,
-      child: Column(
-        children: List.generate(24, (hour) => SizedBox(
-          height: DayColumn.hourHeight,
-          child: Padding(
-            padding: const EdgeInsets.only(top: 3, right: 8),
-            child: Text(
-              '${hour.toString().padLeft(2, '0')}:00',
-              textAlign: TextAlign.right,
-              style: labelStyle,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          for (var hour = 0; hour <= 24; hour++)
+            Positioned(
+              top: hour * hourHeight + 3,
+              left: 0,
+              right: 8,
+              child: Text(
+                '${(hour % 24).toString().padLeft(2, '0')}:00',
+                textAlign: TextAlign.right,
+                style: labelStyle,
+              ),
             ),
-          ),
-        )),
+        ],
       ),
     );
   }

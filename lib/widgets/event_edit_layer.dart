@@ -78,6 +78,8 @@ class EventEditLayer extends StatefulWidget {
     required this.slotWidth,
     required this.scrollController,
     required this.headerInset,
+    this.hourHeight = DayColumn.defaultHourHeight,
+    this.contentTop = 0,
   });
 
   final EventEditController controller;
@@ -89,6 +91,13 @@ class EventEditLayer extends StatefulWidget {
   /// Height of the pinned header chrome overlaying the top of the viewport —
   /// the auto-scroll top zone starts below it.
   final double headerInset;
+
+  /// Height of one hour on the (pinch-zoomable) timeline.
+  final double hourHeight;
+
+  /// Scroll padding above 00:00. This layer's own coordinates start at 00:00,
+  /// the scroll viewport's that much higher.
+  final double contentTop;
 
   @override
   State<EventEditLayer> createState() => _EventEditLayerState();
@@ -127,6 +136,10 @@ class _EventEditLayerState extends State<EventEditLayer>
 
   late final Ticker _ticker;
 
+  // The hour height of the last build: a frame that changes it is a pinch, and
+  // the block must follow it at once instead of animating after it.
+  double? _builtHourHeight;
+
   static void _log(String msg) => debugPrint('[CAL] $msg');
 
   @override
@@ -164,6 +177,8 @@ class _EventEditLayerState extends State<EventEditLayer>
       (((dx - widget.slotLefts[0]) / widget.slotWidth).floor())
           .clamp(0, widget.days.length - 1);
 
+  double get _h => widget.hourHeight;
+
   static int _snap15(double minutes) => ((minutes / 15).round() * 15);
 
   static DateTime _dayAt(DateTime day, int minutes) =>
@@ -189,7 +204,7 @@ class _EventEditLayerState extends State<EventEditLayer>
       _draftEnd = occ.end;
       _origStart = occ.start;
       _origEnd = occ.end;
-      _grabDy = local.dy - _minutesOf(occ.start) / 60.0 * DayColumn.hourHeight;
+      _grabDy = local.dy - _minutesOf(occ.start) / 60.0 * _h;
       _movedInGesture = false;
       _settling = false;
       _lastGlobal = globalPos;
@@ -258,11 +273,11 @@ class _EventEditLayerState extends State<EventEditLayer>
     if (local == null) return;
 
     final durationMin = _draftEnd!.difference(_draftStart!).inMinutes;
-    final heightPx = durationMin / 60.0 * DayColumn.hourHeight;
+    final heightPx = durationMin / 60.0 * _h;
     final day = widget.days[_dayIndexForX(local.dx)];
     final rawTopPx = (local.dy - _grabDy)
-        .clamp(0.0, DayColumn.hourHeight * 24 - heightPx);
-    final startMin = _snap15(rawTopPx / DayColumn.hourHeight * 60.0)
+        .clamp(0.0, _h * 24 - heightPx);
+    final startMin = _snap15(rawTopPx / _h * 60.0)
         .clamp(0, 24 * 60 - durationMin);
 
     final newStart = _dayAt(day, startMin);
@@ -286,15 +301,15 @@ class _EventEditLayerState extends State<EventEditLayer>
     final local = _toLocal(globalPos);
     if (local == null || _draftStart == null || _draftEnd == null) return;
     _lastGlobal = globalPos;
-    final minPx = _kMinDurationMin / 60.0 * DayColumn.hourHeight;
-    final min = _snap15(local.dy / DayColumn.hourHeight * 60.0);
+    final minPx = _kMinDurationMin / 60.0 * _h;
+    final min = _snap15(local.dy / _h * 60.0);
     setState(() {
       if (top) {
         final endMin = _minutesOf(_draftEnd!);
-        final endPx = _minutesOf(_draftStart!) / 60.0 * DayColumn.hourHeight +
+        final endPx = _minutesOf(_draftStart!) / 60.0 * _h +
             _draftEnd!.difference(_draftStart!).inMinutes /
                 60.0 *
-                DayColumn.hourHeight;
+                _h;
         _liveEdgePx = local.dy.clamp(0.0, endPx - minPx);
         final snapped = _dayAt(_draftStart!,
             min.clamp(0, endMin - _kMinDurationMin));
@@ -304,9 +319,9 @@ class _EventEditLayerState extends State<EventEditLayer>
         }
       } else {
         final startMin = _minutesOf(_draftStart!);
-        final startPx = startMin / 60.0 * DayColumn.hourHeight;
+        final startPx = startMin / 60.0 * _h;
         _liveEdgePx =
-            local.dy.clamp(startPx + minPx, DayColumn.hourHeight * 24);
+            local.dy.clamp(startPx + minPx, _h * 24);
         final snapped = _dayAt(_draftStart!,
             min.clamp(startMin + _kMinDurationMin, 24 * 60));
         if (snapped != _draftEnd) {
@@ -436,14 +451,14 @@ class _EventEditLayerState extends State<EventEditLayer>
     final local = _toLocal(globalPos);
     if (local == null) return;
     HapticFeedback.mediumImpact();
-    final startMin = _snap15(local.dy / DayColumn.hourHeight * 60.0)
+    final startMin = _snap15(local.dy / _h * 60.0)
         .clamp(0, 24 * 60 - 60);
     setState(() {
       _phase = _Phase.createDragging;
       _draftStart = _dayAt(day, startMin);
       _draftEnd = _dayAt(day, startMin + 60);
       _origStart = _origEnd = null;
-      _grabDy = local.dy - startMin / 60.0 * DayColumn.hourHeight;
+      _grabDy = local.dy - startMin / 60.0 * _h;
       _movedInGesture = false;
       _lastGlobal = globalPos;
     });
@@ -504,7 +519,7 @@ class _EventEditLayerState extends State<EventEditLayer>
     final local = _toLocal(g);
     if (local == null) return 0;
     final pos = widget.scrollController.position;
-    final viewportY = local.dy - pos.pixels;
+    final viewportY = local.dy + widget.contentTop - pos.pixels;
     if (viewportY < widget.headerInset + _kAutoScrollZone) return -1;
     if (viewportY > pos.viewportDimension - _kAutoScrollZone) return 1;
     return 0;
@@ -576,10 +591,12 @@ class _EventEditLayerState extends State<EventEditLayer>
         d.day == _draftStart!.day);
     if (dayIdx < 0) return const SizedBox.shrink();
 
-    final snapTop = _minutesOf(_draftStart!) / 60.0 * DayColumn.hourHeight;
+    final snapTop = _minutesOf(_draftStart!) / 60.0 * _h;
     final snapHeight = (_draftEnd!.difference(_draftStart!).inMinutes / 60.0 *
-            DayColumn.hourHeight)
-        .clamp(20.0, DayColumn.hourHeight * 24);
+            _h)
+        .clamp(20.0, _h * 24);
+    final zooming = _builtHourHeight != null && _builtHourHeight != _h;
+    _builtHourHeight = _h;
     final dragging = _phase == _Phase.moving ||
         _phase == _Phase.createDragging ||
         _phase == _Phase.resizingTop ||
@@ -595,9 +612,9 @@ class _EventEditLayerState extends State<EventEditLayer>
     } else if (_phase == _Phase.resizingTop && _liveEdgePx != null) {
       final bottomPx = snapTop + snapHeight;
       top = _liveEdgePx!;
-      height = (bottomPx - top).clamp(12.0, DayColumn.hourHeight * 24);
+      height = (bottomPx - top).clamp(12.0, _h * 24);
     } else if (_phase == _Phase.resizingBottom && _liveEdgePx != null) {
-      height = (_liveEdgePx! - snapTop).clamp(12.0, DayColumn.hourHeight * 24);
+      height = (_liveEdgePx! - snapTop).clamp(12.0, _h * 24);
     }
 
     final showStartChip = _phase == _Phase.moving ||
@@ -627,7 +644,7 @@ class _EventEditLayerState extends State<EventEditLayer>
           // outside its own bounds before its children see them, so without
           // this the strips' outer halves were dead.
           AnimatedPositioned(
-            duration: Duration(milliseconds: dragging ? 0 : 180),
+            duration: Duration(milliseconds: dragging || zooming ? 0 : 180),
             curve: Curves.easeOut,
             left: 0,
             right: 0,
@@ -667,7 +684,7 @@ class _EventEditLayerState extends State<EventEditLayer>
                                   _grabDy = local.dy -
                                       _minutesOf(_draftStart!) /
                                           60.0 *
-                                          DayColumn.hourHeight;
+                                          _h;
                                 });
                                 _lastGlobal = d.globalPosition;
                               };

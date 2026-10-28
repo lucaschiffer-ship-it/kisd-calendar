@@ -85,6 +85,24 @@ void main() {
     expect(daysBetween(sat, DateTime(2026, 11, 1)), 1); // Allerheiligen
   });
 
+  // Mensa pages from DateTime.now(), time of day included: opened at 00:30
+  // two days before the October switch, 24 h steps showed Sun 25 twice.
+  test('a base with a time of day still gives one date per page', () {
+    for (final sw in switches) {
+      for (final base in [
+        DateTime(sw.year, sw.month, sw.day - 2, 0, 30),
+        DateTime(sw.year, sw.month, sw.day - 2, 23, 30),
+      ]) {
+        for (var n = 0; n <= 5; n++) {
+          final want = _date(base, n);
+          final reason = 'base $base + $n days';
+          expect(_sameDate(addDays(base, n), want), isTrue, reason: reason);
+          expect(daysBetween(base, want), n, reason: reason);
+        }
+      }
+    }
+  }, skip: noDst);
+
   test('daysBetween counts dates, not 24 h blocks', () {
     expect(daysBetween(DateTime(2026, 10, 30, 23), DateTime(2026, 10, 31)), 1);
     expect(daysBetween(DateTime(2026, 10, 31), DateTime(2026, 10, 30, 23)), -1);

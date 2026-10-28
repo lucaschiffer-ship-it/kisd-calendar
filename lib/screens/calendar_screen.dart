@@ -15,6 +15,7 @@ import '../services/page_actions.dart';
 import '../services/semester.dart';
 import '../services/service_locator.dart';
 import '../services/theme_service.dart';
+import '../services/today_notifier.dart';
 import '../theme/app_theme.dart';
 import '../widgets/day_column.dart';
 import '../widgets/event_edit_layer.dart';
@@ -103,7 +104,15 @@ class _CalendarScreenState extends State<CalendarScreen>
   _DayViewMode _dayViewMode = _DayViewMode.multiDay;
   bool _viewMenuOpen = false;
 
-  late final DateTime _today;
+  // The date _kTodayPage shows, captured once in initState. Pages count from
+  // it, so it never moves: it is today's only until the app lives past midnight.
+  late final DateTime _baseDay;
+
+  // The real today — the today marker and the Today button's target. Moving to
+  // a new date never moves the view.
+  final _todayNotifier = TodayNotifier();
+  late final AppLifecycleListener _lifecycle;
+  DateTime get _today => _todayNotifier.value;
   late int _displayedYear;
   late DateTime _displayedMonth;
   late DateTime _selectedDate;
@@ -184,7 +193,9 @@ class _CalendarScreenState extends State<CalendarScreen>
   // Calendar days, never 24 h steps: past a DST switch those land at 23:00 of
   // the day before (see calendar_days.dart).
   DateTime _dayForMultiDayPage(int page) =>
-      addDays(_today, page - _kTodayPage);
+      addDays(_baseDay, page - _kTodayPage);
+
+  int _pageForDay(DateTime day) => _kTodayPage + daysBetween(_baseDay, day);
 
   DateTime _weekMonday(DateTime d) => mondayOf(d);
 
@@ -216,8 +227,9 @@ class _CalendarScreenState extends State<CalendarScreen>
   void initState() {
     super.initState();
     widget.actions.handler = _onReload;
-    final n = DateTime.now();
-    _today = DateTime(n.year, n.month, n.day);
+    _baseDay = _today;
+    // A suspended app's midnight timer only fires once it runs again.
+    _lifecycle = AppLifecycleListener(onResume: _todayNotifier.refresh);
     _displayedYear = _today.year;
     _displayedMonth = DateTime(_today.year, _today.month);
     _selectedDate = _today;
@@ -266,6 +278,8 @@ class _CalendarScreenState extends State<CalendarScreen>
     CalendarService.instance.writeRevision
         .removeListener(_onAllDayRevisionChanged);
     Semester.overrideId.removeListener(_onSemesterOverrideChanged);
+    _lifecycle.dispose();
+    _todayNotifier.dispose();
     _allDayCurved.dispose();
     _allDayAnim.dispose();
     _editController.dispose();
@@ -424,7 +438,7 @@ class _CalendarScreenState extends State<CalendarScreen>
     _slideBegin = const Offset(0.15, 0);
     if (_dayViewMode != _DayViewMode.list) _dayBarAnim.forward();
 
-    final targetPage = _kTodayPage + daysBetween(_today, day);
+    final targetPage = _pageForDay(day);
 
     if (_navLevel == _NavLevel.day && _dayViewMode != _DayViewMode.list) {
       _jumpToPage(targetPage);
@@ -460,17 +474,18 @@ class _CalendarScreenState extends State<CalendarScreen>
       return;
     }
     _slideBegin = const Offset(0.15, 0);
+    final todayPage = _pageForDay(_today);
 
     if (_navLevel == _NavLevel.day && _dayViewMode != _DayViewMode.list) {
       _dayBarAnim.forward();
-      _jumpToPage(_kTodayPage);
+      _jumpToPage(todayPage);
       return;
     }
 
     setState(() {
       _selectedDate = _today;
       _navLevel = _NavLevel.day;
-      _focusedMultiDayPage = _kTodayPage;
+      _focusedMultiDayPage = todayPage;
       _slotKeys = List.generate(5, (_) => GlobalKey());
       _swipeFraction = 0.0;
       if (_dayViewMode == _DayViewMode.list) {
@@ -479,7 +494,7 @@ class _CalendarScreenState extends State<CalendarScreen>
     });
     _dayBarAnim.forward();
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToDefaultTime());
-    _preloadRange(_kTodayPage);
+    _preloadRange(todayPage);
   }
 
   void _onDayViewModeChanged(_DayViewMode m) {
@@ -945,7 +960,7 @@ class _CalendarScreenState extends State<CalendarScreen>
   void _retargetMultiDay(DateTime day) {
     setState(() {
       _selectedDate = day;
-      _focusedMultiDayPage = _kTodayPage + daysBetween(_today, day);
+      _focusedMultiDayPage = _pageForDay(day);
       _slotKeys = List.generate(5, (_) => GlobalKey());
       _swipeFraction = 0.0;
     });
@@ -998,6 +1013,7 @@ class _CalendarScreenState extends State<CalendarScreen>
         _dayBarAnim,
         _monthAnim,
         _allDayAnim,
+        _todayNotifier,
       ]),
       builder: (context, _) {
         final colorKey = ThemeService.instance.currentColor.value;
@@ -2015,6 +2031,13 @@ class _EventListViewState extends State<_EventListView> {
     super.initState();
     _load();
     CalendarService.instance.writeRevision.addListener(_onWriteRevisionChanged);
+  }
+
+  @override
+  void didUpdateWidget(_EventListView old) {
+    super.didUpdateWidget(old);
+    // A new date: the 30 days start from the new today.
+    if (old.today != widget.today) _load();
   }
 
   @override

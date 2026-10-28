@@ -204,8 +204,7 @@ class _MensaScreenState extends State<MensaScreen>
   }
 
   Widget _buildContent(AppColorScheme s) {
-    final view    = View.of(context);
-    final statusH = view.viewPadding.top / view.devicePixelRatio;
+    final statusH = ScreenInsets.of(context).top;
     // The list page's date/clock row, then the calendar's week strip in place
     // of the old ‹ date › row.
     const topGapH  = kHeaderDateRowTopGap;

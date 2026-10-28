@@ -1003,8 +1003,7 @@ class _CalendarScreenState extends State<CalendarScreen>
 
         _syncAllDayForFocusedDay();
 
-        final view    = View.of(context);
-        final statusH = view.viewPadding.top / view.devicePixelRatio;
+        final statusH = ScreenInsets.of(context).top;
         final headerH = _headerHeight(statusH);
 
         return Stack(

@@ -21,21 +21,51 @@ const double _kHomeIndicatorZone = 12.0;
 /// for content, which works out to 26 above the same zone.
 const double _kBottomBreathingRoom = 20.0;
 
+/// The screen's safe-area insets — status bar on top, home indicator at the
+/// bottom — in logical pixels, for everything HomeScreen builds.
+///
+/// The pages can't ask MediaQuery: Scaffold hands its body a MediaQuery with
+/// the top padding stripped (it has an appBar) and the bottom too (it has a
+/// bottomNavigationBar), so a page gets 0 for both. [View] has the real values
+/// but never rebuilds its readers — `View.of` only notifies when the view
+/// itself is replaced, not when its insets change. iOS can report zero insets
+/// for the first frames of a launch, and HomeScreen builds its pages once, so
+/// its own rebuild never reaches them: a page built then kept a status bar of
+/// 0, its header up under the clock, until the app was killed.
+///
+/// So HomeScreen, outside the Scaffold, reads the real insets from MediaQuery
+/// and hands them down through this, and [of] subscribes its caller.
+class ScreenInsets extends InheritedWidget {
+  const ScreenInsets({super.key, required this.padding, required super.child});
+
+  final EdgeInsets padding;
+
+  /// Outside HomeScreen (and in HomeScreen.build itself, which sits above this
+  /// and is subscribed to MediaQuery) it falls back to reading [View].
+  static EdgeInsets of(BuildContext context) {
+    final scope = context.dependOnInheritedWidgetOfExactType<ScreenInsets>();
+    if (scope != null) return scope.padding;
+    final view = View.of(context);
+    return EdgeInsets.fromViewPadding(view.viewPadding, view.devicePixelRatio);
+  }
+
+  @override
+  bool updateShouldNotify(ScreenInsets oldWidget) =>
+      padding != oldWidget.padding;
+}
+
 /// Breathing room between the pills and the bottom of the screen.
 ///
 /// Tuning knob for how low the bottom cluster rides: raise
 /// [_kBottomBreathingRoom] to lift the whole cluster (pills, Spaces mini bar and
 /// the floating page buttons all follow).
 ///
-/// Read from [View], not MediaQuery, for the same reason every screen computes
-/// its status-bar height that way: Scaffold hands its body a MediaQuery with
-/// the bottom padding stripped (because a bottomNavigationBar exists), so a
-/// page asking MediaQuery gets 0 while HomeScreen — outside the Scaffold —
-/// gets the real inset. The pills and the page buttons have to agree, and going
-/// through View makes them agree by construction rather than by comment.
+/// Read from [ScreenInsets], not MediaQuery: a page asking MediaQuery gets 0
+/// while HomeScreen — outside the Scaffold — gets the real inset. The pills and
+/// the page buttons have to agree, and one source makes them agree by
+/// construction rather than by comment.
 double bottomClusterInset(BuildContext context) {
-  final view = View.of(context);
-  final safeArea = view.viewPadding.bottom / view.devicePixelRatio;
+  final safeArea = ScreenInsets.of(context).bottom;
   // No home indicator (older iPhones report 0) — just keep off the hard edge.
   if (safeArea <= 0) return 12.0;
   return _kHomeIndicatorZone + _kBottomBreathingRoom;

@@ -102,6 +102,8 @@ iOS-only Flutter app for KISD (Köln International School of Design) students. S
 - A `PageView` (non-swipeable) with three pages: `MailScreen` (index 0), `ListScreen` (index 1), `CalendarScreen` (index 2). Default page is `ListScreen`.
 - A slide-up **Spaces browser overlay** driven by an `AnimationController`. A mini bar floats above the tab bar when the overlay is collapsed. Any code that needs to open a URL calls `SpacesBrowser.open(url)` — the `HomeScreen` registers itself as the handler.
 
+**Safe-area insets inside HomeScreen: `ScreenInsets.of(context)`** (`lib/widgets/page_floating_actions.dart`, pinned by `test/screen_insets_test.dart`), never MediaQuery and never `View.of` directly. The Scaffold strips the top (appBar) and bottom (bottomNavigationBar) padding off the pages' MediaQuery. `View.of` never rebuilds on an insets change, and the pages are built once (`_pages`), so a page built while iOS still reported zero insets at launch kept its header under the status bar until the app was killed.
+
 ### Spaces browser (iOS platform view)
 
 The browser is **native Swift**, not Dart: its chrome is real iOS 26 Liquid Glass

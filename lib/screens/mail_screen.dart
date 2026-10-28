@@ -531,8 +531,7 @@ class _MailScreenState extends State<MailScreen>
     final error = mailService.errorFor(folder);
     final loadingOlder = mailService.isLoadingOlder(folder);
 
-    final view = View.of(context);
-    final statusH = view.viewPadding.top / view.devicePixelRatio;
+    final statusH = ScreenInsets.of(context).top;
     final headerH =
         statusH +
         kHeaderDateRowTopGap +

@@ -500,7 +500,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final navBarHeight = bottomClusterHeight(context);
     final s = AppColorScheme.current;
 
-    return Stack(
+    final home = Stack(
       children: [
         // The pages, the bottom bar and the mini bar — moved together, the
         // way iOS moves the page behind a push, while a mail opens over them.
@@ -736,6 +736,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           },
         ),
       ],
+    );
+
+    // Above the Scaffold and the mail routes: their MediaQuery has the insets
+    // stripped, and the pages are built once, so this is how they hear of a
+    // change (see ScreenInsets).
+    return ScreenInsets(
+      padding: MediaQuery.viewPaddingOf(context),
+      child: home,
     );
   }
 }

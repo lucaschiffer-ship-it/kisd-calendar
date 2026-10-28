@@ -1158,9 +1158,8 @@ class _ListScreenState extends State<ListScreen>
         final titleColor = tokens.AppThemeTokens.titleColor;
         final secondaryColor = tokens.AppThemeTokens.secondaryTextColor;
 
-        // Status bar height (physical pixels → logical pixels)
-        final view = View.of(context);
-        final statusH = view.viewPadding.top / view.devicePixelRatio;
+        // Status bar height. Through ScreenInsets, so a change rebuilds this.
+        final statusH = ScreenInsets.of(context).top;
 
         final minH = statusH + _kTitleRowH + _kDateRowH + _hintH + _kFilterBarH;
         final range = _collapseRange(_todayEvents.length);

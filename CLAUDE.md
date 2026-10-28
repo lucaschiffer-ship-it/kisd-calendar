@@ -239,6 +239,33 @@ iOS 26.4 simulator). The zoom is `_hourHeight` in `CalendarScreen`, remembered i
   side-by-side fingers. The recognizer skips `onEnd` when the last finger lifts
   without moving after a finger change, so the Listener also finishes the pinch.
 
+### Day swipe (`lib/widgets/day_swipe_physics.dart`, pinned by `test/day_swipe_physics_test.dart`)
+
+The timeline's horizontal day swipe copies Apple Calendar's Multi-Day view,
+measured on the iOS 26.4 simulator (synthesized flicks, 100–6000 pt/s, tracked
+frame by frame). Apple **pages by day column**: a release never travels past the
+next day edge. Long jumps come only from the finger, which scrolls freely through
+the five slots (`_swipeFraction` + rolling commit).
+
+- **Target** (`daySettleTarget`): from 500 pt/s it's the next edge in the flick's direction
+  (Apple: 450 snapped back, 600 went on). Slower releases take the nearest edge.
+  It is never more than one edge away.
+- **Settle** (`DaySettleSimulation`): remaining distance × e^(−10.4·t), no overshoot.
+  That's UIScrollView `.fast`: ~0.3 s to 95 %, done at ~0.6 s. Like Apple, it starts at
+  rate × remaining distance, not at the finger's speed.
+- **A touch stops it** (`onHorizontalDragDown`). Lifting without a drag
+  (`onHorizontalDragCancel`) settles on the nearest day. The columns sit in an
+  `IgnorePointer` while it settles, so that touch never opens an event. That
+  is why the swipe's `GestureDetector` is `opaque`.
+- **Haptics**: one tick per day the finger drags across, and one when a settle
+  lands on a new day (within 2 pt). That landing tick is a `mediumImpact` when the swipe
+  ends in a different week from where it started. The old 130 ms week-crossing
+  snap is gone, because it replaced the glide.
+- **Never navigate under a running settle.** Its landing calls
+  `_advanceDay`/`_retreatDay` up to ~0.6 s after release. `_jumpToPage` (Today,
+  week-strip taps, drill-in) stops it and keeps its own 140 ms ease (`_snapSwipe`).
+  `_enterMonth` lands it at once (`_finishSwipe`) before it measures the focused day.
+
 ### Cache (`CacheService`)
 
 `SharedPreferences`, key `kisd_courses`, JSON array. Bump `_currentVersion` (currently `14`) whenever the stored schema changes — the app clears and re-scrapes on version mismatch.

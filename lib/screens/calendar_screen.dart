@@ -18,6 +18,7 @@ import '../services/theme_service.dart';
 import '../services/today_notifier.dart';
 import '../theme/app_theme.dart';
 import '../widgets/day_column.dart';
+import '../widgets/day_swipe_physics.dart';
 import '../widgets/event_edit_layer.dart';
 import '../widgets/glass_pill.dart';
 import '../widgets/month_grid.dart';
@@ -182,16 +183,18 @@ class _CalendarScreenState extends State<CalendarScreen>
   // Saved offset so returning from list mode restores the exact hour alignment.
   double? _savedTimelineOffset;
 
-  // Horizontal swipe spring (re-created per swipe, placeholder at rest)
+  // Horizontal swipe settle / snap (re-created per swipe, placeholder at rest)
   late AnimationController _swipeSnapAnim;
   double _swipeFraction = 0.0;
+  // Puts the running settle / snap on its target at once (_finishSwipe).
+  VoidCallback? _landSwipe;
+
+  // Captures the focused page at drag start; a landing in another week ticks harder.
+  int? _dragStartPage;
 
   // Week-strip swipe (re-created per snap, placeholder at rest)
   late AnimationController _weekStripSnapAnim;
   double _weekStripFx = 0.0;
-
-  // Captures the focused page at drag start; used to detect week-boundary crossings.
-  int? _dragStartPage;
 
   // ── Month mode (Apple-style month grid + week↔month morph) ────────────────
   // Independent of _navLevel: the multiday view stays mounted beneath the
@@ -712,51 +715,89 @@ class _CalendarScreenState extends State<CalendarScreen>
 
   void _onHorizontalDragEnd(DragEndDetails d, double effectiveStep) {
     if (_stretchAnim.isAnimating) return;
-    final vel = d.primaryVelocity ?? 0;
-
-    // Magnetic snap to nearest day; 50% threshold (was 35%) for a softer feel.
-    double target;
-    if (_swipeFraction < -0.5 || vel < -300) {
-      target = -1.0;
-    } else if (_swipeFraction > 0.5 || vel > 300) {
-      target = 1.0;
-    } else {
-      target = 0.0;
-    }
-
-    // Detect whether the gesture crossed a week (Mon–Sun) boundary.
-    final didCrossWeek = _dragStartPage != null &&
-        _weekMonday(_dayForMultiDayPage(_dragStartPage!)) !=
-        _weekMonday(_dayForMultiDayPage(_focusedMultiDayPage));
-    _dragStartPage = null;
-
-    VoidCallback? then;
-    if (target < 0) {
-      then = _advanceDay;
-    } else if (target > 0) {
-      then = _retreatDay;
-    }
-
-    // One tick when a flick/snap commits to a new day (week cross uses mediumImpact instead).
-    if (target != 0 && !didCrossWeek) HapticFeedback.selectionClick();
-    _snapSwipe(target, then: then, heavySnap: didCrossWeek && target != 0.0);
+    _settleSwipe(
+      daySettleTarget(_swipeFraction, d.primaryVelocity ?? 0),
+      effectiveStep,
+    );
   }
 
-  void _snapSwipe(double target, {VoidCallback? then, bool heavySnap = false, int? durationMs}) {
+  /// A touch stops a settling swipe where it is, like Apple Calendar.
+  void _onHorizontalDragDown() {
+    if (!_swipeSnapAnim.isAnimating) return;
+    _swipeSnapAnim.stop();
+    setState(() {}); // drop the settle's IgnorePointer
+  }
+
+  /// The touch that stopped a settle lifted (or went on to scroll vertically)
+  /// without a day drag: settle on the nearest day from where it stopped.
+  void _onHorizontalDragCancel(double effectiveStep) {
+    if (_swipeFraction == 0.0 || _swipeSnapAnim.isAnimating) return;
+    if (_stretchAnim.isAnimating) return;
+    _settleSwipe(_swipeFraction.round(), effectiveStep);
+  }
+
+  /// Settles a released day swipe on the day edge [target] (−1, 0 or 1) on
+  /// Apple's exponential curve (see day_swipe_physics.dart), then commits the
+  /// day. One tick when it lands on a new day, a heavier one in a new week.
+  void _settleSwipe(int target, double effectiveStep) {
+    _swipeSnapAnim.stop();
+    _swipeSnapAnim.dispose();
+    final then = target < 0 ? _advanceDay : target > 0 ? _retreatDay : null;
+    var ticked = target == 0;
+    final startPage = _dragStartPage;
+    _dragStartPage = null;
+    final newWeek = startPage != null &&
+        _weekMonday(_dayForMultiDayPage(startPage)) !=
+            _weekMonday(_dayForMultiDayPage(_focusedMultiDayPage - target));
+
+    void land() {
+      if (then != null) {
+        then();
+      } else {
+        setState(() => _swipeFraction = 0.0);
+      }
+    }
+
+    final ctrl = AnimationController.unbounded(vsync: this);
+    _swipeSnapAnim = ctrl;
+    _landSwipe = land;
+    ctrl
+      ..addListener(() {
+        setState(() => _swipeFraction = ctrl.value);
+        if (!ticked &&
+            (target - ctrl.value).abs() * effectiveStep < kDaySettleLanded) {
+          ticked = true;
+          newWeek
+              ? HapticFeedback.mediumImpact()
+              : HapticFeedback.selectionClick();
+        }
+      })
+      ..addStatusListener((s) {
+        if (s == AnimationStatus.completed) land();
+      })
+      ..animateWith(DaySettleSimulation(
+        start: _swipeFraction,
+        target: target.toDouble(),
+        doneWithin: 0.3 / effectiveStep,
+      ));
+  }
+
+  void _snapSwipe(double target, {VoidCallback? then, int? durationMs}) {
     _swipeSnapAnim.stop();
     _swipeSnapAnim.dispose();
     final begin = _swipeFraction;
     final distance = (target - begin).abs().clamp(0.2, 1.0);
 
-    if (heavySnap) HapticFeedback.mediumImpact();
-
     // Duration scales with distance so small springs feel snappy.
-    // Week-boundary crossings use a short, crisp duration for a page-turn feel.
-    final ms = durationMs ?? (heavySnap ? 130 : (220 * distance).round());
-    final curve = heavySnap ? Curves.easeOut : Curves.easeOutCubic;
+    final ms = durationMs ?? (220 * distance).round();
+    const curve = Curves.easeOutCubic;
 
     final ctrl = AnimationController(vsync: this, duration: Duration(milliseconds: ms));
     _swipeSnapAnim = ctrl;
+    _landSwipe = () {
+      setState(() => _swipeFraction = target);
+      then?.call();
+    };
     ctrl
       ..addListener(() => setState(() =>
           _swipeFraction = lerpDouble(begin, target, curve.transform(ctrl.value))!))
@@ -764,6 +805,14 @@ class _CalendarScreenState extends State<CalendarScreen>
         if (s == AnimationStatus.completed) then?.call();
       })
       ..forward();
+  }
+
+  /// Lands a settling swipe on its target at once, for a navigation that reads
+  /// the focused day and shouldn't wait out the settle's ~0.5 s.
+  void _finishSwipe() {
+    if (!_swipeSnapAnim.isAnimating) return;
+    _swipeSnapAnim.stop();
+    _landSwipe?.call();
   }
 
   void _snapWeekStrip(double target, {bool? advance}) {
@@ -815,11 +864,17 @@ class _CalendarScreenState extends State<CalendarScreen>
   }
 
   void _jumpToPage(int targetPage) {
+    const kMs = 140;
+    // A released swipe settles for ~0.5 s, and its landing would move the
+    // focused page after this jump has measured from it.
+    _swipeSnapAnim.stop();
     final delta = targetPage - _focusedMultiDayPage;
-    if (delta == 0) return;
+    if (delta == 0) {
+      if (_swipeFraction != 0.0) _snapSwipe(0.0, durationMs: kMs);
+      return;
+    }
 
     final goingForward = delta > 0;
-    const kMs = 140;
 
     if (delta.abs() == 1) {
       // Perfect case: adjacent slot already holds the target day.
@@ -916,7 +971,7 @@ class _CalendarScreenState extends State<CalendarScreen>
   void _enterMonth() {
     if (_monthActive || _monthAnim.isAnimating) return;
     if (_navLevel != _NavLevel.day) return;
-    if (_swipeSnapAnim.isAnimating) return;
+    _finishSwipe();
     if (_dayViewMode == _DayViewMode.list) {
       // Hop to multiday first so the week strip exists to measure.
       _onDayViewModeChanged(_DayViewMode.multiDay);
@@ -1765,49 +1820,60 @@ class _CalendarScreenState extends State<CalendarScreen>
                   _buildHourAxisWidget(hourHeight),
                   Expanded(
                     child: GestureDetector(
+                      // Opaque: while a swipe settles the columns ignore
+                      // pointers, and the touch that stops it must still land.
+                      behavior: HitTestBehavior.opaque,
+                      onHorizontalDragDown: (_) => _onHorizontalDragDown(),
                       onHorizontalDragStart: (_) {
                         _dragStartPage = _focusedMultiDayPage;
                       },
+                      onHorizontalDragCancel: () =>
+                          _onHorizontalDragCancel(effectiveStep),
                       onHorizontalDragUpdate: (d) =>
                           _onHorizontalDragUpdate(d, effectiveStep),
                       onHorizontalDragEnd: (d) =>
                           _onHorizontalDragEnd(d, effectiveStep),
                       child: ClipRect(
-                        child: Stack(
-                          children: [
-                            ...List.generate(5, (i) => Positioned(
-                              left: slotLefts[i],
-                              top: 0,
-                              width: slotW,
-                              height: hourHeight * 24,
-                              child: DayColumn(
-                                key: _slotKeys[i],
-                                day: days[i],
-                                showHourLabels: false,
-                                embedded: true,
+                        // Like a settling Scrollable: the touch that stops a
+                        // swipe doesn't also open the event under it.
+                        child: IgnorePointer(
+                          ignoring: _swipeSnapAnim.isAnimating,
+                          child: Stack(
+                            children: [
+                              ...List.generate(5, (i) => Positioned(
+                                left: slotLefts[i],
+                                top: 0,
+                                width: slotW,
+                                height: hourHeight * 24,
+                                child: DayColumn(
+                                  key: _slotKeys[i],
+                                  day: days[i],
+                                  showHourLabels: false,
+                                  embedded: true,
+                                  hourHeight: hourHeight,
+                                  editController: _editController,
+                                  onEventTap: (e, d) =>
+                                      showEventDetail(context, e, d),
+                                ),
+                              )),
+                              // Interaction layer: renders the picked-up / draft
+                              // block above the columns; ignores pointers when idle.
+                              EventEditLayer(
+                                controller: _editController,
+                                days: days,
+                                slotLefts: slotLefts,
+                                slotWidth: slotW,
+                                scrollController: _timelineScrollController,
+                                // topOffset is the full header now — week strip,
+                                // column labels and all-day rows. It used to stop at
+                                // the week strip, hence the extra _kColLabelH here
+                                // (which silently ignored the all-day rows' height).
+                                headerInset: topOffset,
                                 hourHeight: hourHeight,
-                                editController: _editController,
-                                onEventTap: (e, d) =>
-                                    showEventDetail(context, e, d),
+                                contentTop: contentTop,
                               ),
-                            )),
-                            // Interaction layer: renders the picked-up / draft
-                            // block above the columns; ignores pointers when idle.
-                            EventEditLayer(
-                              controller: _editController,
-                              days: days,
-                              slotLefts: slotLefts,
-                              slotWidth: slotW,
-                              scrollController: _timelineScrollController,
-                              // topOffset is the full header now — week strip,
-                              // column labels and all-day rows. It used to stop at
-                              // the week strip, hence the extra _kColLabelH here
-                              // (which silently ignored the all-day rows' height).
-                              headerInset: topOffset,
-                              hourHeight: hourHeight,
-                              contentTop: contentTop,
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),

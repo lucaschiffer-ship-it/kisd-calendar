@@ -61,7 +61,10 @@ class AccountTeardown {
   static Future<void>? _signingOut;
 
   /// Completes once a sign-out in progress is through (at once if none is).
-  static Future<void> get signOutDone => _signingOut ?? Future<void>.value();
+  /// Never errors: LoginScreen awaits it, and a throw there would leave its
+  /// spinner running.
+  static Future<void> get signOutDone =>
+      (_signingOut ?? Future<void>.value()).catchError((Object _) {});
 
   /// Bumped after a login-time wipe, for screens already mounted then.
   static final ValueNotifier<int> wiped = ValueNotifier<int>(0);
@@ -90,7 +93,7 @@ class AccountTeardown {
       await WidgetsBinding.instance.endOfFrame;
       await run();
       await wipeDevice();
-      await loadStoredState();
+      await _step('reload settings', loadStoredState);
       _log('[account] signed out — the device is in its just-installed state');
     } finally {
       signingOut.value = false;

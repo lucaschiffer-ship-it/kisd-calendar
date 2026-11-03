@@ -175,7 +175,7 @@ Gotchas (3 Nov 2026 — a run left pending by sign-out held every later login un
 
 Sign-out returns the app to its just-installed state — nothing is kept. Order matters: `loginService.signOut()` first (aborts the run, forgets the credentials, AppRoot drops HomeScreen and the native webviews), then `run()` (per-account data), `wipeDevice()` (calendars → files → Keychain per accessibility class → web data via `removeDataModifiedSince` → `prefs.clear()` + install marker + startup-cleanup flag), then `loadStoredState()` (the launch loaders, `lib/services/app_startup.dart`) resets every in-memory setting.
 
-- **New stored state needs no teardown step** if it lives in legacy prefs, the Keychain or WebKit — those are wiped wholesale. Files, calendars, `SharedPreferencesAsync` keys and in-memory caches do need one.
+- **Sign-out** wipes legacy prefs, the Keychain and WebKit wholesale; files, calendars, `SharedPreferencesAsync` keys and in-memory caches need a step in `wipeDevice`. **Per-account data still needs a `run()` step wherever it lives** — the login-time account switch (`onLoginSucceeded` → `run()`) clears only what `run()` lists, so a per-account prefs key without one leaks across a rejected-password → different-Campus-ID switch.
 - **Work in flight compares `AccountTeardown.epoch`** before persisting (scrapes, KISD events, prefetch) — the same idea as `_semesterLeft`.
 - Never delete cookies while HomeScreen is mounted with credentials stored: the auth-expired handlers start a re-login with the old account.
 - `WebStorageManager.deleteAllData()` is Android-only (throws on iOS); `FlutterSecureStorage.deleteAll()` only matches its own accessibility class.

@@ -11,13 +11,17 @@ import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../models/app_event.dart';
+import 'calendar_ownership.dart';
 import 'calendar_service.dart';
+import 'default_calendar_notice.dart';
 import 'event_store.dart';
 
 /// One-way projection of the [EventStore] into a single "KISD" EKCalendar.
 /// Recurrences are expanded into individual EKEvents (device_calendar handles
 /// occurrence exceptions badly), tracked in a mapping table and diff-synced —
-/// never wipe-and-rebuild. External edits in iOS are restored on the next sync.
+/// never wipe-and-rebuild. External edits to the app's events are restored on
+/// the next sync; events the user adds to the calendar are left alone
+/// ([planMirrorUnmapped]).
 class IosMirrorService {
   IosMirrorService._();
   static final IosMirrorService instance = IosMirrorService._();
@@ -170,15 +174,20 @@ class IosMirrorService {
       return;
     }
 
-    // 2. Mapping table from the previous sync.
+    // 2. Mapping table from the previous sync. Without one (fresh install,
+    // reinstall, sign-out — or an unreadable one) nothing says which events
+    // in the calendar are the app's: this sync sweeps the calendar (4b).
     final prefs = await SharedPreferences.getInstance();
     final mapping = <String, String>{};
     final rawMap = prefs.getString(_kKeyMap);
+    var firstSync = rawMap == null;
     if (rawMap != null) {
       try {
         (json.decode(rawMap) as Map<String, dynamic>)
             .forEach((k, v) => mapping[k] = v as String);
-      } catch (_) {}
+      } catch (_) {
+        firstSync = true;
+      }
     }
 
     // 3. Actual events currently in the KISD calendar.
@@ -210,6 +219,8 @@ class IosMirrorService {
       if (actualById.containsKey(ekId)) {
         try {
           await _plugin.deleteEvent(calId, ekId);
+          // Gone — 4b must not adopt it.
+          actualById.remove(ekId);
           deletedCount++;
         } catch (_) {
           failures++;
@@ -217,13 +228,32 @@ class IosMirrorService {
       }
     }
 
-    // 4b. Deletions: unmapped events in the calendar (external additions and
-    // legacy writeCourses leftovers) — iOS is a read-only projection.
+    // 4b. Unmapped events. Identical copies of a desired occurrence are the
+    // app's: adopted in place of a create, or deleted as duplicates. Anything
+    // else is the user's — iOS can make "KISD" the default calendar for new
+    // events — and is swept only on a first sync, together with legacy
+    // writeCourses leftovers (calendar_ownership.dart).
     final mappedIds = mapping.values.toSet();
-    for (final entry in actualById.entries) {
-      if (mappedIds.contains(entry.key)) continue;
+    final plan = planMirrorUnmapped(
+      wanted: {
+        for (final entry in desired.entries)
+          if (!actualById.containsKey(mapping[entry.key]))
+            entry.key: _occurrenceIdentity(entry.value),
+      },
+      desiredIdentities: {
+        for (final occ in desired.values) _occurrenceIdentity(occ),
+      },
+      unmapped: [
+        for (final e in actualById.values)
+          if (!mappedIds.contains(e.eventId))
+            CalendarEventRef(e.eventId!, _eventIdentity(e)),
+      ],
+      firstSync: firstSync,
+    );
+    mapping.addAll(plan.adopt);
+    for (final id in plan.delete) {
       try {
-        await _plugin.deleteEvent(calId, entry.key);
+        await _plugin.deleteEvent(calId, id);
         deletedCount++;
       } catch (_) {
         failures++;
@@ -285,9 +315,27 @@ class IosMirrorService {
     }
 
     _log('sync: ${desired.length} desired → '
-        '$created created, $updated updated, $deletedCount deleted, '
-        '$failures failures');
+        '$created created, ${plan.adopt.length} adopted, $updated updated, '
+        '$deletedCount deleted, $failures failures'
+        '${firstSync ? ' (first sync)' : ''}');
+
+    await DefaultCalendarNotice.instance.check();
   }
+
+  /// [eventIdentity] of an occurrence as step 4c writes it — the same instants
+  /// [_differs] compares.
+  static String _occurrenceIdentity(StoreOccurrence occ) => eventIdentity(
+        title: occ.event.title,
+        start: occ.start.toLocal(),
+        end: occ.end.toLocal(),
+      );
+
+  static String _eventIdentity(Event e) => eventIdentity(
+        title: e.title,
+        start: e.start ?? DateTime.fromMillisecondsSinceEpoch(0),
+        end: e.end ?? DateTime.fromMillisecondsSinceEpoch(0),
+        allDay: e.allDay ?? false,
+      );
 
   /// Field-level diff — also catches external edits made in iOS Calendar,
   /// which then get restored to the store's values.

@@ -13,6 +13,7 @@ import 'settings_screen.dart';
 import '../config/app_theme.dart' as tokens;
 import '../models/course_shell.dart';
 import '../services/course_updates.dart';
+import '../services/default_calendar_notice.dart';
 import '../services/page_actions.dart';
 import '../services/service_locator.dart';
 import '../services/spaces_browser.dart';
@@ -135,6 +136,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     // Already the invalidation hook everywhere else (ListScreen listens the
     // same way), so an attach made from anywhere refreshes the picker's rows.
     CourseUpdates.instance.revision.addListener(_refreshCourseSnapshot);
+    // A calendar sync may have found it before HomeScreen existed.
+    DefaultCalendarNotice.instance.pending
+        .addListener(_showDefaultCalendarNotice);
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _showDefaultCalendarNotice());
     SpacesBrowser.register((url) {
       // Loads in the content tab; the pinned home tab (and its pre-auth
       // reload guard in _openSheet) is unaffected.
@@ -147,6 +153,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void dispose() {
     SpacesBrowser.unregister();
     CourseUpdates.instance.revision.removeListener(_refreshCourseSnapshot);
+    DefaultCalendarNotice.instance.pending
+        .removeListener(_showDefaultCalendarNotice);
     _browserNoteTimer?.cancel();
     _snapBackCtrl.removeListener(_onSnapBackTick);
     _snapBackCtrl.dispose();
@@ -165,6 +173,48 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _rebuild() => setState(() {});
+
+  bool _defaultCalendarNoticeOpen = false;
+
+  /// Once ever: iOS made "KISD" or "KISD Events" the default calendar for new
+  /// events (DefaultCalendarNotice). Apps can't change that default or link to
+  /// its setting, so this explains the way; Open Settings is the public link
+  /// to KISDesk's own page, one step from Apps › Calendar.
+  void _showDefaultCalendarNotice() {
+    final name = DefaultCalendarNotice.instance.pending.value;
+    if (name == null || _defaultCalendarNoticeOpen || !mounted) return;
+    _defaultCalendarNoticeOpen = true;
+    DefaultCalendarNotice.instance.markShown();
+    final where = name == 'KISD'
+        ? "They stay there, but KISDesk's calendar won't show them."
+        : 'They stay there, among the university events.';
+    showCupertinoDialog<void>(
+      context: context,
+      builder: (ctx) => CupertinoAlertDialog(
+        title: Text('$name is your default calendar'),
+        content: Text(
+          'Events you add in Apple Calendar now go into $name. $where\n\n'
+          'To use your own calendar: Settings › Apps › Calendar › Default '
+          'Calendar. (Open Settings shows KISDesk; go back to Apps first.)',
+        ),
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Not now'),
+          ),
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () {
+              Navigator.pop(ctx);
+              launchUrl(Uri.parse('app-settings:'),
+                  mode: LaunchMode.externalApplication);
+            },
+            child: const Text('Open Settings'),
+          ),
+        ],
+      ),
+    ).whenComplete(() => _defaultCalendarNoticeOpen = false);
+  }
 
   // Fires on every loginService notification. When the session transitions to
   // logged-in, reload the Spaces browser so the bar reflects the authenticated

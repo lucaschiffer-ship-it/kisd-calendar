@@ -58,7 +58,11 @@ again).
   canteen number and the date; no account or personal data.
 - Fonts are bundled with the app; nothing is fetched from Google.
 - The calendar feature writes course dates into your device calendar after
-  you grant iOS calendar permission. Calendar data never leaves the device.
+  you grant iOS calendar permission. The app itself never sends calendar data
+  anywhere. Its calendars ("KISD", "KISD Events") live in Apple Calendar,
+  either on this iPhone or in the account your default calendar belongs to
+  (on most iPhones, iCloud); iOS syncs them through that account to your
+  other devices, like any calendar you make yourself.
 - Mail attachments: photos, files and document scans are read only when you
   pick them — the iOS photo picker hands over only what you select, so the
   app has no access to your photo library. While you write, copies sit in

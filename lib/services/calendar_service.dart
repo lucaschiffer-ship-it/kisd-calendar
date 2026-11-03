@@ -10,6 +10,8 @@ import 'package:timezone/timezone.dart' as tz;
 import '../models/course_shell.dart';
 import '../models/kisd_event.dart';
 import 'cache_service.dart';
+import 'calendar_ownership.dart';
+import 'default_calendar_notice.dart';
 import 'event_store.dart';
 
 // ─── Simple event model returned to UI ────────────────────────────────────────
@@ -206,7 +208,18 @@ class CalendarService {
     return r.isSuccess ? r.data : null;
   }
 
-  Future<void> _wipeKisdEventsCalendar(String calId) async {
+  /// What the last write put into "KISD Events" ([KisdEventsRecord]), so the
+  /// next one deletes only that and leaves the user's own events alone — iOS
+  /// can make this calendar the default for new events.
+  static const _kKeyKisdWritten = 'kisd_events_written_v1';
+
+  /// Deletes the app's events from "KISD Events" before [toWrite] (their
+  /// [eventIdentity]s) is written — see [kisdEventsToDelete].
+  Future<void> _wipeKisdEventsCalendar(
+    String calId, {
+    required KisdEventsRecord? record,
+    required Set<String> toWrite,
+  }) async {
     final from = DateTime.now().subtract(const Duration(days: 365 * 2));
     final to   = DateTime.now().add(const Duration(days: 365 * 5));
     final r = await _plugin.retrieveEvents(
@@ -215,10 +228,24 @@ class CalendarService {
     // Every occurrence of a recurring event comes back under the series' id,
     // and the first delete already removes the whole series — deleting each
     // occurrence again only failed with "event not found".
-    final ids = {
-      for (final e in r.data!)
-        if (e.eventId != null) e.eventId!,
-    };
+    final ids = kisdEventsToDelete(
+      existing: [
+        for (final e in r.data!)
+          if (e.eventId != null)
+            CalendarEventRef(
+              e.eventId!,
+              eventIdentity(
+                title: e.title,
+                start: e.start ?? DateTime.fromMillisecondsSinceEpoch(0),
+                end: e.end ?? DateTime.fromMillisecondsSinceEpoch(0),
+                allDay: e.allDay ?? false,
+              ),
+            ),
+      ],
+      record: record,
+      calId: calId,
+      toWrite: toWrite,
+    );
     var deleted = 0;
     for (final id in ids) {
       try {
@@ -226,12 +253,14 @@ class CalendarService {
         deleted++;
       } catch (_) {}
     }
-    print('[cal] _wipeKisdEventsCalendar: deleted $deleted events from $calId');
+    final full = record == null || record.pending || record.calId != calId;
+    print('[cal] _wipeKisdEventsCalendar: deleted $deleted of '
+        '${r.data!.length} events from $calId${full ? ' (full wipe)' : ''}');
   }
 
-  // One write at a time: each wipes the calendar and writes it again, so two
-  // at once (a refresh and a settings switch) would leave duplicates. A call
-  // during a write is queued; only the newest queued list is written.
+  // One write at a time: each deletes the app's events and writes them again,
+  // so two at once (a refresh and a settings switch) would leave duplicates. A
+  // call during a write is queued; only the newest queued list is written.
   bool _kisdWriting = false;
   List<KisdEvent>? _kisdQueued;
 
@@ -262,8 +291,6 @@ class CalendarService {
       final calId = await _ensureKisdEventsCalendar();
       if (calId == null) return;
 
-      await _wipeKisdEventsCalendar(calId);
-
       final loc = tz.local;
       final hidden = await CacheService().loadHiddenKisdEvents();
       final toWrite = events
@@ -272,6 +299,7 @@ class CalendarService {
       var recurringCount = 0;
       var parseFailCount = 0;
 
+      final calEvents = <Event>[];
       for (final evt in toWrite) {
         final evtStart = tz.TZDateTime(loc,
             evt.start.year, evt.start.month, evt.start.day,
@@ -298,13 +326,52 @@ class CalendarService {
           }
         }
 
-        await _plugin.createOrUpdateEvent(calEvt);
+        calEvents.add(calEvt);
       }
+
+      // Marked pending until the new ids are saved: a write that never
+      // finishes leaves events no record knows, so the next one wipes all.
+      final prefs = await SharedPreferences.getInstance();
+      final record = KisdEventsRecord.decode(prefs.getString(_kKeyKisdWritten));
+      await prefs.setString(
+        _kKeyKisdWritten,
+        (record ?? KisdEventsRecord(calId: calId, ids: const {}))
+            .asPending()
+            .encode(),
+      );
+
+      await _wipeKisdEventsCalendar(
+        calId,
+        record: record,
+        toWrite: {
+          for (final e in calEvents)
+            eventIdentity(
+              title: e.title,
+              start: e.start!,
+              end: e.end!,
+              allDay: e.allDay ?? false,
+            ),
+        },
+      );
+
+      final written = <String>{};
+      for (final calEvt in calEvents) {
+        final res = await _plugin.createOrUpdateEvent(calEvt);
+        if (res != null && res.isSuccess && res.data != null) {
+          written.add(res.data!);
+        }
+      }
+      await prefs.setString(
+        _kKeyKisdWritten,
+        KisdEventsRecord(calId: calId, ids: written).encode(),
+      );
 
       clearCache();
       writeRevision.value++;
       print('[evt-write] recurring set: $recurringCount of ${toWrite.length} written with RecurrenceRule');
       print('[evt-write] recurring parse failures: $parseFailCount events fell back to single entry');
+
+      await DefaultCalendarNotice.instance.check();
     } catch (e) {
       print('[cal] writeKisdEvents: $e');
     }

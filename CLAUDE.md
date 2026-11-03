@@ -198,8 +198,18 @@ University events come from the Event Organiser list in wp-admin (`/home/wp-admi
 - **Markup (Oct 2026):** the Event cell is a `<th data-colname="Event">` — select by attribute, never `td[...]` (that matched nothing and emptied the calendar). Empty cells hold `—` plus a `.screen-reader-text` label ("No Venue"); read them with `visibleText`. All-day events show the date with no time line → `allDay`.
 - The list is paged; the scrape follows `a.next-page` (401 events at 400 per page dropped one).
 - **Zero events is a failure, never a result:** it throws, so nothing is saved — an empty save wipes the calendar and sets the 24 h stamp. An empty cache counts as stale at launch.
-- `writeKisdEvents` wipes and rewrites, one write at a time (later calls queue). The wipe deletes each event id once: every occurrence of a series shares its id, and the first delete removes the series.
-- Recurring events the user switched off (Settings › Calendar › Recurring events, `kisd_events_hidden_v1`, by `post-NNNN` id) are filtered at write time. Deleting in Apple Calendar never sticks — the next refresh rewrites everything.
+- `writeKisdEvents` deletes the app's events and rewrites them, one write at a time (later calls queue). It deletes only what the last write recorded (`kisd_events_written_v1`) plus exact copies of what it is about to write — never the user's own events (see *Calendar ownership* below). Without a complete record (first write, reinstall, sign-out, an unfinished write, a new calendar) it wipes everything as before. It deletes each event id once: every occurrence of a series shares its id, and the first delete removes the series.
+- Recurring events the user switched off (Settings › Calendar › Recurring events, `kisd_events_hidden_v1`, by `post-NNNN` id) are filtered at write time. Deleting an app event in Apple Calendar never sticks — the next refresh rewrites it.
+
+### Calendar ownership + default-calendar notice (`lib/services/calendar_ownership.dart`, `default_calendar_notice.dart`, pinned by `test/calendar_ownership_test.dart`)
+
+iOS can make "KISD" or "KISD Events" the **default calendar for new events** (3 Nov 2026: on an iPhone whose default was never chosen it picked KISD), and every appointment made in Apple Calendar then lands there. Apps can't set that default (`defaultCalendarForNewEvents` is read-only) or link to Settings › Apps › Calendar (the only public Settings links: the app's page, its notification settings, Default Apps).
+
+- Both calendars therefore keep events the app didn't write. Identity = title + start/end minute; all-day = title + start day (the 23:59:59 end). The mirror (`planMirrorUnmapped`) adopts an identical unmapped event in place of a create, deletes further identical copies, and sweeps everything else only on a first sync (no `kisd_mirror_map_v1`). KISD Events: `kisdEventsToDelete`.
+- A user's own event in "KISD" never shows in the in-app day view (`day_column.dart` skips the KISD calendar), only in the list header strip.
+- `DefaultCalendarNotice.check()` runs after each mirror sync and KISD Events write. HomeScreen shows the notice **once ever** (`kisd_default_cal_notice_shown_v1`; sign-out's `prefs.clear()` resets it). Open Settings uses `app-settings:`, which lands on KISDesk's own page.
+- Where the calendars live: `device_calendar`'s `getSource()` picks "On My iPhone" when iOS offers it, else the default calendar's account (iCloud on most phones), so they sync to the user's other devices. `localAccountName` is ignored on iOS.
+- Known gap: if iCloud gives recorded KISD Events ids new ones, an event the user later hides (or Spaces drops) can stay behind. Everything still being written is caught by the duplicate rule.
 - Only weekly patterns become an RRULE; "custom recurrence" / "every day" are written as their first date. If those ever matter: `admin-ajax.php?action=eventorganiser-fullcal&start=…&end=` returns every occurrence as JSON (logged-in session).
 - EventKit ends an all-day event at 23:59:59 of its last day; `getAllDayEventsForRange` takes the last day from end − 1 s.
 

@@ -8,6 +8,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import '../models/course_shell.dart';
 import '../models/kisd_event.dart';
 import '../models/one_off_event.dart';
+import 'account_teardown.dart';
 import 'cache_service.dart';
 import 'calendar_service.dart';
 import 'course_choices.dart';
@@ -450,6 +451,12 @@ class ScraperService extends ChangeNotifier {
   // the data next to it.
   bool _semesterLeft(String semester) => Semester.activeId != semester;
 
+  // True when the account's data was cleared (sign-out, or the account switch
+  // at login) while a scrape was in flight. Its results are the old
+  // account's: saving them would put its courses back into the cache and
+  // the calendar right after the wipe.
+  bool _accountLeft(int epoch) => AccountTeardown.epoch != epoch;
+
   Future<void> saveToCache(List<CourseShell> shells) =>
       CacheService().saveCourses(shells.map(_toJson).toList());
 
@@ -459,8 +466,10 @@ class ScraperService extends ChangeNotifier {
     _error = null;
     notifyListeners();
 
-    // Resolved once per scrape so the whole run belongs to one semester.
+    // Resolved once per scrape so the whole run belongs to one semester —
+    // and to one account.
     final semester = Semester.activeId;
+    final epoch = AccountTeardown.epoch;
     print('[scraper] my-courses semester: $semester');
 
     try {
@@ -513,6 +522,15 @@ class ScraperService extends ChangeNotifier {
         notifyListeners();
         return loadCached();
       }
+      if (_accountLeft(epoch)) {
+        print(
+          '[scraper] my-courses: account data cleared mid-scrape; '
+          'discarding ${result.length} shells',
+        );
+        _isLoading = false;
+        notifyListeners();
+        return const [];
+      }
 
       await saveToCache(result);
       await CacheService().setCachedSemester(semester);
@@ -535,6 +553,7 @@ class ScraperService extends ChangeNotifier {
   // isFavourite. Does not write the calendar or update the scrape timestamp.
   Future<List<CourseShell>> scrapeAllCourses() async {
     final semester = Semester.activeId;
+    final epoch = AccountTeardown.epoch;
     final baseUrl = allCoursesUrl(semester);
     print('[scraper] all-courses semester: $semester');
 
@@ -586,6 +605,13 @@ class ScraperService extends ChangeNotifier {
           '${Semester.activeId}; discarding',
         );
         return loadCached();
+      }
+      if (_accountLeft(epoch)) {
+        print(
+          '[scraper] all-courses: account data cleared mid-scrape; '
+          'discarding',
+        );
+        return const [];
       }
 
       await saveToCache(mergedWithFavs);

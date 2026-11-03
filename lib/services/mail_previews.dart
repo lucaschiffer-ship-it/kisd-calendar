@@ -29,6 +29,14 @@ class MailPreviews extends ChangeNotifier {
   static String? _idOf(MimeMessage m) =>
       (m.envelope?.messageId ?? m.getHeaderValue('message-id'))?.trim();
 
+  /// Sign-out: the previews belong to the account's mail.
+  void clear() {
+    _byMessageId.clear();
+    _missedAt.clear();
+    _inFlight.clear();
+    notifyListeners();
+  }
+
   /// The offline-copy preview for [m], if one has been read.
   String? previewFor(MimeMessage m) {
     final id = _idOf(m);

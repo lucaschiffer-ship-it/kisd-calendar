@@ -17,11 +17,26 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    // Right after Settings › Sign out this screen is up while the device is
+    // still being wiped; Sign in waits for that.
+    AccountTeardown.signingOut.addListener(_rebuild);
+  }
+
+  @override
   void dispose() {
+    AccountTeardown.signingOut.removeListener(_rebuild);
     _usernameCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
   }
+
+  void _rebuild() {
+    if (mounted) setState(() {});
+  }
+
+  bool get _busy => _loading || AccountTeardown.signingOut.value;
 
   Future<void> _signIn() async {
     final username = _usernameCtrl.text.trim();
@@ -34,10 +49,16 @@ class _LoginScreenState extends State<LoginScreen> {
       _loading = true;
       _error = null;
     });
-    final success = await loginService.login(username, password);
-    // Only a login that actually authenticated can switch accounts — a typo
-    // in the Campus ID fails above and leaves the data untouched.
-    if (success) await AccountTeardown.onLoginSucceeded(username);
+    await AccountTeardown.signOutDone;
+    // This screen stays up until the login succeeded and the account is
+    // committed — the 2FA dialog opens over it. Only a login that actually
+    // authenticated can switch accounts (a typo in the Campus ID fails and
+    // leaves the data untouched), and it does so before HomeScreen mounts.
+    final success = await loginService.login(
+      username,
+      password,
+      beforeCommit: () => AccountTeardown.onLoginSucceeded(username),
+    );
     if (mounted && !success) {
       setState(() {
         _loading = false;
@@ -86,7 +107,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   textInputAction: TextInputAction.done,
                   decoration: _field(cs, 'Password'),
                   onSubmitted: (_) {
-                    if (!_loading) _signIn();
+                    if (!_busy) _signIn();
                   },
                 ),
                 if (_error != null) ...[
@@ -99,14 +120,14 @@ class _LoginScreenState extends State<LoginScreen> {
                 ],
                 const SizedBox(height: 24),
                 FilledButton(
-                  onPressed: _loading ? null : _signIn,
+                  onPressed: _busy ? null : _signIn,
                   style: FilledButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(AppRadius.input),
                     ),
                   ),
-                  child: _loading
+                  child: _busy
                       ? SizedBox(
                           width: 20,
                           height: 20,

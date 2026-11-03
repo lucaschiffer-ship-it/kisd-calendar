@@ -398,8 +398,11 @@ class _ListScreenState extends State<ListScreen>
   }
 
   Future<void> _scrapeEventsBackground() async {
+    final epoch = AccountTeardown.epoch;
     try {
       final events = await scraperService.scrapeKisdEvents();
+      // Signed out meanwhile: the wipe already ran, don't refill it.
+      if (AccountTeardown.epoch != epoch) return;
       final cache = CacheService();
       await cache.saveKisdEvents(events);
       await cache.setKisdEventsLastScrape(DateTime.now());
@@ -411,7 +414,7 @@ class _ListScreenState extends State<ListScreen>
     }
   }
 
-  Future<void> _scrapeBackground() async {
+  Future<void> _scrapeBackground({bool retried = false}) async {
     try {
       final shells = await scraperService.scrapeMyCourses();
       if (mounted) {
@@ -422,9 +425,11 @@ class _ListScreenState extends State<ListScreen>
       }
     } catch (e) {
       print('[list] background scrape failed: $e');
-      if (e.toString().contains('auth_required')) {
+      // One re-login and one retry. Unbounded, a login that "succeeds"
+      // without a usable session cycled scrape → re-login → scrape forever.
+      if (e.toString().contains('auth_required') && !retried && mounted) {
         final ok = await loginService.loginWithStoredCredentials();
-        if (ok) _scrapeBackground();
+        if (ok && mounted) _scrapeBackground(retried: true);
       }
       return;
     }
@@ -432,6 +437,9 @@ class _ListScreenState extends State<ListScreen>
   }
 
   Future<void> _runAllCoursesBackground() async {
+    // Not from a screen sign-out already took down: started now, the scrape
+    // would belong to no account and could refill the wiped cache.
+    if (!mounted) return;
     try {
       final shells = await scraperService.scrapeAllCourses();
       if (mounted) {

@@ -180,6 +180,15 @@ class NotificationService {
     return out;
   }
 
+  /// Sign-out: every notification the app scheduled or posted, delivered or
+  /// pending — course reminders and new-mail notices alike (the ones Swift
+  /// posts live in the same notification centre) — and the taps still
+  /// waiting for their screen.
+  Future<void> cancelAll() async {
+    _pending.clear();
+    await _plugin.cancelAll();
+  }
+
   /// Removes every mail notification, delivered or pending.
   Future<void> cancelMail() async {
     final ids = <int>{

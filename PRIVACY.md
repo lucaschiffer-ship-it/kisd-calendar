@@ -21,10 +21,13 @@ service.
 | The mensa menu for this week and the next two | Local app storage on your device | So the menu still opens offline |
 
 Your two-factor (TOTP) secret is **never** stored — you enter the one-time
-code yourself when TH Köln asks for it. Signing out — or signing in with a
-different Campus ID — deletes the stored credentials, cookies and email
-address, plus that account's courses, calendar entries (including the "KISD"
-calendar in Apple Calendar), pending reminders and cached mail.
+code yourself when TH Köln asks for it. Signing out deletes everything the
+app stored on your device — credentials, cookies and all other website data,
+email address, courses, calendar entries (including the "KISD" and
+"KISD Events" calendars in Apple Calendar), reminders, notifications, cached
+mail and settings — so the app is back to how it was when installed. Signing
+in with a different Campus ID deletes the previous account's credentials,
+cookies, email address, courses, calendar entries, reminders and cached mail.
 
 ## Where your credentials are sent
 
@@ -46,7 +49,8 @@ During login the app accepts TH Köln's "trust this device" option on your
 behalf (device name "KISD App"), so future logins can skip the one-time
 code for the period TH Köln allows (about two weeks). You can revoke
 trusted devices at any time in the TH Köln MFA portal, and signing out of
-the app deletes the cookie on the device.
+the app deletes the cookie on the device (so the next login asks for a code
+again).
 
 ## Other connections
 
@@ -117,10 +121,14 @@ werden beim Schließen gelöscht. Gesendet werden sie nur an die Mailserver
 der TH Köln. Die Kamera wird nur für „Take Photo" und „Scan Document"
 genutzt, nach deiner iOS-Freigabe. Fotos behalten ihre Metadaten, etwa den
 Aufnahmeort, außer du entfernst sie unter „Settings › Mail"; das geschieht
-auf dem Gerät. Beim Abmelden – oder bei der Anmeldung mit einer anderen
-Campus-ID – werden Zugangsdaten, Cookies und E-Mail-Adresse gelöscht, ebenso
-die Kurse, Kalendereinträge (auch der Kalender „KISD" in Apple Kalender),
-anstehende Erinnerungen und zwischengespeicherte E-Mails dieses Kontos.
+auf dem Gerät. Beim Abmelden löscht die App alles, was sie auf dem Gerät
+gespeichert hat – Zugangsdaten, Cookies und alle übrigen Website-Daten,
+E-Mail-Adresse, Kurse, Kalendereinträge (auch die Kalender „KISD" und
+„KISD Events" in Apple Kalender), Erinnerungen, Mitteilungen,
+zwischengespeicherte E-Mails und Einstellungen; danach ist sie wieder wie
+frisch installiert. Bei der Anmeldung mit einer anderen Campus-ID werden
+Zugangsdaten, Cookies und E-Mail-Adresse des vorigen Kontos gelöscht, ebenso
+dessen Kurse, Kalendereinträge, Erinnerungen und zwischengespeicherte E-Mails.
 
 Da der Entwickler keine personenbezogenen Daten verarbeitet, ist er für
 diese Daten weder Verantwortlicher noch Auftragsverarbeiter im Sinne der

@@ -1,7 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../models/app_event.dart';
 import '../models/kisd_event.dart';
@@ -48,13 +47,12 @@ class SettingsScreen extends StatelessWidget {
 
     if (confirmed != true) return;
 
-    await CookieManager.instance().deleteAllCookies();
-    // Everything that belongs to the account lives in one list, shared with
-    // the switch-at-login path.
-    await AccountTeardown.run();
-    await loginService.logout();
-
+    // Everything the app stored goes; AccountTeardown owns the list. Its
+    // first, synchronous step already swaps AppRoot to LoginScreen, so popping
+    // Settings reveals the login screen, which waits while the wipe finishes.
+    final done = AccountTeardown.signOut();
     navigatorKey.currentState?.popUntil((route) => route.isFirst);
+    await done;
   }
 
   Future<void> _resetManualChanges(BuildContext context) async {

@@ -80,6 +80,36 @@ class IosMirrorService {
     if (r.isSuccess && r.data == true) syncNow();
   }
 
+  /// Sign-out: deletes the "KISD" calendar once a sync in flight (and the
+  /// rerun it may owe) is done, so nothing writes into it afterwards. Never
+  /// asks for calendar access — without it there is nothing to delete.
+  Future<void> removeCalendar() async {
+    _debounce?.cancel();
+    final until = DateTime.now().add(const Duration(seconds: 30));
+    while (_syncing && DateTime.now().isBefore(until)) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    final prefs = await SharedPreferences.getInstance();
+    if (!_isSimulator) {
+      final r = await _plugin.hasPermissions();
+      if (r.isSuccess && r.data == true) {
+        final saved = prefs.getString(_kKeyCalId);
+        final cals = await _plugin.retrieveCalendars();
+        for (final c in cals.data ?? const <Calendar>[]) {
+          // The same rule _calendarId adopts a calendar by.
+          final ours =
+              c.id == saved || (c.name == 'KISD' && c.isReadOnly == false);
+          if (ours && c.id != null) {
+            await _plugin.deleteCalendar(c.id!);
+            _log('sign-out: deleted calendar ${c.id}');
+          }
+        }
+      }
+    }
+    await prefs.remove(_kKeyCalId);
+    await prefs.remove(_kKeyMap);
+  }
+
   // ── Sync ────────────────────────────────────────────────────────────────────
 
   Future<void> _sync() async {
@@ -109,11 +139,6 @@ class IosMirrorService {
       _log('no calendar permission — sync skipped');
       return;
     }
-    final calId = await _calendarId();
-    if (calId == null) {
-      _log('could not obtain KISD calendar — sync skipped');
-      return;
-    }
 
     // 1. Desired occurrences: expand over the semester range.
     final now = DateTime.now();
@@ -134,6 +159,16 @@ class IosMirrorService {
     final desired = <String, StoreOccurrence>{
       for (final o in occurrences) o.key: o,
     };
+
+    // An empty store never creates the calendar — after sign-out deleted it,
+    // a late sync must not put an empty "KISD" calendar back.
+    final calId = await _calendarId(create: desired.isNotEmpty);
+    if (calId == null) {
+      _log(desired.isEmpty
+          ? 'nothing to mirror and no KISD calendar — sync skipped'
+          : 'could not obtain KISD calendar — sync skipped');
+      return;
+    }
 
     // 2. Mapping table from the previous sync.
     final prefs = await SharedPreferences.getInstance();
@@ -279,7 +314,7 @@ class IosMirrorService {
   /// One EKCalendar named "KISD". createCalendar with a localAccountName puts
   /// it on the Local source; device_calendar itself falls back to the default
   /// writable source when Local is unavailable (e.g. iCloud-managed devices).
-  Future<String?> _calendarId() async {
+  Future<String?> _calendarId({bool create = true}) async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getString(_kKeyCalId);
 
@@ -301,6 +336,7 @@ class IosMirrorService {
       }
     }
 
+    if (!create) return null;
     final r = await _plugin.createCalendar(
       'KISD',
       calendarColor: _kisdColor,

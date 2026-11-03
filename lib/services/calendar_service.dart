@@ -130,10 +130,15 @@ class CalendarService {
     return r.isSuccess && r.data == true;
   }
 
+  /// Set once [performStartupCleanup] has run. Sign-out writes it straight
+  /// back after clearing the preferences — otherwise the next launch would
+  /// delete the "KISD Events" calendar the new session just wrote.
+  static const startupCleanupDoneKey = 'kisd_events_wipe_v1_done';
+
   // ── One-time startup cleanup: wipe the old KISD Events calendar + stale prefs
   Future<void> performStartupCleanup() async {
     final prefs = await SharedPreferences.getInstance();
-    if (prefs.getBool('kisd_events_wipe_v1_done') == true) return;
+    if (prefs.getBool(startupCleanupDoneKey) == true) return;
 
     // Remove stale SharedPreferences keys from the old events system.
     final staleKeys = const [
@@ -181,7 +186,7 @@ class CalendarService {
       }
     }
 
-    await prefs.setBool('kisd_events_wipe_v1_done', true);
+    await prefs.setBool(startupCleanupDoneKey, true);
   }
 
   // ── KISD Events calendar ────────────────────────────────────────────────────
@@ -377,6 +382,29 @@ class CalendarService {
   /// Empties the KISD Events calendar — a write of nothing, so it queues
   /// behind a write already running instead of racing it.
   Future<void> clearKisdEventsCalendar() => writeKisdEvents(const []);
+
+  /// Sign-out: deletes the "KISD Events" calendar once a write in flight is
+  /// done (a queued one is dropped). Never asks for calendar access —
+  /// without it there is nothing to delete.
+  Future<void> removeKisdEventsCalendar() async {
+    _kisdQueued = null;
+    final until = DateTime.now().add(const Duration(seconds: 30));
+    while (_kisdWriting && DateTime.now().isBefore(until)) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    if (_isSimulator) return;
+    final r = await _plugin.hasPermissions();
+    if (!(r.isSuccess && r.data == true)) return;
+    final cals = await _plugin.retrieveCalendars();
+    for (final c in cals.data ?? const <Calendar>[]) {
+      if (c.name == 'KISD Events' && c.isReadOnly == false && c.id != null) {
+        await _plugin.deleteCalendar(c.id!);
+        print('[cal] sign-out: deleted KISD Events calendar');
+      }
+    }
+    clearCache();
+    writeRevision.value++;
+  }
 
   /// Recurring KISD events that still have dates from [now] on, for the
   /// switches under Settings › Calendar › Recurring events. A weekly rule

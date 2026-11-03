@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kisd_calendar/services/account_teardown.dart';
 import 'package:kisd_calendar/services/cache_service.dart';
+import 'package:kisd_calendar/services/calendar_service.dart';
 import 'package:kisd_calendar/services/event_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -83,14 +84,94 @@ void main() {
     test('a different Campus ID clears the data and takes ownership', () async {
       FlutterSecureStorage.setMockInitialValues({'kisd_data_owner': 'lschiff9'});
       final before = AccountTeardown.wiped.value;
+      final epoch = AccountTeardown.epoch;
       final wiped = await AccountTeardown.onLoginSucceeded('other1');
       expect(wiped, isTrue);
       expect(await courses(), isNull);
       expect(AccountTeardown.wiped.value, before + 1);
+      // Scrapes still in flight compare this before saving.
+      expect(AccountTeardown.epoch, greaterThan(epoch));
       expect(
         await const FlutterSecureStorage().read(key: 'kisd_data_owner'),
         'other1',
       );
+    });
+  });
+
+  group('sign-out device wipe', () {
+    test('leaves no preference and no Keychain item behind', () async {
+      // A representative of everything the app stores — including what the
+      // old teardown deliberately kept (theme, semester, public events,
+      // mensa, opt-ins).
+      SharedPreferences.setMockInitialValues({
+        'kisd_courses': json.encode([
+          {'id': 'a'},
+        ]),
+        'kisd_color': 'light',
+        'kisd_semester_override': 'SS26',
+        'kisd_semester_list': ['WS26'],
+        'kisd_events_v2': '[]',
+        'kisd_events_hidden_v1': ['post-1'],
+        'mensa_offline_days': '{}',
+        'notif_first_meetings': true,
+        'mail_notify_enabled': true,
+        'kisd_cal_id': 'cal-1',
+        'kisd_mirror_map_v1': '{}',
+      });
+      FlutterSecureStorage.setMockInitialValues({
+        'kisd_username': 'lschiff9',
+        'kisd_password': 'secret',
+        'kisd_cookies': '[]',
+        'kisd_email': 'a@b.c',
+        'kisd_data_owner': 'lschiff9',
+      });
+
+      await AccountTeardown.wipeDevice();
+
+      final prefs = await SharedPreferences.getInstance();
+      // Only what a fresh install holds after its first launch.
+      expect(prefs.getKeys(), {
+        AccountTeardown.installMarkerKey,
+        CalendarService.startupCleanupDoneKey,
+      });
+      expect(await const FlutterSecureStorage().readAll(), isEmpty);
+    });
+  });
+
+  group('purgeIfReinstalled', () {
+    const creds = {'kisd_username': 'lschiff9', 'kisd_password': 'secret'};
+
+    test('a reinstall (no preferences at all) clears the Keychain', () async {
+      SharedPreferences.setMockInitialValues({});
+      FlutterSecureStorage.setMockInitialValues(Map.of(creds));
+      await AccountTeardown.purgeIfReinstalled();
+      expect(await const FlutterSecureStorage().readAll(), isEmpty);
+      expect(
+        (await SharedPreferences.getInstance())
+            .getBool(AccountTeardown.installMarkerKey),
+        isTrue,
+      );
+    });
+
+    test('an update (preferences, no marker yet) keeps the login', () async {
+      SharedPreferences.setMockInitialValues({'kisd_color': 'dark'});
+      FlutterSecureStorage.setMockInitialValues(Map.of(creds));
+      await AccountTeardown.purgeIfReinstalled();
+      expect(await const FlutterSecureStorage().readAll(), creds);
+      expect(
+        (await SharedPreferences.getInstance())
+            .getBool(AccountTeardown.installMarkerKey),
+        isTrue,
+      );
+    });
+
+    test('with the marker present nothing happens', () async {
+      SharedPreferences.setMockInitialValues({
+        AccountTeardown.installMarkerKey: true,
+      });
+      FlutterSecureStorage.setMockInitialValues(Map.of(creds));
+      await AccountTeardown.purgeIfReinstalled();
+      expect(await const FlutterSecureStorage().readAll(), creds);
     });
   });
 }

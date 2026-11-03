@@ -65,10 +65,15 @@ class PrivacyScreen extends StatelessWidget {
             _body(s,
                 'Your two-factor (TOTP) secret is never stored — you enter '
                 'each one-time code yourself when TH Köln asks for it. '
-                'Signing out — or signing in with a different Campus ID — '
-                'deletes the stored credentials, cookies and email address, '
-                'plus that account\'s courses, calendar entries, pending '
-                'reminders and cached mail.'),
+                'Signing out deletes everything the app stored on this '
+                'device — credentials, cookies and other website data, '
+                'email address, courses, calendar entries (and the app\'s '
+                'calendars in Apple Calendar), reminders, notifications, '
+                'cached mail and settings — so the app is back to how it was '
+                'when installed. Signing in with a different Campus ID '
+                'deletes the previous account\'s credentials, cookies, email '
+                'address, courses, calendar entries, reminders and cached '
+                'mail.'),
           ]),
 
           _section(s, 'WHERE YOUR CREDENTIALS ARE SENT'),
@@ -171,10 +176,15 @@ class PrivacyScreen extends StatelessWidget {
                 'Beim Login aktiviert die App die Option „Diesem Gerät '
                 'vertrauen" (Gerätename „KISD App"); das lässt sich im '
                 'MFA-Portal der TH Köln jederzeit widerrufen. Beim Abmelden '
-                '– oder bei der Anmeldung mit einer anderen Campus-ID – '
-                'werden Zugangsdaten, Cookies und E-Mail-Adresse gelöscht, '
-                'ebenso Kurse, Kalendereinträge, Erinnerungen und '
-                'zwischengespeicherte E-Mails dieses Kontos.\n\n'
+                'löscht die App alles, was sie auf dem Gerät gespeichert hat '
+                '– Zugangsdaten, Cookies und übrige Website-Daten, '
+                'E-Mail-Adresse, Kurse, Kalendereinträge (und ihre Kalender '
+                'in Apple Kalender), Erinnerungen, Mitteilungen, '
+                'zwischengespeicherte E-Mails und Einstellungen; danach ist '
+                'sie wieder wie frisch installiert. Bei der Anmeldung mit '
+                'einer anderen Campus-ID werden Zugangsdaten, Cookies, '
+                'E-Mail-Adresse, Kurse, Kalendereinträge, Erinnerungen und '
+                'zwischengespeicherte E-Mails des vorigen Kontos gelöscht.\n\n'
                 'Da der Entwickler keine personenbezogenen Daten '
                 'verarbeitet, ist er für diese Daten weder Verantwortlicher '
                 'noch Auftragsverarbeiter im Sinne der DSGVO.'),

@@ -165,6 +165,22 @@ Liquid Glass, which Flutter can't match).
 
 Headless `InAppWebView` drives the full SAML/OAuth2 flow against `login.th-koeln.de` and `mfa.th-koeln.de`. Credentials are stored in `FlutterSecureStorage`. On subsequent launches it tries to restore saved cookies first; only if session validation fails does it run the full SAML flow. MFA (TOTP) prompts a dialog via `navigatorKey`.
 
+Gotchas (3 Nov 2026 — a run left pending by sign-out held every later login until the app was killed):
+
+- **Every run must end.** Background callers *join* a run in flight (`_run` hands back its completer), so one pending completer hangs every later login. Each run has a generation (`_gen`); webview callbacks, timers, the OTP dialog and `_finish` ignore a stale one, and a 90 s deadline (paused while the OTP dialog is open) bounds the whole run. `_abortRun` completes the completer with `false` at once.
+- **Explicit login (`login()`) never joins, never restores.** It aborts any run, always runs the full SAML flow (the typed password is checked), and writes the Keychain only on success, after `beforeCommit` (the account-switch check). So LoginScreen stays up for the whole login (2FA dialog over it) and a failure shows its error in place.
+- `course-selection` counts as success only with the `logged-in` body class (`_pageIsLoggedIn`): the page renders for everyone.
+
+### Sign-out (`AccountTeardown.signOut`, pinned by `test/account_teardown_test.dart`)
+
+Sign-out returns the app to its just-installed state — nothing is kept. Order matters: `loginService.signOut()` first (aborts the run, forgets the credentials, AppRoot drops HomeScreen and the native webviews), then `run()` (per-account data), `wipeDevice()` (calendars → files → Keychain per accessibility class → web data via `removeDataModifiedSince` → `prefs.clear()` + install marker + startup-cleanup flag), then `loadStoredState()` (the launch loaders, `lib/services/app_startup.dart`) resets every in-memory setting.
+
+- **New stored state needs no teardown step** if it lives in legacy prefs, the Keychain or WebKit — those are wiped wholesale. Files, calendars, `SharedPreferencesAsync` keys and in-memory caches do need one.
+- **Work in flight compares `AccountTeardown.epoch`** before persisting (scrapes, KISD events, prefetch) — the same idea as `_semesterLeft`.
+- Never delete cookies while HomeScreen is mounted with credentials stored: the auth-expired handlers start a re-login with the old account.
+- `WebStorageManager.deleteAllData()` is Android-only (throws on iOS); `FlutterSecureStorage.deleteAll()` only matches its own accessibility class.
+- A reinstall keeps the Keychain (iOS); `purgeIfReinstalled` clears it when there are no prefs at all.
+
 ### Course scraping (`ScraperService`)
 
 Uses a headless `InAppWebView` + `callAsyncJavaScript` to extract course cards from `spaces.kisd.de/course-selection`. Two scrape paths:

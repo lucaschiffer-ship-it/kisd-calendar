@@ -44,12 +44,34 @@ class LoginService extends ChangeNotifier {
   bool _isLoggedIn = false;
   bool _isLoading = false;
   bool _loginFailed = false;
+  // The committed account: written to the Keychain only after a login with
+  // these credentials succeeded.
   String? _username;
   String? _password;
+  // What the run in flight logs in with — the committed account, or the
+  // credentials just typed on LoginScreen (committed only on success).
+  String? _flowUser;
+  String? _flowPass;
+
+  // Every run gets a generation; sign-out and an explicit login bump it.
+  // Callbacks of an older run (webview loads, JS polls, timers, the OTP
+  // dialog) see a stale generation and do nothing — so a run left over from
+  // before a sign-out can neither finish into the new state nor re-save the
+  // old account's cookies.
+  int _gen = 0;
+  DateTime? _runStartedAt;
+  bool _finishing = false;
 
   HeadlessInAppWebView? _webView;
+  HeadlessInAppWebView? _checkView;
   Completer<bool>? _completer;
   Timer? _stallTimer;
+  // Bounds the whole run, so a page variant no branch recognises can never
+  // leave the completer pending (every later login would join it and hang
+  // until the app is killed). Paused while the OTP dialog is open.
+  Timer? _deadlineTimer;
+  static const _runDeadline = Duration(seconds: 90);
+  BuildContext? _otpDialogContext;
   bool _samlClicked = false;
   bool _credentialsFilled = false;
   bool _credentialsSubmitted = false;
@@ -79,29 +101,115 @@ class LoginService extends ChangeNotifier {
   // login screen rather than dropping them into an empty HomeScreen.
   bool _explicitLogin = false;
 
-  Future<bool> login(String username, String password) async {
-    await _storage.write(key: _keyUser, value: username);
-    await _storage.write(key: _keyPass, value: password);
+  /// The login typed on LoginScreen. Never joins a run already in flight —
+  /// that one may belong to other credentials — and never resumes a saved
+  /// session: the typed password is always checked by the full SAML flow.
+  ///
+  /// Nothing is written until the login succeeded. Then [beforeCommit] runs
+  /// (the account-switch check, while LoginScreen is still up), the
+  /// credentials go to the Keychain, and only then does AppRoot switch to
+  /// HomeScreen. A failure leaves LoginScreen — the same instance, so its
+  /// error and fields stay — and stores nothing.
+  Future<bool> login(
+    String username,
+    String password, {
+    Future<void> Function()? beforeCommit,
+  }) async {
+    _abortRun();
+    _flowUser = username;
+    _flowPass = password;
+    final run = _run(explicit: true);
+    final gen = _gen;
+    final ok = await run;
+    if (!ok || gen != _gen) return false;
+    try {
+      await beforeCommit?.call();
+      if (gen != _gen) return false;
+      await _storage.write(key: _keyUser, value: username);
+      await _storage.write(key: _keyPass, value: password);
+    } catch (e) {
+      // Never leave LoginScreen spinning: report it as a failed login.
+      _log('[login] could not commit the account: $e');
+      _isLoggedIn = false;
+      _loginFailed = true;
+      notifyListeners();
+      return false;
+    }
+    if (gen != _gen) return false;
     _username = username;
     _password = password;
-    _explicitLogin = true;
-    return _run();
+    _flowUser = null;
+    _flowPass = null;
+    _loginFailed = false;
+    _explicitLogin = false;
+    notifyListeners();
+    return true;
   }
 
   Future<bool> loginWithStoredCredentials() async {
     if (!hasStoredCredentials) return false;
-    _explicitLogin = false;
     return _run();
   }
 
-  Future<bool> _run() async {
-    if (_isLoading && _completer != null && !_completer!.isCompleted) {
+  /// Sign-out, in memory: ends any run in flight (whoever awaits it gets
+  /// `false` at once), forgets the credentials and lets AppRoot show
+  /// LoginScreen. Deleting what is stored is `AccountTeardown.signOut`'s job.
+  void signOut() {
+    _abortRun();
+    _username = null;
+    _password = null;
+    _flowUser = null;
+    _flowPass = null;
+    _isLoggedIn = false;
+    _loginFailed = false;
+    _explicitLogin = false;
+    notifyListeners();
+  }
+
+  // Ends the run in flight, if any: its callbacks go stale, its webviews and
+  // timers go, an open OTP dialog closes, and its completer answers `false`.
+  void _abortRun() {
+    _gen++;
+    _cancelStallTimer();
+    _cancelDeadline();
+    _webView?.dispose();
+    _webView = null;
+    _checkView?.dispose();
+    _checkView = null;
+    final dialog = _otpDialogContext;
+    _otpDialogContext = null;
+    if (dialog != null && dialog.mounted) {
+      if (ModalRoute.of(dialog)?.isCurrent ?? false) Navigator.of(dialog).pop();
+    }
+    final wasLoading = _isLoading;
+    _isLoading = false;
+    final c = _completer;
+    if (c != null && !c.isCompleted) c.complete(false);
+    if (wasLoading) _log('[login] run aborted');
+  }
+
+  Future<bool> _run({bool explicit = false}) {
+    if (!explicit &&
+        _isLoading &&
+        _completer != null &&
+        !_completer!.isCompleted) {
+      final age = DateTime.now().difference(_runStartedAt ?? DateTime.now());
+      _log('[login] joining the run started ${age.inSeconds}s ago');
       return _completer!.future;
     }
-    _log('[login] starting login flow');
+    final gen = ++_gen;
+    _log('[login] starting login flow${explicit ? ' (explicit)' : ''}');
     _cancelStallTimer();
     _isLoading = true;
-    _loginFailed = false;
+    _explicitLogin = explicit;
+    // An explicit login keeps `loginFailed` until it succeeds: in the
+    // rejected-password path that's what keeps LoginScreen up meanwhile.
+    if (!explicit) {
+      _loginFailed = false;
+      _flowUser = _username;
+      _flowPass = _password;
+    }
+    _finishing = false;
     _samlClicked = false;
     _credentialsFilled = false;
     _credentialsSubmitted = false;
@@ -110,26 +218,48 @@ class LoginService extends ChangeNotifier {
     _mfaContinuationAttempts = 0;
     _mfaReached = false;
     _otpDialogOpen = false;
-    _completer = Completer<bool>();
+    _runStartedAt = DateTime.now();
+    final completer = _completer = Completer<bool>();
+    _armDeadline(gen);
     notifyListeners();
 
-    // Try to resume from a saved session before doing the full SAML flow.
-    if (await _tryRestoreSession()) {
-      _isLoggedIn = true;
-      _isLoading = false;
-      _completer!.complete(true);
-      notifyListeners();
-      return _completer!.future;
+    // Detached: callers wait on the completer, which an abort completes at
+    // once. Any throw in the setup ends the run instead of leaving it pending.
+    _start(gen, explicit).catchError((Object e) {
+      _log('[login] error: $e');
+      return _finish(gen, false);
+    });
+    return completer.future;
+  }
+
+  Future<void> _start(int gen, bool explicit) async {
+    // Try to resume from a saved session before doing the full SAML flow —
+    // never for an explicit login, whose password must be checked.
+    if (!explicit) {
+      final restored = await _tryRestoreSession(gen);
+      if (gen != _gen) return;
+      if (restored) {
+        _cancelDeadline();
+        _isLoggedIn = true;
+        _isLoading = false;
+        _completer!.complete(true);
+        notifyListeners();
+        return;
+      }
     }
 
-    // Session expired or missing — clear cookies and run the full SAML flow,
-    // but preserve any persistent IdP/MFA "trust this device" cookie so re-auth
-    // can skip the 2FA OTP.
+    // Session expired or missing — clear cookies and run the full SAML flow.
+    // A background re-login keeps the persistent IdP/MFA "trust this device"
+    // cookie so re-auth can skip the OTP; an explicit one starts clean.
     await CookieManager.instance().deleteAllCookies();
-    await _reinjectPersistentCookies();
-    _log('[login] session cleared (persistent th-koeln cookies preserved)');
+    if (gen != _gen) return;
+    if (!explicit) {
+      await _reinjectPersistentCookies();
+      if (gen != _gen) return;
+    }
+    _log('[login] session cleared');
 
-    _webView = HeadlessInAppWebView(
+    final view = _webView = HeadlessInAppWebView(
       initialUrlRequest: URLRequest(
         url: WebUri('https://spaces.kisd.de/public/'),
       ),
@@ -155,13 +285,12 @@ class LoginService extends ChangeNotifier {
           injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
         ),
       ]),
-      onLoadStop: _onPageLoaded,
+      onLoadStop: (ctrl, url) => _onPageLoaded(ctrl, url, gen),
       onLoadStart: _onPageStart,
-      onReceivedError: _onError,
+      onReceivedError: (ctrl, req, err) => _onError(ctrl, req, err, gen),
     );
 
-    await _webView!.run();
-    return _completer!.future;
+    await view.run();
   }
 
   void _onPageStart(InAppWebViewController ctrl, WebUri? url) {
@@ -169,9 +298,28 @@ class LoginService extends ChangeNotifier {
     _log('[login] navigation start → ${url.toString()}');
   }
 
-  Future<void> _onPageLoaded(InAppWebViewController ctrl, WebUri? url) async {
-    if (url == null || (_completer?.isCompleted ?? true)) return;
-    final s = url.toString();
+  Future<void> _onPageLoaded(
+    InAppWebViewController ctrl,
+    WebUri? url,
+    int gen,
+  ) async {
+    if (gen != _gen || url == null || (_completer?.isCompleted ?? true)) {
+      return;
+    }
+    try {
+      await _handlePage(ctrl, url.toString(), gen);
+    } catch (e) {
+      // A webview disposed by an abort makes its controller throw; a live
+      // run is still bounded by its timers.
+      _log('[login] page handler error: $e');
+    }
+  }
+
+  Future<void> _handlePage(
+    InAppWebViewController ctrl,
+    String s,
+    int gen,
+  ) async {
     _log('[login] landed on: $s');
 
     if (s.contains('mfa.th-koeln.de')) {
@@ -183,12 +331,21 @@ class LoginService extends ChangeNotifier {
       // Detection now probes the DOM for the OTP field instead.
       _cancelStallTimer(); // credentials accepted; OTP entry has no timeout
       _mfaReached = true;
-      await _handleMfaPage(ctrl, s);
+      await _handleMfaPage(ctrl, s, gen);
     } else if (s.contains('spaces.kisd.de/course-selection')) {
       await Future.delayed(const Duration(seconds: 2));
-      await _probeSemesterMarker(ctrl);
+      if (gen != _gen) return;
+      // The page renders for everyone; only the `logged-in` body class says
+      // the SAML flow actually signed us in. A false "success" here sent the
+      // scrapes into an auth_required → re-login → scrape cycle.
+      if (!await _pageIsLoggedIn(ctrl)) {
+        _log('[login] course-selection served logged-out — login failed');
+        await _finish(gen, false);
+        return;
+      }
+      await _probeSemesterMarker(ctrl, gen);
       _log('[login] login complete');
-      await _finish(true);
+      await _finish(gen, true);
     } else if (s.contains('spaces.kisd.de') && _samlClicked && !_courseSelectionVisited) {
       _log('[login] post-auth on spaces — navigating to course-selection');
       _courseSelectionVisited = true;
@@ -245,7 +402,7 @@ class LoginService extends ChangeNotifier {
             var body = document.body ? document.body.innerHTML.substring(0, 400) : 'no-body';
             return JSON.stringify({error: 'timeout-no-form', body: body});
           """,
-          arguments: {'username': _username!, 'password': _password!},
+          arguments: {'username': _flowUser!, 'password': _flowPass!},
         ).timeout(const Duration(seconds: 15));
 
         if (asyncResult?.error != null) throw Exception('JS: ${asyncResult!.error}');
@@ -277,15 +434,15 @@ class LoginService extends ChangeNotifier {
         );
         _log('[login] form submitted');
         _credentialsSubmitted = true;
-        _armStallTimer();
+        _armStallTimer(gen);
 
       } on TimeoutException {
         _log('[login] error: credential form polling timed out');
-        await _finish(false);
+        await _finish(gen, false);
         return;
       } catch (e) {
         _log('[login] error: $e');
-        await _finish(false);
+        await _finish(gen, false);
         return;
       }
     } else if (s.contains('login.th-koeln.de') &&
@@ -308,7 +465,7 @@ class LoginService extends ChangeNotifier {
       } catch (_) {}
       if (formPresent) {
         _log('[login] credentials rejected — login failed');
-        await _finish(false, rejected: true);
+        await _finish(gen, false, rejected: true);
       } else {
         _log('[login] option=credential page without form — ignoring (watchdog active)');
       }
@@ -390,7 +547,7 @@ class LoginService extends ChangeNotifier {
             fields.containsKey('deviceName')) {
           final consented = await _consentTrustDevice(ctrl);
           if (consented) {
-            _armStallTimer(); // recover if the consent click doesn't navigate
+            _armStallTimer(gen); // recover if the consent click doesn't navigate
             return;
           }
         }
@@ -419,7 +576,7 @@ class LoginService extends ChangeNotifier {
       // page variant none of the branches recognize) with no watchdog running
       // used to hang the spinner forever — bound it. `_stallTimer == null`
       // keeps repeated unhandled loads from indefinitely postponing the fail.
-      if (_credentialsSubmitted && _stallTimer == null) _armStallTimer();
+      if (_credentialsSubmitted && _stallTimer == null) _armStallTimer(gen);
     }
   }
 
@@ -428,7 +585,11 @@ class LoginService extends ChangeNotifier {
   // interstitial variant page — dump its structure to the log (names/types
   // only, never values) and try a generic form continuation like the SAML
   // handler does, bounded by an attempt cap and the stall watchdog.
-  Future<void> _handleMfaPage(InAppWebViewController ctrl, String pageUrl) async {
+  Future<void> _handleMfaPage(
+    InAppWebViewController ctrl,
+    String pageUrl,
+    int gen,
+  ) async {
     Map<String, dynamic> probe;
     try {
       final r = await ctrl.callAsyncJavaScript(
@@ -496,13 +657,14 @@ class LoginService extends ChangeNotifier {
       // Most likely the page self-navigated and destroyed the JS context —
       // the next onLoadStop handles the new page; bound this one meanwhile.
       _log('[login] mfa probe failed: $e');
-      _armStallTimer();
+      _armStallTimer(gen);
       return;
     }
+    if (gen != _gen) return;
 
     if (probe['otp'] == true) {
       _log('[login] MFA required (OTP field found on $pageUrl)');
-      await _runOtpFlow(ctrl);
+      await _runOtpFlow(ctrl, gen);
       return;
     }
 
@@ -519,7 +681,7 @@ class LoginService extends ChangeNotifier {
       final postBody = data.entries
           .map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value.toString())}')
           .join('&');
-      _armStallTimer(); // recover if the POST doesn't lead anywhere
+      _armStallTimer(gen); // recover if the POST doesn't lead anywhere
       await ctrl.loadUrl(
         urlRequest: URLRequest(
           url: WebUri(action),
@@ -530,24 +692,30 @@ class LoginService extends ChangeNotifier {
       );
     } else {
       _log('[login] mfa page has no usable form or attempts exhausted — failing via watchdog');
-      _armStallTimer();
+      _armStallTimer(gen);
     }
   }
 
-  Future<void> _runOtpFlow(InAppWebViewController ctrl) async {
+  Future<void> _runOtpFlow(InAppWebViewController ctrl, int gen) async {
     // A self-navigating interstitial can land on the OTP page while a probe
     // from the previous load is still resolving — never stack two dialogs.
     if (_otpDialogOpen) return;
     _otpDialogOpen = true;
+    // Typing the code takes as long as it takes; the run's deadline restarts
+    // once the dialog is answered.
+    _cancelDeadline();
     String? otp;
     try {
       otp = await _promptOtp();
     } finally {
       _otpDialogOpen = false;
     }
+    // Sign-out (or a new explicit login) closed the dialog: this run is over.
+    if (gen != _gen) return;
+    _armDeadline(gen);
     if (otp == null || otp.isEmpty) {
       // Abandoned OTP needs the user's attention — treat like a rejection.
-      await _finish(false, rejected: true);
+      await _finish(gen, false, rejected: true);
       return;
     }
     // Opt into "trust this device" so a persistent mfa.th-koeln.de cookie is
@@ -572,10 +740,11 @@ class LoginService extends ChangeNotifier {
     InAppWebViewController ctrl,
     WebResourceRequest req,
     WebResourceError err,
+    int gen,
   ) {
-    if (req.isForMainFrame == true) {
+    if (gen == _gen && req.isForMainFrame == true) {
       _log('[login] error: ${err.description}');
-      _finish(false);
+      _finish(gen, false);
     }
   }
 
@@ -703,12 +872,12 @@ class LoginService extends ChangeNotifier {
   // a recognized page (MFA / SAML continuation / success) nor is detected as a
   // rejection within the window, fail rather than hang the spinner forever.
   // It is cancelled the moment any recognized progress occurs.
-  void _armStallTimer() {
+  void _armStallTimer(int gen) {
     _stallTimer?.cancel();
     _stallTimer = Timer(const Duration(seconds: 20), () {
-      if (!(_completer?.isCompleted ?? true)) {
+      if (gen == _gen && !(_completer?.isCompleted ?? true)) {
         _log('[login] stalled after credential submit — failing');
-        _finish(false);
+        _finish(gen, false);
       }
     });
   }
@@ -718,19 +887,36 @@ class LoginService extends ChangeNotifier {
     _stallTimer = null;
   }
 
+  void _armDeadline(int gen) {
+    _deadlineTimer?.cancel();
+    _deadlineTimer = Timer(_runDeadline, () {
+      if (gen != _gen || (_completer?.isCompleted ?? true)) return;
+      _log('[login] no result within ${_runDeadline.inSeconds}s — failing');
+      _finish(gen, false);
+    });
+  }
+
+  void _cancelDeadline() {
+    _deadlineTimer?.cancel();
+    _deadlineTimer = null;
+  }
+
   // `rejected` marks failures where the credentials themselves are the
   // problem (wrong password, abandoned OTP). Only those set `loginFailed`,
   // which is what AppRoot uses to swap HomeScreen for the login UI — a mere
   // network failure (offline launch, flaky Wi-Fi) must NOT log the user out
   // of the app; they keep their cached content instead.
-  Future<void> _finish(bool success, {bool rejected = false}) async {
-    if (_completer?.isCompleted ?? true) return;
+  //
+  // A stale [gen] (the run was aborted by sign-out or a new explicit login)
+  // changes nothing: no logged-in flag, no saved cookies, no notification.
+  Future<void> _finish(int gen, bool success, {bool rejected = false}) async {
+    final c = _completer;
+    if (gen != _gen || _finishing || c == null || c.isCompleted) return;
+    _finishing = true;
     _cancelStallTimer();
-    _isLoggedIn = success;
-    _isLoading = false;
+    _cancelDeadline();
     _webView?.dispose();
     _webView = null;
-    if (!success && (rejected || _explicitLogin)) _loginFailed = true;
     if (!success && (rejected || _mfaReached)) {
       // Definitive auth failure (rejection, or a dead-end after reaching the
       // MFA host): the saved cookies — notably a stale "trust this device"
@@ -742,7 +928,16 @@ class LoginService extends ChangeNotifier {
       _log('[login] cleared saved cookies after definitive auth failure');
     }
     if (success) await _saveCookies();
-    _completer!.complete(success);
+    if (gen != _gen || c.isCompleted) {
+      // Aborted while saving: those cookies belong to a session that was
+      // just signed out (or replaced) and must not be resumed later.
+      if (success) await _storage.delete(key: _keyCookies);
+      return;
+    }
+    _isLoggedIn = success;
+    _isLoading = false;
+    if (!success && (rejected || _explicitLogin)) _loginFailed = true;
+    c.complete(success);
     notifyListeners();
   }
 
@@ -750,34 +945,43 @@ class LoginService extends ChangeNotifier {
     final ctx = navigatorKey?.currentContext;
     if (ctx == null) return null;
     final ctrl = TextEditingController();
-    return showDialog<String>(
+    final code = await showDialog<String>(
       context: ctx,
       barrierDismissible: false,
-      builder: (dialogCtx) => AlertDialog(
-        title: const Text('Two-Factor Authentication'),
-        content: TextField(
-          controller: ctrl,
-          keyboardType: TextInputType.number,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'One-time code'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogCtx, ctrl.text.trim()),
-            child: const Text('Confirm'),
+      builder: (dialogCtx) {
+        // Kept so an abort (sign-out) can close the dialog of a run it ends.
+        _otpDialogContext = dialogCtx;
+        return AlertDialog(
+          title: const Text('Two-Factor Authentication'),
+          content: TextField(
+            controller: ctrl,
+            keyboardType: TextInputType.number,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'One-time code'),
           ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx, ctrl.text.trim()),
+              child: const Text('Confirm'),
+            ),
+          ],
+        );
+      },
     );
+    _otpDialogContext = null;
+    return code;
   }
 
-  Future<bool> _tryRestoreSession() async {
+  Future<bool> _tryRestoreSession(int gen) async {
     final cookiesJson = await _storage.read(key: _keyCookies);
     if (cookiesJson == null) {
       _log('[login] no saved session — running full login flow');
       return false;
     }
 
+    // A run aborted meanwhile must not put the saved cookies back into
+    // WebKit — after a sign-out they belong to the account just removed.
+    if (gen != _gen) return false;
     final list = json.decode(cookiesJson) as List;
     _log('[login] restoring ${list.length} saved cookies');
 
@@ -803,7 +1007,7 @@ class LoginService extends ChangeNotifier {
       } catch (_) {}
     }
 
-    final valid = await _checkSession();
+    final valid = await _checkSession(gen);
     if (valid) {
       _log('[login] session still valid — skipping login');
     } else {
@@ -812,9 +1016,15 @@ class LoginService extends ChangeNotifier {
     return valid;
   }
 
-  Future<bool> _checkSession() async {
+  Future<bool> _checkSession(int gen) async {
     final completer = Completer<bool>();
-    HeadlessInAppWebView? checkView;
+    late final HeadlessInAppWebView checkView;
+    void done(bool valid) {
+      if (completer.isCompleted) return;
+      checkView.dispose();
+      if (identical(_checkView, checkView)) _checkView = null;
+      completer.complete(valid);
+    }
 
     checkView = HeadlessInAppWebView(
       initialUrlRequest: URLRequest(
@@ -830,57 +1040,57 @@ class LoginService extends ChangeNotifier {
       onLoadStop: (ctrl, url) async {
         if (completer.isCompleted) return;
         final urlStr = url?.toString() ?? '';
-        var isValid = urlStr.contains('spaces.kisd.de/course-selection');
-        if (isValid) {
-          // WordPress adds the exact body class `logged-in` only for
-          // authenticated users. Never substring-match `student` here: the
-          // theme puts a literal `student` class on this page for EVERYONE,
-          // which made this check pass on dead sessions — restore always
-          // "succeeded", the full SAML flow never ran, and the MFA dialog
-          // could never appear.
-          final result = await ctrl.callAsyncJavaScript(
-            functionBody: """
-              var body = document.body;
-              return JSON.stringify({
-                loggedIn: body ? body.classList.contains('logged-in') : false,
-                cls: body ? body.className : '',
-              });
-            """,
-          );
-          var loggedIn = false;
-          try {
-            final m = json.decode(result?.value?.toString() ?? '{}')
-                as Map<String, dynamic>;
-            loggedIn = m['loggedIn'] == true;
-            _log('[login] session check body classes: ${m['cls']}');
-          } catch (_) {}
-          isValid = loggedIn;
-          // Cheapest place to notice Spaces flipping the semester before the
-          // calendar does — this page is loaded on every launch anyway.
-          await _probeSemesterMarker(ctrl);
-        }
-        checkView?.dispose();
-        checkView = null;
-        completer.complete(isValid);
+        var isValid = false;
+        try {
+          if (urlStr.contains('spaces.kisd.de/course-selection')) {
+            isValid = await _pageIsLoggedIn(ctrl);
+            // Cheapest place to notice Spaces flipping the semester before
+            // the calendar does — this page is loaded on every launch anyway.
+            await _probeSemesterMarker(ctrl, gen);
+          }
+        } catch (_) {}
+        done(isValid);
       },
       onReceivedError: (ctrl, req, err) {
-        if (req.isForMainFrame == true && !completer.isCompleted) {
-          checkView?.dispose();
-          checkView = null;
-          completer.complete(false);
-        }
+        if (req.isForMainFrame == true) done(false);
       },
     );
+    // Tracked so an abort disposes it; the timeout below still answers.
+    _checkView = checkView;
 
-    await checkView!.run();
+    await checkView.run();
     return completer.future.timeout(
       const Duration(seconds: 15),
       onTimeout: () {
-        checkView?.dispose();
-        checkView = null;
+        done(false);
         return false;
       },
     );
+  }
+
+  // WordPress adds the exact body class `logged-in` only for authenticated
+  // users. Never substring-match `student` here: the theme puts a literal
+  // `student` class on course-selection for EVERYONE, which made the session
+  // check pass on dead sessions — restore always "succeeded", the full SAML
+  // flow never ran, and the MFA dialog could never appear.
+  Future<bool> _pageIsLoggedIn(InAppWebViewController ctrl) async {
+    try {
+      final result = await ctrl.callAsyncJavaScript(
+        functionBody: """
+          var body = document.body;
+          return JSON.stringify({
+            loggedIn: body ? body.classList.contains('logged-in') : false,
+            cls: body ? body.className : '',
+          });
+        """,
+      );
+      final m = json.decode(result?.value?.toString() ?? '{}')
+          as Map<String, dynamic>;
+      _log('[login] body classes: ${m['cls']}');
+      return m['loggedIn'] == true;
+    } catch (_) {
+      return false;
+    }
   }
 
   // Reads the course-selection filter form: the "(Current semester)" marker,
@@ -889,7 +1099,10 @@ class LoginService extends ChangeNotifier {
   // which Settings' picker reads back from the cache. Best-effort — any
   // failure here leaves the date-based id and the last known list in charge
   // and must never surface.
-  Future<void> _probeSemesterMarker(InAppWebViewController ctrl) async {
+  Future<void> _probeSemesterMarker(
+    InAppWebViewController ctrl,
+    int gen,
+  ) async {
     try {
       final result = await ctrl.callAsyncJavaScript(
         functionBody: """
@@ -903,6 +1116,8 @@ class LoginService extends ChangeNotifier {
       Semester.noteMarker(marker);
       final ids = parseSemesterIds(html);
       _log('[login] semesters offered: ${ids.length}');
+      // Not from a run that sign-out ended: it would land after the wipe.
+      if (gen != _gen) return;
       await CacheService().setAvailableSemesters(ids);
     } catch (e) {
       _log('[login] semester marker probe failed: $e');
@@ -952,38 +1167,28 @@ class LoginService extends ChangeNotifier {
   }
 
   Future<List<Map<String, dynamic>>> getSavedCookies() async {
+    // No committed account (signed out, or a first login not yet through):
+    // nothing to hand a scrape — least of all the cookies of an account
+    // that sign-out is removing.
+    if (_username == null) return [];
     final raw = await _storage.read(key: _keyCookies);
     if (raw == null) return [];
     return (json.decode(raw) as List).cast<Map<String, dynamic>>();
   }
 
-  Future<void> logout() async {
-    await _storage.delete(key: _keyUser);
-    await _storage.delete(key: _keyPass);
-    await _storage.delete(key: _keyCookies);
-    // Written by MailService, but it must not survive an account switch.
-    await _storage.delete(key: 'kisd_email');
-    // Wipe the WebView cookie store too (incl. the IdP "trust this device"
-    // cookie) — logout must leave no usable session behind, regardless of
-    // which UI path triggered it.
+  /// Sign-out's web step: every cookie (incl. the IdP "trust this device"
+  /// one) and all other website data — localStorage, where the NetIQ MFA keeps
+  /// a device id that survives a cookie wipe, IndexedDB, and the HTTP cache
+  /// holding the prefetched course pages. `WebStorageManager.deleteAllData()`
+  /// is Android-only: on iOS it throws UnimplementedError, which the old
+  /// logout swallowed, so none of that was ever deleted. The IdP may still
+  /// recognise the device server-side; full revocation is removing
+  /// "KISD App" in the TH Köln MFA portal.
+  static Future<void> wipeWebData() async {
     await CookieManager.instance().deleteAllCookies();
-    // Cookies aren't the whole story: the NetIQ MFA can keep a device
-    // identifier in localStorage, which survives a cookie wipe (observed on
-    // device: OTP skipped after logout despite a clean cookie store). Clear
-    // all website data as well. The IdP may still recognize the device via
-    // fingerprint/network scoring — that part is server-side; full revocation
-    // is removing "KISD App" in the TH Köln MFA portal.
-    try {
-      await WebStorageManager.instance().deleteAllData();
-    } catch (e) {
-      _log('[login] web storage wipe failed: $e');
-    }
-    _username = null;
-    _password = null;
-    _isLoggedIn = false;
-    _cancelStallTimer();
-    _webView?.dispose();
-    _webView = null;
-    notifyListeners();
+    await WebStorageManager.instance().removeDataModifiedSince(
+      dataTypes: WebsiteDataType.values,
+      date: DateTime.fromMillisecondsSinceEpoch(0),
+    );
   }
 }

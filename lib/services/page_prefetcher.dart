@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
+import 'account_teardown.dart';
 import 'service_locator.dart';
 
 /// Warms the shared WKWebView HTTP cache with the user's favourite course
@@ -37,7 +38,11 @@ class PagePrefetcher {
     if (_started || !loginService.isLoggedIn) return;
     _started = true;
     loginService.removeListener(_onLoginChanged);
+    final epoch = AccountTeardown.epoch;
     Future.delayed(_startDelay, () {
+      // A sign-out within the delay re-armed us for the next account; this
+      // timer belongs to the old one.
+      if (AccountTeardown.epoch != epoch) return;
       _prefetchFavourites().catchError((_) {});
     });
   }

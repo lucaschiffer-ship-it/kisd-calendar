@@ -7,8 +7,8 @@ import 'package:google_fonts/google_fonts.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/account_teardown.dart';
+import 'services/app_startup.dart';
 import 'services/calendar_service.dart';
-import 'services/course_reminder_scheduler.dart';
 import 'services/mail_background_check.dart';
 import 'services/mail_notifier.dart';
 import 'services/mensa_service.dart';
@@ -23,12 +23,12 @@ void main() async {
   // Fonts are bundled under google_fonts/ — never fetch from Google's CDN at
   // runtime, so the app makes no third-party connections carrying device data.
   GoogleFonts.config.allowRuntimeFetching = false;
-  await ThemeService.instance.init();
+  // Before anything reads the Keychain: a reinstall must not log straight
+  // back into the account the deleted app was signed in with.
+  await AccountTeardown.purgeIfReinstalled();
   await NotificationService.instance.init();
-  await CourseReminderScheduler.loadPrefs();
-  await MailNotifier.loadPrefs();
-  await loginService.initialize();
-  await AccountTeardown.adoptExistingOwner();
+  // Shared with sign-out, which re-runs it after wiping the device.
+  await loadStoredState();
   CalendarService.instance.performStartupCleanup().ignore();
   loginService.navigatorKey = navigatorKey;
   pagePrefetcher.start();

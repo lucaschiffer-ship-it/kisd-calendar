@@ -230,6 +230,10 @@ class Semester {
     _marker = marker;
   }
 
+  /// Sign-out: back to the date-based semester until the next login probes
+  /// the course-selection page again.
+  static void forgetMarker() => _marker = null;
+
   /// Test seam.
   static void resetForTest() {
     _marker = null;

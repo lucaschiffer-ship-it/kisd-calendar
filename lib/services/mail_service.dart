@@ -462,14 +462,15 @@ class MailService extends ChangeNotifier {
     _autoNotBefore = DateTime(0);
     _autoFailures = 0;
     _loginRejected = false;
+    _staleInboxState = null;
     // Mailbox handles are bound to the old session (and memoised), so they
     // have to go with it.
     _trashMailbox = null;
     _sentMailbox = null;
     _draftsMailbox = null;
     _cachedUsername = null;
-    // The confirmed sender belongs to the old account. `LoginService.logout()`
-    // deletes this key too, but a direct re-login from LoginScreen does not —
+    // The confirmed sender belongs to the old account. Sign-out's Keychain
+    // wipe deletes this key too, but the account switch at login does not —
     // clearing it here covers both switch paths from one place.
     await _storage.delete(key: _emailStorageKey);
     try {

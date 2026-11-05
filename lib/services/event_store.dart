@@ -82,6 +82,10 @@ class EventStore {
     _log('store loaded: ${collections.length} collections, '
         '${events.length} events, ${overrides.length} overrides');
     revision.value++;
+    // Once per launch: otherwise the mirror only runs when the store changes,
+    // and a "KISD" calendar that failed to be created (or was deleted) stayed
+    // missing until the next course change. Never prompts for access.
+    IosMirrorService.instance.syncNowIfPermitted().ignore();
   }
 
   /// Ensures every hearted course from the cached scrape has its collection —

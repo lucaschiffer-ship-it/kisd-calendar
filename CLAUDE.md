@@ -208,7 +208,9 @@ iOS can make "KISD" or "KISD Events" the **default calendar for new events** (3 
 - Both calendars therefore keep events the app didn't write. Identity = title + start/end minute; all-day = title + start day (the 23:59:59 end). The mirror (`planMirrorUnmapped`) adopts an identical unmapped event in place of a create, deletes further identical copies, and sweeps everything else only on a first sync (no `kisd_mirror_map_v1`). KISD Events: `kisdEventsToDelete`.
 - A user's own event in "KISD" never shows in the in-app day view (`day_column.dart` skips the KISD calendar), only in the list header strip.
 - `DefaultCalendarNotice.check()` runs after each mirror sync and KISD Events write. HomeScreen shows the notice **once ever** (`kisd_default_cal_notice_shown_v1`; sign-out's `prefs.clear()` resets it). Open Settings uses `app-settings:`, which lands on KISDesk's own page.
-- Where the calendars live: `device_calendar`'s `getSource()` picks "On My iPhone" when iOS offers it, else the default calendar's account (iCloud on most phones), so they sync to the user's other devices. `localAccountName` is ignored on iOS.
+- **Creating the calendars: `AppCalendars.create`** (`lib/services/app_calendars.dart`, native side `kisd/calendars` in `AppDelegate.swift`, order rule pinned by `test/app_calendars_test.dart`), never `device_calendar`'s `createCalendar`. That one only tries "On My iPhone" (not offered when iCloud Calendar is on) or the default calendar's account, and its iCloud fallback compares a source id with `"iCloud"`, which never matches. 5 Nov 2026: sign-out deleted KISD (the default), iOS fell back to a **Gmail** default, Google refuses new calendars, and both calendars silently never came back. `calendarSourceOrder` tries "On My iPhone", then the default's account (where they always landed when that worked), then iCloud; never read-only sources or other accounts. Each refusal is logged (`[calendars]`).
+- Where the calendars live: therefore "On My iPhone", the default calendar's account, or iCloud, so on most phones they sync to the user's other devices. `localAccountName` is ignored on iOS.
+- **Retries:** the mirror syncs once per launch (end of `EventStore._load`, `syncNowIfPermitted`; before, it only ran on store changes), and `ListScreen._maybeScrapeEvents` calls `rewriteKisdEventsIfMissing` when no scrape is due but the KISD Events record is missing/pending or its calendar is gone. Neither prompts for calendar access.
 - Known gap: if iCloud gives recorded KISD Events ids new ones, an event the user later hides (or Spaces drops) can stay behind. Everything still being written is caught by the duplicate rule.
 - Only weekly patterns become an RRULE; "custom recurrence" / "every day" are written as their first date. If those ever matter: `admin-ajax.php?action=eventorganiser-fullcal&start=…&end=` returns every occurrence as JSON (logged-in session).
 - EventKit ends an all-day event at 23:59:59 of its last day; `getAllDayEventsForRange` takes the last day from end − 1 s.
@@ -238,6 +240,14 @@ is only reachable through the hidden View button.
 - Event chips have fixed heights (all-day pill, two-line timed block with start
   time), so `_chipsThatFit` knows a row's capacity without measuring; the rest
   becomes "+N".
+- **Known gap, fix later (user, 5 Nov 2026):** the grid reads only device
+  calendars (`CalendarService.getEventsForMonth`), never the `EventStore`, so
+  courses appear only through the mirrored Apple "KISD" calendar. When that
+  calendar is missing, or a course has "Show in Apple Calendar" off, the month
+  view silently loses its courses while the week view (store-based, skips the
+  KISD calendar) still shows them. Fix: merge store occurrences in and skip
+  the KISD calendar, like `DayColumn`. Deferred because the theme branch had
+  just reworked this file.
 
 ### Day timeline zoom (`lib/widgets/timeline_zoom.dart`, pinned by `test/timeline_zoom_test.dart`)
 

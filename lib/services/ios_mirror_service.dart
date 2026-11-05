@@ -11,6 +11,7 @@ import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../models/app_event.dart';
+import 'app_calendars.dart';
 import 'calendar_ownership.dart';
 import 'calendar_service.dart';
 import 'default_calendar_notice.dart';
@@ -359,9 +360,10 @@ class IosMirrorService {
     return r.isSuccess && r.data == true;
   }
 
-  /// One EKCalendar named "KISD". createCalendar with a localAccountName puts
-  /// it on the Local source; device_calendar itself falls back to the default
-  /// writable source when Local is unavailable (e.g. iCloud-managed devices).
+  /// One EKCalendar named "KISD", created by [AppCalendars] in the first
+  /// account that takes it ("On My iPhone", the default calendar's account,
+  /// then iCloud) — device_calendar's own createCalendar gave up when the
+  /// default calendar was in a Gmail account.
   Future<String?> _calendarId({bool create = true}) async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getString(_kKeyCalId);
@@ -385,16 +387,11 @@ class IosMirrorService {
     }
 
     if (!create) return null;
-    final r = await _plugin.createCalendar(
-      'KISD',
-      calendarColor: _kisdColor,
-      localAccountName: 'KISD',
-    );
-    if (r.isSuccess && r.data != null) {
-      await prefs.setString(_kKeyCalId, r.data!);
-      _log('created KISD calendar ${r.data}');
-      return r.data;
+    final id = await AppCalendars.create('KISD', _kisdColor);
+    if (id != null) {
+      await prefs.setString(_kKeyCalId, id);
+      _log('created KISD calendar $id');
     }
-    return null;
+    return id;
   }
 }

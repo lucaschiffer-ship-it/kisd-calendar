@@ -100,6 +100,14 @@ import UserNotifications
         // A fresh store per attempt, so a calendar one account refused can't
         // ride along with the next attempt's commit.
         let store = EKEventStore()
+        // Never a second one: if device_calendar's store hasn't seen a
+        // calendar saved here yet, Dart asks again — hand back the same one.
+        if let existing = store.calendars(for: .event).first(where: {
+          $0.title == title && $0.allowsContentModifications
+        }) {
+          result(existing.calendarIdentifier)
+          return
+        }
         guard let source = store.sources.first(where: { $0.sourceIdentifier == sourceId })
         else {
           result(FlutterError(code: "no_source", message: "source gone", details: nil))

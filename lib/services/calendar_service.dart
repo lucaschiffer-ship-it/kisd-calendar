@@ -214,8 +214,11 @@ class CalendarService {
   /// At launch when no scrape is due: rewrites the cached KISD events if the
   /// last write never finished or its calendar is gone — a calendar no account
   /// took, or one deleted meanwhile — instead of waiting up to a day for the
-  /// next scrape. Never prompts for access.
-  Future<void> rewriteKisdEventsIfMissing() async {
+  /// next scrape. Never prompts for access. [stillValid] is checked right
+  /// before the write (a sign-out meanwhile must not get the calendar back).
+  Future<void> rewriteKisdEventsIfMissing({
+    required bool Function() stillValid,
+  }) async {
     if (_isSimulator) return;
     final perm = await _plugin.hasPermissions();
     if (!(perm.isSuccess && perm.data == true)) return;
@@ -227,7 +230,7 @@ class CalendarService {
       if (cals.data?.any((c) => c.id == record.calId) ?? true) return;
     }
     final events = await CacheService().loadKisdEvents();
-    if (events.isEmpty) return;
+    if (events.isEmpty || !stillValid()) return;
     print('[cal] KISD Events missing its calendar or record — rewriting '
         '${events.length} cached events');
     await writeKisdEvents(events);

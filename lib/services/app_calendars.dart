@@ -19,8 +19,10 @@ class AppCalendars {
   static const _channel = MethodChannel('kisd/calendars');
 
   /// Creates [title] in the first account of [calendarSourceOrder] that takes
-  /// it. Returns its id, or null when none did (each refusal is logged). Call
-  /// with calendar access granted.
+  /// it (or returns the writable calendar of that name that already exists).
+  /// Falls back to device_calendar's createCalendar, and returns null only
+  /// when that fails too (each refusal is logged). Call with calendar access
+  /// granted.
   static Future<String?> create(String title, Color color) async {
     final List<CalendarSourceInfo> sources;
     try {
@@ -32,7 +34,7 @@ class AppCalendars {
       ];
     } catch (e) {
       debugPrint('[calendars] listing accounts failed: $e');
-      return null;
+      return _pluginFallback(title, color);
     }
 
     final order = calendarSourceOrder(sources);
@@ -56,6 +58,29 @@ class AppCalendars {
       '[calendars] no account took "$title" — tried $order '
       'of ${sources.length} accounts',
     );
+    return _pluginFallback(title, color);
+  }
+
+  /// The old way, as a floor: whatever went wrong above, never worse than
+  /// device_calendar's own createCalendar.
+  static Future<String?> _pluginFallback(String title, Color color) async {
+    try {
+      final r = await DeviceCalendarPlugin().createCalendar(
+        title,
+        calendarColor: color,
+        localAccountName: 'KISD',
+      );
+      if (r.isSuccess && r.data != null) {
+        debugPrint('[calendars] created "$title" via device_calendar');
+        return r.data;
+      }
+      debugPrint(
+        '[calendars] device_calendar could not create "$title" '
+        'either: ${r.errors.map((e) => e.errorMessage).join('; ')}',
+      );
+    } catch (e) {
+      debugPrint('[calendars] device_calendar createCalendar threw: $e');
+    }
     return null;
   }
 

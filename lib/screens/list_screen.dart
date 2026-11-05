@@ -398,7 +398,13 @@ class _ListScreenState extends State<ListScreen>
       _scrapeEventsBackground();
     } else if (ThemeService.instance.showKisdEvents.value) {
       // Fresh cache, but its calendar may be missing (no account took it).
-      CalendarService.instance.rewriteKisdEventsIfMissing().ignore();
+      // Signed out meanwhile: the wipe already ran, don't refill it.
+      final epoch = AccountTeardown.epoch;
+      CalendarService.instance
+          .rewriteKisdEventsIfMissing(
+            stillValid: () => AccountTeardown.epoch == epoch,
+          )
+          .ignore();
     }
   }
 

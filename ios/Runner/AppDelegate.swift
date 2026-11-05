@@ -1,3 +1,4 @@
+import EventKit
 import Flutter
 import UIKit
 import UserNotifications
@@ -23,6 +24,7 @@ import UserNotifications
       ComposeAttachmentsBridge.shared.register(with: engineBridge.pluginRegistry)
     }
     registerStorageChannel(with: engineBridge.pluginRegistry)
+    registerCalendarsChannel(with: engineBridge.pluginRegistry)
     MailCheckTask.shared.register(with: engineBridge.pluginRegistry)
 
     // Registered after GeneratedPluginRegistrant on purpose: flutter_inappwebview
@@ -59,6 +61,89 @@ import UserNotifications
         result(FlutterError(
           code: "exclude_failed", message: error.localizedDescription, details: nil))
       }
+    }
+  }
+
+  // The app's own calendars ("KISD", "KISD Events") are created here, not by
+  // device_calendar: its createCalendar only tries the "On My iPhone" source
+  // or the default calendar's account, and its iCloud fallback compares a
+  // source id with "iCloud", which never matches. A Gmail default — Google
+  // refuses new calendars — made every attempt fail silently (5 Nov 2026).
+  // Dart picks the order (lib/services/app_calendars.dart); this lists the
+  // accounts and tries one. Only called once calendar access is granted.
+  private func registerCalendarsChannel(with registry: FlutterPluginRegistry) {
+    guard let registrar = registry.registrar(forPlugin: "AppCalendars") else { return }
+    let channel = FlutterMethodChannel(
+      name: "kisd/calendars", binaryMessenger: registrar.messenger())
+    channel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "sources":
+        let store = EKEventStore()
+        let defaultSource = store.defaultCalendarForNewEvents?.source.sourceIdentifier
+        result(store.sources.map { source -> [String: Any] in
+          [
+            "id": source.sourceIdentifier,
+            "title": source.title,
+            "type": AppDelegate.sourceTypeName(source.sourceType),
+            "isDefault": source.sourceIdentifier == defaultSource,
+          ]
+        })
+      case "create":
+        guard let args = call.arguments as? [String: Any],
+          let title = args["title"] as? String,
+          let sourceId = args["sourceId"] as? String,
+          let argb = args["color"] as? Int
+        else {
+          result(FlutterError(code: "bad_args", message: nil, details: nil))
+          return
+        }
+        // A fresh store per attempt, so a calendar one account refused can't
+        // ride along with the next attempt's commit.
+        let store = EKEventStore()
+        // Never a second one: if device_calendar's store hasn't seen a
+        // calendar saved here yet, Dart asks again — hand back the same one.
+        if let existing = store.calendars(for: .event).first(where: {
+          $0.title == title && $0.allowsContentModifications
+        }) {
+          result(existing.calendarIdentifier)
+          return
+        }
+        guard let source = store.sources.first(where: { $0.sourceIdentifier == sourceId })
+        else {
+          result(FlutterError(code: "no_source", message: "source gone", details: nil))
+          return
+        }
+        let calendar = EKCalendar(for: .event, eventStore: store)
+        calendar.title = title
+        calendar.cgColor = UIColor(
+          red: CGFloat((argb >> 16) & 0xFF) / 255,
+          green: CGFloat((argb >> 8) & 0xFF) / 255,
+          blue: CGFloat(argb & 0xFF) / 255,
+          alpha: 1
+        ).cgColor
+        calendar.source = source
+        do {
+          try store.saveCalendar(calendar, commit: true)
+          result(calendar.calendarIdentifier)
+        } catch {
+          result(FlutterError(
+            code: "refused", message: error.localizedDescription, details: nil))
+        }
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  private static func sourceTypeName(_ type: EKSourceType) -> String {
+    switch type {
+    case .local: return "local"
+    case .exchange: return "exchange"
+    case .calDAV: return "calDAV"
+    case .mobileMe: return "mobileMe"
+    case .subscribed: return "subscribed"
+    case .birthdays: return "birthdays"
+    @unknown default: return "unknown"
     }
   }
 }

@@ -394,7 +394,18 @@ class _ListScreenState extends State<ListScreen>
         last == null ||
         DateTime.now().difference(last) > const Duration(hours: 24) ||
         (await cache.loadKisdEvents()).isEmpty;
-    if (stale) _scrapeEventsBackground();
+    if (stale) {
+      _scrapeEventsBackground();
+    } else if (ThemeService.instance.showKisdEvents.value) {
+      // Fresh cache, but its calendar may be missing (no account took it).
+      // Signed out meanwhile: the wipe already ran, don't refill it.
+      final epoch = AccountTeardown.epoch;
+      CalendarService.instance
+          .rewriteKisdEventsIfMissing(
+            stillValid: () => AccountTeardown.epoch == epoch,
+          )
+          .ignore();
+    }
   }
 
   Future<void> _scrapeEventsBackground() async {

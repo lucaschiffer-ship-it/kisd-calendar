@@ -9,6 +9,7 @@ import 'package:timezone/timezone.dart' as tz;
 
 import '../models/course_shell.dart';
 import '../models/kisd_event.dart';
+import 'app_calendars.dart';
 import 'cache_service.dart';
 import 'calendar_ownership.dart';
 import 'default_calendar_notice.dart';
@@ -200,18 +201,40 @@ class CalendarService {
       (c) => c.name == 'KISD Events' && c.isReadOnly == false,
     ).firstOrNull;
     if (existing?.id != null) return existing!.id;
-    final r = await _plugin.createCalendar(
-      'KISD Events',
-      calendarColor: _kisdColor,
-      localAccountName: 'KISD',
-    );
-    return r.isSuccess ? r.data : null;
+    // Not device_calendar's createCalendar: it gave up when the default
+    // calendar was in a Gmail account (see AppCalendars).
+    return AppCalendars.create('KISD Events', _kisdColor);
   }
 
   /// What the last write put into "KISD Events" ([KisdEventsRecord]), so the
   /// next one deletes only that and leaves the user's own events alone — iOS
   /// can make this calendar the default for new events.
   static const _kKeyKisdWritten = 'kisd_events_written_v1';
+
+  /// At launch when no scrape is due: rewrites the cached KISD events if the
+  /// last write never finished or its calendar is gone — a calendar no account
+  /// took, or one deleted meanwhile — instead of waiting up to a day for the
+  /// next scrape. Never prompts for access. [stillValid] is checked right
+  /// before the write (a sign-out meanwhile must not get the calendar back).
+  Future<void> rewriteKisdEventsIfMissing({
+    required bool Function() stillValid,
+  }) async {
+    if (_isSimulator) return;
+    final perm = await _plugin.hasPermissions();
+    if (!(perm.isSuccess && perm.data == true)) return;
+    final prefs = await SharedPreferences.getInstance();
+    final record = KisdEventsRecord.decode(prefs.getString(_kKeyKisdWritten));
+    if (record != null && !record.pending) {
+      final cals = await _plugin.retrieveCalendars();
+      // Unreadable: leave it to the next scrape rather than rewrite blindly.
+      if (cals.data?.any((c) => c.id == record.calId) ?? true) return;
+    }
+    final events = await CacheService().loadKisdEvents();
+    if (events.isEmpty || !stillValid()) return;
+    print('[cal] KISD Events missing its calendar or record — rewriting '
+        '${events.length} cached events');
+    await writeKisdEvents(events);
+  }
 
   /// Deletes the app's events from "KISD Events" before [toWrite] (their
   /// [eventIdentity]s) is written — see [kisdEventsToDelete].

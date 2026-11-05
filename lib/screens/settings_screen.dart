@@ -1023,9 +1023,11 @@ class _Group extends StatelessWidget {
     final s = AppColorScheme.current;
     if (s.isMinimal) {
       // Minimal: no card — rows on the page between full-width hairlines.
+      // A group's tint (Sign out's danger fill) is dropped too: its red text
+      // already says it.
       final rule = Divider(height: 1, thickness: 0.5, color: s.hairline);
       final rows = Material(
-        color: color ?? Colors.transparent,
+        color: Colors.transparent,
         child: Column(
           children: [
             rule,
@@ -1478,6 +1480,8 @@ class _PaletteSwatch extends StatelessWidget {
         borderRadius: BorderRadius.circular(AppRadius.tag),
       ),
       child: Row(
+        // Stretch: a childless ColoredBox would otherwise be 0 pt tall.
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(child: ColoredBox(color: p.lightBg)),
           Expanded(child: ColoredBox(color: p.darkBg)),

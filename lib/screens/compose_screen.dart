@@ -6,7 +6,6 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../services/compose_attachments.dart';
 import '../services/mail_attachments.dart';
@@ -15,6 +14,7 @@ import '../services/mail_service.dart' show MailFolder;
 import '../services/service_locator.dart';
 import '../theme/tokens.dart';
 import '../widgets/glass_pill.dart';
+import '../theme/app_fonts.dart';
 
 /// Opens the compose sheet: an iOS sheet on the root navigator, so the whole
 /// app — an open mail included — scales back behind it.
@@ -622,8 +622,8 @@ class _ComposeScreenState extends State<ComposeScreen> {
     final s = AppColorScheme.current;
     final dark = s.isDark;
     final sheet = dark ? s.surfaceElevated : s.surface;
-    final label = GoogleFonts.inter(fontSize: 16, color: s.textSecondary, height: 1.3);
-    final value = GoogleFonts.inter(fontSize: 16, color: s.textPrimary, height: 1.3);
+    final label = AppFonts.inter(fontSize: 16, color: s.textSecondary, height: 1.3);
+    final value = AppFonts.inter(fontSize: 16, color: s.textPrimary, height: 1.3);
     final subject = _shownTitle;
 
     Widget divider() => Padding(
@@ -735,7 +735,7 @@ class _ComposeScreenState extends State<ComposeScreen> {
                       subject.isEmpty ? 'New Message' : subject,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.spaceGrotesk(
+                      style: AppFonts.grotesk(
                         fontSize: 30,
                         fontWeight: FontWeight.w700,
                         letterSpacing: -0.8,
@@ -1046,7 +1046,7 @@ class _MenuRowState extends State<_MenuRow> {
                   Expanded(
                     child: Text(
                       widget.label,
-                      style: GoogleFonts.inter(fontSize: 16, color: color),
+                      style: AppFonts.inter(fontSize: 16, color: color),
                     ),
                   ),
                   Icon(widget.icon, size: 20, color: color),
@@ -1101,7 +1101,7 @@ class _AttachmentTile extends StatelessWidget {
                     a?.name ?? 'Adding…',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.inter(
+                    style: AppFonts.inter(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
                       height: 1.3,
@@ -1113,7 +1113,7 @@ class _AttachmentTile extends StatelessWidget {
                       padding: const EdgeInsets.only(top: 2),
                       child: Text(
                         byteSizeLabel(a.size),
-                        style: GoogleFonts.inter(
+                        style: AppFonts.inter(
                           fontSize: 13,
                           height: 1.3,
                           color: s.textSecondary,
@@ -1169,7 +1169,7 @@ class _AttachmentThumb extends StatelessWidget {
       child: Center(
         child: Text(
           _extension(a.name),
-          style: GoogleFonts.inter(
+          style: AppFonts.inter(
             fontSize: 11,
             fontWeight: FontWeight.w600,
             letterSpacing: 0.3,

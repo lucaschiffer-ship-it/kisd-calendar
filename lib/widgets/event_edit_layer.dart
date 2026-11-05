@@ -3,13 +3,13 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../config/app_theme.dart';
 import '../models/app_event.dart';
 import '../screens/store_event_sheets.dart';
 import '../services/event_store.dart';
 import 'day_column.dart';
+import '../theme/app_fonts.dart';
 
 // ─── Controller ───────────────────────────────────────────────────────────────
 
@@ -741,7 +741,7 @@ class _EventEditLayerState extends State<EventEditLayer>
       ),
       child: Text(
         text,
-        style: GoogleFonts.inter(
+        style: AppFonts.inter(
           fontSize: 10,
           fontWeight: FontWeight.w600,
           color: Colors.white,
@@ -835,7 +835,7 @@ class _EventEditLayerState extends State<EventEditLayer>
                     title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.inter(
+                    style: AppFonts.inter(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                       color: AppThemeTokens.titleColor,
@@ -845,7 +845,7 @@ class _EventEditLayerState extends State<EventEditLayer>
                     timeLabel,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.inter(
+                    style: AppFonts.inter(
                       fontSize: 10,
                       color: AppThemeTokens.secondaryTextColor,
                     ),

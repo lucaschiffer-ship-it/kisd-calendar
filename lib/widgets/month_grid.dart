@@ -1,12 +1,12 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../config/app_theme.dart';
 import '../services/calendar_service.dart';
 import '../services/theme_service.dart';
 import '../theme/tokens.dart';
+import '../theme/app_fonts.dart';
 
 // ─── Layout constants — shared with the week↔month morph in CalendarScreen ────
 //
@@ -230,7 +230,7 @@ class _MonthGridState extends State<MonthGrid> {
                       _kShortMonthNames[month.month - 1],
                       maxLines: 1,
                       softWrap: false,
-                      style: GoogleFonts.inter(
+                      style: AppFonts.inter(
                         fontSize: 17,
                         fontWeight: FontWeight.w700,
                         color: AppThemeTokens.titleColor,
@@ -312,7 +312,7 @@ class _MonthGridState extends State<MonthGrid> {
                           alignment: Alignment.center,
                           child: Text(
                             '${day.day}',
-                            style: GoogleFonts.inter(
+                            style: AppFonts.inter(
                               fontSize: 18,
                               fontWeight: FontWeight.w700,
                               color: Colors.white,
@@ -321,7 +321,7 @@ class _MonthGridState extends State<MonthGrid> {
                         )
                       : Text(
                           '${day.day}',
-                          style: GoogleFonts.inter(
+                          style: AppFonts.inter(
                             fontSize: 18,
                             fontWeight: FontWeight.w500,
                             color: numberColor,
@@ -344,7 +344,7 @@ class _MonthGridState extends State<MonthGrid> {
                   padding: const EdgeInsets.only(left: 6),
                   child: Text(
                     '+$overflow',
-                    style: GoogleFonts.inter(
+                    style: AppFonts.inter(
                       fontSize: 11,
                       fontWeight: FontWeight.w500,
                       color: AppThemeTokens.secondaryTextColor,
@@ -386,7 +386,7 @@ class _MonthGridState extends State<MonthGrid> {
           maxLines: 1,
           softWrap: false,
           overflow: TextOverflow.fade,
-          style: GoogleFonts.inter(
+          style: AppFonts.inter(
             fontSize: 11,
             fontWeight: FontWeight.w600,
             color: e.calendarColor,
@@ -412,7 +412,7 @@ class _MonthGridState extends State<MonthGrid> {
                 e.title,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.inter(
+                style: AppFonts.inter(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
                   color: e.calendarColor,
@@ -423,7 +423,7 @@ class _MonthGridState extends State<MonthGrid> {
             Text(
               _fmtTime(e.start),
               maxLines: 1,
-              style: GoogleFonts.inter(
+              style: AppFonts.inter(
                 fontSize: 10,
                 fontWeight: FontWeight.w500,
                 color: e.calendarColor.withValues(alpha: 0.75),
@@ -602,7 +602,7 @@ class FlyingWeekRow extends StatelessWidget {
                   child: Center(
                     child: Text(
                       '${day.day}',
-                      style: GoogleFonts.inter(
+                      style: AppFonts.inter(
                         fontSize: 18,
                         fontWeight:
                             isToday ? FontWeight.w700 : FontWeight.w500,

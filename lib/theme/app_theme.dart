@@ -4,7 +4,7 @@ export 'tokens.dart'
     show buildDarkTheme, buildLightTheme, buildTheme, AppColorScheme, AppRadius, AppGlass, AppTextStyles, AppStyle, AppPalette;
 
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'app_fonts.dart';
 
 // ─── Color palette ────────────────────────────────────────────────────────────
 //
@@ -64,52 +64,52 @@ class AppSpacing {
 class AppTextStyle {
   AppTextStyle._();
 
-  static TextStyle get navTitle => GoogleFonts.spaceGrotesk(
+  static TextStyle get navTitle => AppFonts.grotesk(
         fontSize: 18, fontWeight: FontWeight.w700,
         color: AppColors.textPrimary, letterSpacing: -0.5,
       );
 
-  static TextStyle get headline => GoogleFonts.spaceGrotesk(
+  static TextStyle get headline => AppFonts.grotesk(
         fontSize: 20, fontWeight: FontWeight.w700,
         color: AppColors.textPrimary, letterSpacing: -0.4, height: 1.2,
       );
 
-  static TextStyle get headlineBold => GoogleFonts.spaceGrotesk(
+  static TextStyle get headlineBold => AppFonts.grotesk(
         fontSize: 20, fontWeight: FontWeight.w700,
         color: AppColors.textPrimary, letterSpacing: -0.4, height: 1.2,
       );
 
-  static TextStyle get body => GoogleFonts.inter(
+  static TextStyle get body => AppFonts.inter(
         fontSize: 13, fontWeight: FontWeight.w400,
         color: AppColors.textSecondary, height: 1.5,
       );
 
-  static TextStyle get bodyBold => GoogleFonts.inter(
+  static TextStyle get bodyBold => AppFonts.inter(
         fontSize: 13, fontWeight: FontWeight.w600,
         color: AppColors.textPrimary, height: 1.5,
       );
 
-  static TextStyle get label => GoogleFonts.inter(
+  static TextStyle get label => AppFonts.inter(
         fontSize: 10, fontWeight: FontWeight.w600,
         color: AppColors.textTertiary, letterSpacing: 1.4, height: 1.3,
       );
 
-  static TextStyle get accentLabel => GoogleFonts.inter(
+  static TextStyle get accentLabel => AppFonts.inter(
         fontSize: 10, fontWeight: FontWeight.w700,
         color: AppColors.accent, letterSpacing: 2.0, height: 1.3,
       );
 
-  static TextStyle get displayTime => GoogleFonts.spaceGrotesk(
+  static TextStyle get displayTime => AppFonts.grotesk(
         fontSize: 38, fontWeight: FontWeight.w700,
         color: AppColors.textPrimary, letterSpacing: -2.0, height: 1.0,
       );
 
-  static TextStyle get cardTitle => GoogleFonts.spaceGrotesk(
+  static TextStyle get cardTitle => AppFonts.grotesk(
         fontSize: 30, fontWeight: FontWeight.w700,
         color: AppColors.textPrimary, letterSpacing: -0.8, height: 1.0,
       );
 
-  static TextStyle get pageTitle => GoogleFonts.spaceGrotesk(
+  static TextStyle get pageTitle => AppFonts.grotesk(
         fontSize: 38, fontWeight: FontWeight.w700,
         color: AppColors.textPrimary, letterSpacing: -1.2, height: 1.0,
       );
@@ -205,7 +205,7 @@ class AppAccentButton extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
           shape: const StadiumBorder(),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          textStyle: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600),
+          textStyle: AppFonts.inter(fontSize: 14, fontWeight: FontWeight.w600),
         ),
         child: content,
       ),

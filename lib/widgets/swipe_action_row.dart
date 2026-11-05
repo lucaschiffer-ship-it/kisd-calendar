@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
+import '../theme/app_fonts.dart';
+import '../theme/tokens.dart';
 
 /// One side's action of a [SwipeActionRow].
 class SwipeAction {
@@ -107,13 +108,15 @@ class _SwipeActionRowState extends State<SwipeActionRow>
 
   bool get _isOpen => _offset.value.abs() > 0.5;
 
-  // Built once: the background rebuilds every frame of a swipe.
-  static final _labelStyle = GoogleFonts.inter(
-    color: Colors.white, // on the action colour
-    fontSize: 12,
-    fontWeight: FontWeight.w600,
-    letterSpacing: -0.1,
-  );
+  // Built once per style: the background rebuilds every frame of a swipe.
+  static final _labelStyles = <AppStyle, TextStyle>{};
+  static TextStyle get _labelStyle =>
+      _labelStyles[AppColorScheme.current.style] ??= AppFonts.inter(
+        color: Colors.white, // on the action colour
+        fontSize: 12,
+        fontWeight: FontWeight.w600,
+        letterSpacing: -0.1,
+      );
 
   @override
   void dispose() {

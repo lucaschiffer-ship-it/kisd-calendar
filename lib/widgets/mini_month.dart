@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../config/app_theme.dart';
+import '../theme/app_fonts.dart';
 
 // ─── Layout constants (exported for YearView sizing) ─────────────────────────
 
@@ -63,7 +63,7 @@ class MiniMonth extends StatelessWidget {
                 alignment: Alignment.bottomLeft,
                 child: Text(
                   _kMonthNames[month - 1],
-                  style: GoogleFonts.spaceGrotesk(
+                  style: AppFonts.grotesk(
                     fontSize: 10,
                     fontWeight: FontWeight.w700,
                     color: nameColor,
@@ -81,7 +81,7 @@ class MiniMonth extends StatelessWidget {
                           child: Center(
                             child: Text(
                               d,
-                              style: GoogleFonts.inter(
+                              style: AppFonts.inter(
                                 fontSize: 6.5,
                                 fontWeight: FontWeight.w500,
                                 color: AppThemeTokens.secondaryTextColor,
@@ -143,7 +143,7 @@ class _DayNumber extends StatelessWidget {
         alignment: Alignment.center,
         child: Text(
           '$dayNum',
-          style: GoogleFonts.inter(
+          style: AppFonts.inter(
             fontSize: 7,
             fontWeight: FontWeight.w700,
             color: Colors.white,
@@ -153,7 +153,7 @@ class _DayNumber extends StatelessWidget {
     }
     return Text(
       '$dayNum',
-      style: GoogleFonts.inter(
+      style: AppFonts.inter(
         fontSize: 8,
         fontWeight: FontWeight.w400,
         color: AppThemeTokens.titleColor,

@@ -1,12 +1,12 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../config/app_theme.dart';
 import '../services/calendar_service.dart';
 import '../services/theme_service.dart';
 import '../theme/tokens.dart';
+import '../theme/app_fonts.dart';
 
 void showEventDetail(
     BuildContext context, DeviceCalendarEvent event, DateTime date) {
@@ -130,7 +130,7 @@ class _EventDetailSheet extends StatelessWidget {
                 ),
                 child: Text(
                   event.calendarName.toUpperCase(),
-                  style: GoogleFonts.inter(
+                  style: AppFonts.inter(
                     fontSize: 10,
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0.9,

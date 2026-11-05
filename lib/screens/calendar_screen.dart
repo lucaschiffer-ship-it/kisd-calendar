@@ -4,7 +4,6 @@ import 'dart:ui';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../config/app_theme.dart' as tokens;
 import '../screens/event_detail_screen.dart';
@@ -27,6 +26,7 @@ import '../widgets/morphing_glass_header.dart';
 import '../widgets/page_floating_actions.dart';
 import '../widgets/timeline_zoom.dart';
 import '../widgets/year_view.dart';
+import '../theme/app_fonts.dart';
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
 
@@ -1369,7 +1369,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                         : '${_kMonthNames[month.month - 1]} ${month.year}',
                     key: ValueKey(month),
                     maxLines: 1,
-                    style: GoogleFonts.spaceGrotesk(
+                    style: AppFonts.grotesk(
                       fontSize: 32,
                       fontWeight: FontWeight.w700,
                       color: tokens.AppThemeTokens.titleColor,
@@ -1489,7 +1489,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                           child: Center(
                             child: Text(
                               '${day.day}',
-                              style: GoogleFonts.inter(
+                              style: AppFonts.inter(
                                 fontSize: 18,
                                 fontWeight: isToday ? FontWeight.w700 : FontWeight.w500,
                                 color: focusIndex == i
@@ -1531,7 +1531,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                       child: Center(
                         child: Text(
                           letters[i],
-                          style: GoogleFonts.inter(
+                          style: AppFonts.inter(
                             fontSize: 13,
                             fontWeight: i < 5 ? FontWeight.w600 : FontWeight.w500,
                             letterSpacing: 0.6,
@@ -1658,7 +1658,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                       child: Center(
                         child: Text(
                           '${weekdays[days[i].weekday - 1]} · ${days[i].day}',
-                          style: GoogleFonts.inter(
+                          style: AppFonts.inter(
                             fontSize: 11,
                             fontWeight: days[i] == _today ? FontWeight.w600 : FontWeight.w400,
                             color: days[i] == _today
@@ -1890,7 +1890,7 @@ class _CalendarScreenState extends State<CalendarScreen>
   /// The hour labels, plus the closing 00:00 under the 24:00 line (it hangs
   /// below the 24 h box, into the scroll view's bottom padding).
   Widget _buildHourAxisWidget(double hourHeight) {
-    final labelStyle = GoogleFonts.inter(
+    final labelStyle = AppFonts.inter(
       fontSize: 11,
       fontWeight: FontWeight.w400,
       color: tokens.AppThemeTokens.secondaryTextColor,
@@ -2126,7 +2126,7 @@ class _AllDayBand extends StatelessWidget {
                         evt.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.inter(
+                        style: AppFonts.inter(
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                           color: evt.calendarColor,
@@ -2150,7 +2150,7 @@ class _AllDayBand extends StatelessWidget {
                             padding: const EdgeInsets.only(right: 8),
                             child: Text(
                               'all-day',
-                              style: GoogleFonts.inter(
+                              style: AppFonts.inter(
                                 fontSize: 9,
                                 color: tokens.AppThemeTokens.secondaryTextColor,
                               ),
@@ -2304,7 +2304,7 @@ class _EventListViewState extends State<_EventListView> {
         Expanded(child: Center(
           child: Text(
             'No events in the next 30 days',
-            style: GoogleFonts.inter(
+            style: AppFonts.inter(
               fontSize: 15,
               color: tokens.AppThemeTokens.secondaryTextColor,
             ),
@@ -2340,7 +2340,7 @@ class _EventListViewState extends State<_EventListView> {
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 6),
       child: Text(
         _headerLabel(date),
-        style: GoogleFonts.inter(
+        style: AppFonts.inter(
           fontSize: 13,
           fontWeight: FontWeight.w600,
           color: color,
@@ -2380,7 +2380,7 @@ class _EventListViewState extends State<_EventListView> {
                       children: [
                         Text(
                           event.title,
-                          style: GoogleFonts.inter(
+                          style: AppFonts.inter(
                             fontSize: 15,
                             fontWeight: FontWeight.w400,
                             color: tokens.AppThemeTokens.titleColor,
@@ -2391,7 +2391,7 @@ class _EventListViewState extends State<_EventListView> {
                           event.allDay
                               ? 'All day'
                               : '${_fmtTime(event.start)} – ${_fmtTime(event.end)}',
-                          style: GoogleFonts.inter(
+                          style: AppFonts.inter(
                             fontSize: 13,
                             color: tokens.AppThemeTokens.secondaryTextColor,
                           ),
@@ -2400,7 +2400,7 @@ class _EventListViewState extends State<_EventListView> {
                           const SizedBox(height: 2),
                           Text(
                             event.location!,
-                            style: GoogleFonts.inter(
+                            style: AppFonts.inter(
                               fontSize: 12,
                               color: tokens.AppThemeTokens.secondaryTextColor
                                   .withValues(alpha: 0.7),
@@ -2463,7 +2463,7 @@ class _CalendarPillState extends State<_CalendarPill> {
               alignment: Alignment.center,
               child: Text(
                 widget.label,
-                style: GoogleFonts.inter(
+                style: AppFonts.inter(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
                   color: tokens.AppThemeTokens.navBarIcon,
@@ -2586,7 +2586,7 @@ class _ViewButtonState extends State<_ViewButton> {
           child: Center(
             child: Text(
               'View',
-              style: GoogleFonts.inter(
+              style: AppFonts.inter(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
                 color: isDark ? Colors.white : Colors.black,
@@ -2634,7 +2634,7 @@ class _ViewButtonState extends State<_ViewButton> {
             children: [
               Text(
                 label,
-                style: GoogleFonts.inter(
+                style: AppFonts.inter(
                   fontSize: 14,
                   fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
                   color: textColor,

@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../config/app_theme.dart';
 import '../models/app_event.dart';
@@ -12,6 +11,7 @@ import '../services/event_store.dart';
 import '../services/theme_service.dart';
 import '../theme/tokens.dart';
 import 'event_edit_layer.dart';
+import '../theme/app_fonts.dart';
 
 // ─── Overlap layout helpers ───────────────────────────────────────────────────
 
@@ -268,7 +268,7 @@ class _DayColumnState extends State<DayColumn> {
       ),
     );
     if (!widget.showHourLabels) return grid;
-    final labelStyle = GoogleFonts.inter(
+    final labelStyle = AppFonts.inter(
       fontSize: 11,
       fontWeight: FontWeight.w400,
       color: AppThemeTokens.secondaryTextColor,
@@ -542,7 +542,7 @@ Widget _cardText({
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.inter(
+                style: AppFonts.inter(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                   color: AppThemeTokens.titleColor,
@@ -554,7 +554,7 @@ Widget _cardText({
                 time,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.inter(
+                style: AppFonts.inter(
                   fontSize: 10,
                   color: secondary.withValues(alpha: secondary.a * timeAlpha),
                 ),
@@ -564,7 +564,7 @@ Widget _cardText({
                 location!,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.inter(
+                style: AppFonts.inter(
                   fontSize: 10,
                   color: locationColor.withValues(
                       alpha: locationColor.a * locationAlpha),

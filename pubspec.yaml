@@ -84,7 +84,8 @@ flutter:
     - assets/clock.html
     - assets/images/
     - assets/icons/
-    # Bundled Inter + Space Grotesk (OFL). google_fonts loads these instead of
+    # Bundled Inter + Space Grotesk + IBM Plex Mono (OFL; Plex Mono is the
+    # Minimal Mono style's face). google_fonts loads these instead of
     # fetching from Google's CDN — runtime fetching is disabled in main().
     - google_fonts/
 

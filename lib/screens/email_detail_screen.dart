@@ -6,7 +6,6 @@ import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -23,6 +22,7 @@ import '../theme/tokens.dart';
 import '../widgets/glass_pill.dart';
 import '../widgets/mail_avatar.dart';
 import '../widgets/page_floating_actions.dart';
+import '../theme/app_fonts.dart';
 
 /// One mail, Apple Mail–style: the header and the body are one web document,
 /// so the header scrolls away *with* the mail; it shows sender, time and the
@@ -779,7 +779,7 @@ class _Placeholder extends StatelessWidget {
         : (to.length == 1
             ? addressLabel(to.first)
             : '${addressLabel(to.first)}, +${to.length - 1}');
-    final inter = GoogleFonts.inter(
+    final inter = AppFonts.inter(
         fontSize: 15, height: 1.35, color: s.textSecondary);
 
     return Padding(
@@ -806,7 +806,7 @@ class _Placeholder extends StatelessWidget {
                             name,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: GoogleFonts.spaceGrotesk(
+                            style: AppFonts.grotesk(
                               fontSize: 17,
                               fontWeight: FontWeight.w600,
                               letterSpacing: -0.2,
@@ -852,7 +852,7 @@ class _Placeholder extends StatelessWidget {
           const SizedBox(height: 16),
           Text(
             subjectOf(message),
-            style: GoogleFonts.spaceGrotesk(
+            style: AppFonts.grotesk(
               fontSize: 24,
               fontWeight: FontWeight.w700,
               letterSpacing: -0.4,

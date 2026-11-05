@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../services/mail_display.dart' show avatarInitial;
 import '../theme/tokens.dart';
+import '../theme/app_fonts.dart';
 
 /// A sender's soft avatar colours: a muted tint of their palette colour behind
 /// an initial in the full colour. Shared by the list rows and the message
@@ -47,10 +47,10 @@ class MailAvatar extends StatelessWidget {
   final bool dark;
   final double size;
 
-  // Built once per size — rows rebuild on every mail update.
-  static final _styles = <double, TextStyle>{};
+  // Built once per size and style — rows rebuild on every mail update.
+  static final _styles = <(double, AppStyle), TextStyle>{};
   static TextStyle _initialStyle(double size) =>
-      _styles[size] ??= GoogleFonts.spaceGrotesk(
+      _styles[(size, AppColorScheme.current.style)] ??= AppFonts.grotesk(
         fontSize: size * 0.43,
         fontWeight: FontWeight.w600,
         height: 1,

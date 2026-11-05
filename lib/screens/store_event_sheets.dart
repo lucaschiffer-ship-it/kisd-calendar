@@ -2,7 +2,6 @@ import 'dart:ui';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../config/app_theme.dart';
 import '../models/app_event.dart';
@@ -10,6 +9,7 @@ import '../services/event_store.dart';
 import '../services/spaces_browser.dart';
 import '../services/theme_service.dart';
 import '../theme/tokens.dart';
+import '../theme/app_fonts.dart';
 
 const _kWeekdays = [
   'Monday', 'Tuesday', 'Wednesday', 'Thursday',
@@ -355,7 +355,7 @@ class _StoreEventSheetState extends State<_StoreEventSheet> {
       ),
       child: Text(
         col.name.toUpperCase(),
-        style: GoogleFonts.inter(
+        style: AppFonts.inter(
           fontSize: 10,
           fontWeight: FontWeight.w600,
           letterSpacing: 0.9,

@@ -1,9 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import 'app_style.dart';
+import 'app_fonts.dart';
 
 export 'app_style.dart';
 
@@ -282,69 +282,69 @@ class AppGlass {
 class AppTextStyles {
   AppTextStyles._();
 
-  static TextStyle navTitle({Color? color}) => GoogleFonts.spaceGrotesk(
+  static TextStyle navTitle({Color? color}) => AppFonts.grotesk(
     fontSize: 18, fontWeight: FontWeight.w700,
     letterSpacing: -0.5, color: color,
   );
 
-  static TextStyle pageTitle({Color? color}) => GoogleFonts.spaceGrotesk(
+  static TextStyle pageTitle({Color? color}) => AppFonts.grotesk(
     fontSize: 38, fontWeight: FontWeight.w700,
     letterSpacing: -1.2, height: 1.0, color: color,
   );
 
-  static TextStyle displayTime({Color? color}) => GoogleFonts.spaceGrotesk(
+  static TextStyle displayTime({Color? color}) => AppFonts.grotesk(
     fontSize: 38, fontWeight: FontWeight.w700,
     letterSpacing: -2.0, height: 1.0, color: color,
   );
 
-  static TextStyle cardTitle({Color? color}) => GoogleFonts.spaceGrotesk(
+  static TextStyle cardTitle({Color? color}) => AppFonts.grotesk(
     fontSize: 23, fontWeight: FontWeight.w400, color: color,
   );
 
-  static TextStyle contentHeading({Color? color}) => GoogleFonts.spaceGrotesk(
+  static TextStyle contentHeading({Color? color}) => AppFonts.grotesk(
     fontSize: 22, fontWeight: FontWeight.w700,
     letterSpacing: -0.4, height: 1.2, color: color,
   );
 
   // Canonical body — 14 Inter w400.  (Was 13/14/15 mixed across screens.)
-  static TextStyle body({Color? color}) => GoogleFonts.inter(
+  static TextStyle body({Color? color}) => AppFonts.inter(
     fontSize: 14, fontWeight: FontWeight.w400,
     height: 1.5, color: color,
   );
 
-  static TextStyle bodyBold({Color? color}) => GoogleFonts.inter(
+  static TextStyle bodyBold({Color? color}) => AppFonts.inter(
     fontSize: 14, fontWeight: FontWeight.w600,
     height: 1.5, color: color,
   );
 
   // Edit-form fields, expanded read-mode body
-  static TextStyle bodyLarge({Color? color}) => GoogleFonts.inter(
+  static TextStyle bodyLarge({Color? color}) => AppFonts.inter(
     fontSize: 15, fontWeight: FontWeight.w400,
     height: 1.5, color: color,
   );
 
   // Filter chips, secondary content rows
-  static TextStyle bodySmall({Color? color}) => GoogleFonts.inter(
+  static TextStyle bodySmall({Color? color}) => AppFonts.inter(
     fontSize: 13, fontWeight: FontWeight.w400,
     height: 1.5, color: color,
   );
 
   // Timestamps, dates, meta
-  static TextStyle caption({Color? color}) => GoogleFonts.inter(
+  static TextStyle caption({Color? color}) => AppFonts.inter(
     fontSize: 12, fontWeight: FontWeight.w400, color: color,
   );
 
-  static TextStyle tabBarLabel({Color? color}) => GoogleFonts.inter(
+  static TextStyle tabBarLabel({Color? color}) => AppFonts.inter(
     fontSize: 10, fontWeight: FontWeight.w600, color: color,
   );
 
   // ALL-CAPS section labels — match existing AppTextStyle.label letterSpacing
-  static TextStyle sectionLabel({Color? color}) => GoogleFonts.inter(
+  static TextStyle sectionLabel({Color? color}) => AppFonts.inter(
     fontSize: 10, fontWeight: FontWeight.w600,
     letterSpacing: 1.4, height: 1.3, color: color,
   );
 
-  static TextStyle badge({Color? color}) => GoogleFonts.inter(
+  static TextStyle badge({Color? color}) => AppFonts.inter(
     fontSize: 9, fontWeight: FontWeight.w700, color: color,
   );
 
@@ -352,7 +352,7 @@ class AppTextStyles {
 
   // Sender name in email list/detail: SpaceGrotesk 14, w700 unread / w500 read
   static TextStyle senderName({Color? color, bool unread = false}) =>
-      GoogleFonts.spaceGrotesk(
+      AppFonts.grotesk(
         fontSize: 14,
         fontWeight: unread ? FontWeight.w700 : FontWeight.w500,
         letterSpacing: -0.2,
@@ -361,7 +361,7 @@ class AppTextStyles {
 
   // Timestamp in email list: Inter 11, w600 unread / w400 read
   static TextStyle timestamp({Color? color, bool unread = false}) =>
-      GoogleFonts.inter(
+      AppFonts.inter(
         fontSize: 11,
         fontWeight: unread ? FontWeight.w600 : FontWeight.w400,
         color: color,

@@ -4,7 +4,6 @@ import 'dart:ui' show lerpDouble;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/app_theme.dart' as tokens;
@@ -19,6 +18,7 @@ import '../widgets/glass_pill.dart';
 import '../widgets/header_date_row.dart';
 import '../widgets/morphing_glass_header.dart';
 import '../widgets/page_floating_actions.dart';
+import '../theme/app_fonts.dart';
 
 class MensaScreen extends StatefulWidget {
   const MensaScreen({super.key, required this.actions, required this.header});
@@ -423,7 +423,7 @@ class _WeekStripState extends State<_WeekStrip>
                           child: Center(
                             child: Text(
                               '${days[i].day}',
-                              style: GoogleFonts.inter(
+                              style: AppFonts.inter(
                                 fontSize: 18,
                                 fontWeight: isToday ? FontWeight.w700 : FontWeight.w500,
                                 color: focusIndex == i
@@ -462,7 +462,7 @@ class _WeekStripState extends State<_WeekStrip>
                       child: Center(
                         child: Text(
                           _letters[i],
-                          style: GoogleFonts.inter(
+                          style: AppFonts.inter(
                             fontSize: 13,
                             fontWeight: i < 5 ? FontWeight.w600 : FontWeight.w500,
                             letterSpacing: 0.6,
@@ -778,7 +778,7 @@ class _MealRow extends StatelessWidget {
               Text(
                 priceStr,
                 // Price uses SpaceGrotesk to match the numeric display style
-                style: GoogleFonts.spaceGrotesk(
+                style: AppFonts.grotesk(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
                   color: tokens.AppThemeTokens.eventAccent,
@@ -834,7 +834,7 @@ class _ClosedState extends StatelessWidget {
           // Empty-state heading: SpaceGrotesk 18 w600, not in canonical scale
           Text(
             'Mensa geschlossen',
-            style: GoogleFonts.spaceGrotesk(
+            style: AppFonts.grotesk(
               fontSize: 18,
               fontWeight: FontWeight.w600,
               color: tokens.AppThemeTokens.secondaryTextColor,
@@ -868,7 +868,7 @@ class _ErrorState extends StatelessWidget {
             // Empty-state heading: SpaceGrotesk 18 w600, not in canonical scale
             Text(
               'Menüplan nicht verfügbar',
-              style: GoogleFonts.spaceGrotesk(
+              style: AppFonts.grotesk(
                 fontSize: 18,
                 fontWeight: FontWeight.w600,
                 color: tokens.AppThemeTokens.titleColor,

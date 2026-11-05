@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../config/app_theme.dart';
 import '../services/theme_service.dart';
 import '../theme/tokens.dart';
 import 'mini_month.dart';
 import 'page_floating_actions.dart' show bottomClusterHeight;
+import '../theme/app_fonts.dart';
 
 // ─── Layout constants ─────────────────────────────────────────────────────────
 
@@ -133,7 +133,7 @@ class _YearSection extends StatelessWidget {
                 alignment: Alignment.centerLeft,
                 child: Text(
                   '$year',
-                  style: GoogleFonts.spaceGrotesk(
+                  style: AppFonts.grotesk(
                     fontSize: 20,
                     fontWeight: FontWeight.w700,
                     color: AppThemeTokens.titleColor,

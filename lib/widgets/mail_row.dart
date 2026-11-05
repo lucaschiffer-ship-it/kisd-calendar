@@ -1,11 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../services/mail_display.dart';
 import '../theme/tokens.dart';
 import 'mail_avatar.dart';
+import '../theme/app_fonts.dart';
 
 /// Text styles and colours for the mail list, built once per colour scheme.
 ///
@@ -19,26 +19,26 @@ class MailListStyles {
       separator = s.textPrimary.withValues(alpha: 0.12),
       chevron = s.textTertiary,
       highlight = s.textPrimary.withValues(alpha: 0.08),
-      sender = GoogleFonts.spaceGrotesk(
+      sender = AppFonts.grotesk(
         fontSize: 17,
         fontWeight: FontWeight.w600,
         letterSpacing: -0.2,
         height: 1.25,
         color: s.textPrimary,
       ),
-      subject = GoogleFonts.inter(
+      subject = AppFonts.inter(
         fontSize: 15,
         fontWeight: FontWeight.w400,
         height: 1.3,
         color: s.textPrimary,
       ),
-      preview = GoogleFonts.inter(
+      preview = AppFonts.inter(
         fontSize: 15,
         fontWeight: FontWeight.w400,
         height: 1.3,
         color: s.textSecondary,
       ),
-      date = GoogleFonts.inter(
+      date = AppFonts.inter(
         fontSize: 15,
         fontWeight: FontWeight.w400,
         height: 1.25,

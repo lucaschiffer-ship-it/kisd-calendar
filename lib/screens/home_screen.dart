@@ -130,7 +130,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _browserLoadedPreAuth = !loginService.isLoggedIn;
     loginService.addListener(_onLoginChanged);
     mailService.addListener(_rebuild);
-    ThemeService.instance.currentColor.addListener(_rebuild);
+    AppColorScheme.currentListenable.addListener(_rebuild);
     ThemeService.instance.glassEnabled.addListener(_rebuild);
     ThemeService.instance.roundedBars.addListener(_rebuild);
     // Already the invalidation hook everywhere else (ListScreen listens the
@@ -166,7 +166,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
     loginService.removeListener(_onLoginChanged);
     mailService.removeListener(_rebuild);
-    ThemeService.instance.currentColor.removeListener(_rebuild);
+    AppColorScheme.currentListenable.removeListener(_rebuild);
     ThemeService.instance.glassEnabled.removeListener(_rebuild);
     ThemeService.instance.roundedBars.removeListener(_rebuild);
     super.dispose();
@@ -824,8 +824,8 @@ class _MiniBrowserBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<String>(
-      valueListenable: ThemeService.instance.currentColor,
+    return ValueListenableBuilder<AppColorScheme>(
+      valueListenable: AppColorScheme.currentListenable,
       builder: (context, _, _) => AnimatedBuilder(
         animation: Listenable.merge([
           ThemeService.instance.glassEnabled,

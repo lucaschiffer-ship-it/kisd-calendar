@@ -1139,7 +1139,7 @@ class _CalendarScreenState extends State<CalendarScreen>
     super.build(context);
     return AnimatedBuilder(
       animation: Listenable.merge([
-        ThemeService.instance.currentColor,
+        AppColorScheme.currentListenable,
         ThemeService.instance.glassEnabled,
         _stretchAnim,
         _dayBarAnim,
@@ -2446,8 +2446,8 @@ class _CalendarPillState extends State<_CalendarPill> {
   Widget build(BuildContext context) {
     // GlassPill subscribes to the theme notifiers itself; this one is only for
     // the label colour, which tracks the bottom bar's icon tone.
-    return ValueListenableBuilder<String>(
-      valueListenable: ThemeService.instance.currentColor,
+    return ValueListenableBuilder<AppColorScheme>(
+      valueListenable: AppColorScheme.currentListenable,
       builder: (context, _, _) => GestureDetector(
         onTap: widget.onTap,
         onTapDown: (_) => setState(() => _pressed = true),
@@ -2524,9 +2524,10 @@ class _ViewButtonState extends State<_ViewButton> {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<bool>(
       valueListenable: ThemeService.instance.glassEnabled,
-      builder: (context, glass, _) => ValueListenableBuilder<String>(
-        valueListenable: ThemeService.instance.currentColor,
-        builder: (context, colorKey, _) => _buildPill(glass, colorKey),
+      builder: (context, glass, _) => ValueListenableBuilder<AppColorScheme>(
+        valueListenable: AppColorScheme.currentListenable,
+        builder: (context, _, _) =>
+            _buildPill(glass, ThemeService.instance.currentColor.value),
       ),
     );
   }

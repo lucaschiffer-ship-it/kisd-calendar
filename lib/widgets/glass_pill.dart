@@ -32,7 +32,7 @@ class GlassPill extends StatelessWidget {
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: Listenable.merge([
-        ThemeService.instance.currentColor,
+        AppColorScheme.currentListenable,
         ThemeService.instance.glassEnabled,
         ThemeService.instance.roundedBars,
       ]),

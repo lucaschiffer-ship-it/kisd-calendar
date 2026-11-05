@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../config/app_theme.dart';
 import '../services/calendar_service.dart';
 import '../services/theme_service.dart';
+import '../theme/tokens.dart';
 import 'page_floating_actions.dart' show bottomClusterHeight;
 
 // ─── Layout constants — must match widget SizedBox heights exactly ────────────
@@ -133,7 +134,7 @@ class _MonthViewState extends State<MonthView> {
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: Listenable.merge([
-        ThemeService.instance.currentColor,
+        AppColorScheme.currentListenable,
         ThemeService.instance.glassEnabled,
       ]),
       builder: (context, _) => ListView.builder(

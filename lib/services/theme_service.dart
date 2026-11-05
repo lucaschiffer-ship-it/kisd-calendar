@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../theme/app_style.dart';
 import 'attachment_metadata.dart';
 import 'semester.dart';
 
@@ -9,6 +10,8 @@ class ThemeService {
   static final ThemeService instance = ThemeService._();
 
   static const _colorKey         = 'kisd_color';
+  static const _styleKey         = 'kisd_style';
+  static const _paletteKey       = 'kisd_palette';
   static const _glassKey         = 'kisd_glass';
   static const _roundedBarsKey   = 'kisd_rounded_bars';
   static const _showKisdEventsKey = 'show_kisd_events_v2';
@@ -20,6 +23,13 @@ class ThemeService {
   // Accepts 'light' or 'dark' only.
   // A persisted 'pastel' value migrates to 'dark' on first read.
   final ValueNotifier<String> currentColor   = ValueNotifier<String>('dark');
+  // Settings › Appearance › Style and Palette. Independent of [currentColor]:
+  // every style has a light and a dark variant. The palette only applies to
+  // the minimal styles.
+  final ValueNotifier<AppStyle>   style      =
+      ValueNotifier<AppStyle>(AppStyle.classic);
+  final ValueNotifier<AppPalette> palette    =
+      ValueNotifier<AppPalette>(AppPalette.grey);
   final ValueNotifier<bool>   glassEnabled   = ValueNotifier<bool>(true);
   // Fully-rounded bottom cluster: the nav pills and the Spaces mini bar.
   final ValueNotifier<bool>   roundedBars    = ValueNotifier<bool>(true);
@@ -38,6 +48,12 @@ class ThemeService {
     final stored = prefs.getString(_colorKey) ?? 'dark';
     // Migrate pastel → dark
     currentColor.value   = stored == 'pastel' ? 'dark' : stored;
+    // Unconditional: init re-runs after sign-out's prefs.clear(), which must
+    // put the app back on the defaults.
+    style.value          = AppStyle.values
+        .asNameMap()[prefs.getString(_styleKey)] ?? AppStyle.classic;
+    palette.value        = AppPalette.values
+        .asNameMap()[prefs.getString(_paletteKey)] ?? AppPalette.grey;
     glassEnabled.value   = prefs.getBool(_glassKey) ?? true;
     roundedBars.value    = prefs.getBool(_roundedBarsKey) ?? true;
     showKisdEvents.value = prefs.getBool(_showKisdEventsKey) ?? true;
@@ -81,6 +97,18 @@ class ThemeService {
     currentColor.value = color;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_colorKey, color);
+  }
+
+  Future<void> setStyle(AppStyle value) async {
+    style.value = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_styleKey, value.name);
+  }
+
+  Future<void> setPalette(AppPalette value) async {
+    palette.value = value;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_paletteKey, value.name);
   }
 
   Future<void> setGlass(bool value) async {

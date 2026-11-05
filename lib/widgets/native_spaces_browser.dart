@@ -102,7 +102,7 @@ class NativeSpacesBrowserState extends State<NativeSpacesBrowser> {
   }
 
   List<Listenable> get _themeNotifiers => [
-        ThemeService.instance.currentColor,
+        AppColorScheme.currentListenable,
         ThemeService.instance.glassEnabled,
         ThemeService.instance.roundedBars,
       ];
@@ -110,8 +110,7 @@ class NativeSpacesBrowserState extends State<NativeSpacesBrowser> {
   /// The chrome mirrors the same three settings every Flutter surface reads,
   /// so "Glass" and "Rounded bars" keep working on this screen too.
   Map<String, dynamic> _themeMap() => {
-        'colorMode':
-            AppColorScheme.current == AppColorScheme.light ? 'light' : 'dark',
+        'colorMode': AppColorScheme.current.isDark ? 'dark' : 'light',
         'glassEnabled': ThemeService.instance.glassEnabled.value,
         'roundedBars': ThemeService.instance.roundedBars.value,
       };

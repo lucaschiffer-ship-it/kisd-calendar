@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../config/app_theme.dart';
 import '../services/theme_service.dart';
+import '../theme/tokens.dart';
 import 'mini_month.dart';
 import 'page_floating_actions.dart' show bottomClusterHeight;
 
@@ -82,7 +83,7 @@ class _YearViewState extends State<YearView> {
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: Listenable.merge([
-        ThemeService.instance.currentColor,
+        AppColorScheme.currentListenable,
         ThemeService.instance.glassEnabled,
       ]),
       builder: (context, _) => ListView.builder(

@@ -102,12 +102,12 @@ class SettingsScreen extends StatelessWidget {
                 onTap: () => _push(context, const _SemesterPage()),
               ),
             ),
-            ValueListenableBuilder<String>(
-              valueListenable: ThemeService.instance.currentColor,
-              builder: (context, color, _) => _NavRow(
+            ValueListenableBuilder<AppColorScheme>(
+              valueListenable: AppColorScheme.currentListenable,
+              builder: (context, s, _) => _NavRow(
                 icon: CupertinoIcons.paintbrush,
                 label: 'Appearance',
-                value: color == 'light' ? 'Light' : 'Dark',
+                value: _appearanceSummary(s),
                 onTap: () => _push(context, const _AppearancePage()),
               ),
             ),
@@ -227,6 +227,63 @@ class _AppearancePage extends StatelessWidget {
     return _SettingsPage(
       title: 'Appearance',
       builder: (context, s) => [
+        const _SectionHeader('STYLE'),
+        _Padded(
+          ValueListenableBuilder<AppStyle>(
+            valueListenable: theme.style,
+            builder: (context, style, _) => _Group(
+              inset: false,
+              children: [
+                _ThemeOption(
+                  label: 'Classic',
+                  subtitle: 'Cards, glass and orange accents',
+                  selected: style == AppStyle.classic,
+                  onTap: () => theme.setStyle(AppStyle.classic),
+                ),
+                _ThemeOption(
+                  label: 'Minimal',
+                  badge: _WipBadge(s: s),
+                  subtitle: 'Monochrome, hairlines, Inter',
+                  selected: style == AppStyle.minimal,
+                  onTap: () => theme.setStyle(AppStyle.minimal),
+                ),
+                _ThemeOption(
+                  label: 'Minimal Mono',
+                  badge: _WipBadge(s: s),
+                  subtitle: 'Monochrome, hairlines, IBM Plex Mono',
+                  selected: style == AppStyle.mono,
+                  onTap: () => theme.setStyle(AppStyle.mono),
+                ),
+              ],
+            ),
+          ),
+        ),
+        // The palette only exists for the minimal styles.
+        if (s.isMinimal) ...[
+          const _SectionHeader('PALETTE'),
+          _Padded(
+            ValueListenableBuilder<AppPalette>(
+              valueListenable: theme.palette,
+              builder: (context, palette, _) => _Group(
+                inset: false,
+                children: [
+                  for (final (p, label, subtitle) in const [
+                    (AppPalette.grey, 'Grey', 'Soft grey and near-black'),
+                    (AppPalette.paper, 'Paper', 'Warm beige and warm black'),
+                    (AppPalette.pure, 'Pure', 'White and black'),
+                  ])
+                    _ThemeOption(
+                      leading: _PaletteSwatch(palette: p, s: s),
+                      label: label,
+                      subtitle: subtitle,
+                      selected: palette == p,
+                      onTap: () => theme.setPalette(p),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
         const _SectionHeader('THEME'),
         _Padded(
           ValueListenableBuilder<String>(
@@ -236,13 +293,17 @@ class _AppearancePage extends StatelessWidget {
               children: [
                 _ThemeOption(
                   label: 'Dark',
-                  subtitle: 'Black background, orange accents',
+                  subtitle: s.isMinimal
+                      ? 'Light type on a dark ground'
+                      : 'Black background, orange accents',
                   selected: color == 'dark',
                   onTap: () => theme.setColor('dark'),
                 ),
                 _ThemeOption(
                   label: 'Light',
-                  subtitle: 'White background, clean greys',
+                  subtitle: s.isMinimal
+                      ? 'Dark type on a light ground'
+                      : 'White background, clean greys',
                   selected: color == 'light',
                   onTap: () => theme.setColor('light'),
                 ),
@@ -906,6 +967,8 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // const, so a parent rebuild skips it: depend on the theme instead.
+    Theme.of(context);
     final s = AppColorScheme.current;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 8),
@@ -924,6 +987,7 @@ class _Caption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    Theme.of(context); // const — see _SectionHeader
     final s = AppColorScheme.current;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
@@ -1059,6 +1123,7 @@ class _ShapeSwatch extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    Theme.of(context); // const — see _SectionHeader
     final s = AppColorScheme.current;
     return Container(
       width: 36,
@@ -1286,6 +1351,7 @@ class _ThemeOption extends StatelessWidget {
   const _ThemeOption({
     this.leading,
     required this.label,
+    this.badge,
     this.subtitle,
     required this.selected,
     required this.onTap,
@@ -1293,6 +1359,8 @@ class _ThemeOption extends StatelessWidget {
 
   final Widget? leading;
   final String label;
+  // Shown after the label, e.g. [_WipBadge].
+  final Widget? badge;
   final String? subtitle;
   final bool selected;
   final VoidCallback onTap;
@@ -1311,11 +1379,21 @@ class _ThemeOption extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    label,
-                    style: AppTextStyles.bodyLarge(
-                      color: s.textPrimary,
-                    ).copyWith(fontWeight: FontWeight.w500),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          label,
+                          style: AppTextStyles.bodyLarge(
+                            color: s.textPrimary,
+                          ).copyWith(fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                      if (badge != null) ...[
+                        const SizedBox(width: 8),
+                        badge!,
+                      ],
+                    ],
                   ),
                   if (subtitle != null) ...[
                     const SizedBox(height: 2),
@@ -1328,10 +1406,75 @@ class _ThemeOption extends StatelessWidget {
               ),
             ),
             if (selected)
-              Icon(CupertinoIcons.checkmark, size: 16, color: s.accent),
+              Icon(CupertinoIcons.checkmark, size: 16, color: s.emphasis),
           ],
         ),
       ),
     );
   }
+}
+
+/// The small "work in progress" label on the minimal styles.
+class _WipBadge extends StatelessWidget {
+  // Not const, and given the scheme: a const badge would keep the old
+  // style's colours and font when the style changes under it.
+  // ignore: prefer_const_constructors_in_immutables
+  _WipBadge({required this.s});
+
+  final AppColorScheme s;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        border: Border.all(color: s.textTertiary, width: 0.5),
+        borderRadius: BorderRadius.circular(AppRadius.pill),
+      ),
+      child: Text(
+        'WORK IN PROGRESS',
+        style: AppTextStyles.sectionLabel(color: s.textSecondary)
+            .copyWith(fontSize: 8, letterSpacing: 1.0, height: 1.2),
+      ),
+    );
+  }
+}
+
+/// Light and dark background of a minimal palette, side by side.
+class _PaletteSwatch extends StatelessWidget {
+  // ignore: prefer_const_constructors_in_immutables
+  _PaletteSwatch({required this.palette, required this.s});
+
+  final AppPalette palette;
+  final AppColorScheme s;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = AppColorScheme.minimalPalettes[palette]!;
+    return Container(
+      width: 36,
+      height: 20,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        border: Border.all(color: s.textSecondary, width: 0.5),
+        borderRadius: BorderRadius.circular(AppRadius.tag),
+      ),
+      child: Row(
+        children: [
+          Expanded(child: ColoredBox(color: p.lightBg)),
+          Expanded(child: ColoredBox(color: p.darkBg)),
+        ],
+      ),
+    );
+  }
+}
+
+/// The Appearance row's value: mode, plus the style when it isn't classic.
+String _appearanceSummary(AppColorScheme s) {
+  final mode = s.isDark ? 'Dark' : 'Light';
+  return switch (s.style) {
+    AppStyle.classic => mode,
+    AppStyle.minimal => '$mode · Minimal',
+    AppStyle.mono => '$mode · Mono',
+  };
 }

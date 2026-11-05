@@ -37,10 +37,11 @@ void main() async {
   // Keep AppColorScheme.current in sync with ThemeService so all AppThemeTokens
   // reads are mode-correct at widget build time.  The listener fires before any
   // AnimatedBuilder rebuild, so reads are always fresh.
-  _syncColorScheme(ThemeService.instance.currentColor.value);
-  ThemeService.instance.currentColor.addListener(
-    () => _syncColorScheme(ThemeService.instance.currentColor.value),
-  );
+  // Style and palette change the scheme too, so all three drive it.
+  final theme = ThemeService.instance;
+  _syncColorScheme();
+  Listenable.merge([theme.currentColor, theme.style, theme.palette])
+      .addListener(_syncColorScheme);
 
   runApp(const KisdCalendarApp());
 }
@@ -58,9 +59,13 @@ Future<void> mailCheckMain() async {
   } catch (_) {}
 }
 
-void _syncColorScheme(String colorKey) {
-  AppColorScheme.current =
-      colorKey == 'light' ? AppColorScheme.light : AppColorScheme.dark;
+void _syncColorScheme() {
+  final theme = ThemeService.instance;
+  AppColorScheme.current = AppColorScheme.resolve(
+    theme.style.value,
+    theme.palette.value,
+    isDark: theme.currentColor.value != 'light',
+  );
 }
 
 class KisdCalendarApp extends StatelessWidget {
@@ -68,16 +73,17 @@ class KisdCalendarApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<String>(
-      valueListenable: ThemeService.instance.currentColor,
-      builder: (context, colorKey, child) {
+    // The scheme changes with mode, style and palette alike; the classic
+    // schemes build exactly the old light/dark themes.
+    return ValueListenableBuilder<AppColorScheme>(
+      valueListenable: AppColorScheme.currentListenable,
+      builder: (context, s, child) {
         return MaterialApp(
           title: 'KISDesk',
           debugShowCheckedModeBanner: false,
           navigatorKey: navigatorKey,
-          theme: buildLightTheme(),
-          darkTheme: buildDarkTheme(),
-          themeMode: colorKey == 'light' ? ThemeMode.light : ThemeMode.dark,
+          theme: buildTheme(s),
+          themeMode: ThemeMode.light,
           // Dismiss the keyboard when tapping anywhere that isn't itself
           // tappable (standard iOS behaviour). Interactive widgets win the
           // gesture arena, so buttons and fields are unaffected.

@@ -220,8 +220,8 @@ class _CourseShellCardState extends State<CourseShellCard>
           setState(() => _pressing = false);
           _openExpandedOverlay(context, widget.shell);
         },
-        child: ValueListenableBuilder<String>(
-          valueListenable: ThemeService.instance.currentColor,
+        child: ValueListenableBuilder<AppColorScheme>(
+          valueListenable: AppColorScheme.currentListenable,
           builder: (context, _, _) => ValueListenableBuilder<bool>(
               valueListenable: ThemeService.instance.glassEnabled,
               builder: (context, glass, _) {
@@ -432,8 +432,8 @@ class _NewCourseCardState extends State<NewCourseCard> {
         key: _cardKey,
         onTap: _open,
         behavior: HitTestBehavior.opaque,
-        child: ValueListenableBuilder<String>(
-          valueListenable: ThemeService.instance.currentColor,
+        child: ValueListenableBuilder<AppColorScheme>(
+          valueListenable: AppColorScheme.currentListenable,
           builder: (context, _, _) => ValueListenableBuilder<bool>(
             valueListenable: ThemeService.instance.glassEnabled,
             builder: (context, glass, _) {

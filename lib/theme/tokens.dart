@@ -3,12 +3,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import 'app_style.dart';
+
+export 'app_style.dart';
+
 // ═══════════════════════════════════════════════════════════════════════════════
-// AppColorScheme — light & dark, plus mutable current reference
+// AppColorScheme — one instance per style × palette × mode, plus mutable current
 // ═══════════════════════════════════════════════════════════════════════════════
 
 class AppColorScheme {
   const AppColorScheme({
+    this.style = AppStyle.classic,
+    required this.isDark,
+    required this.emphasis,
+    required this.onEmphasis,
+    required this.hairline,
     required this.background,
     required this.surface,
     required this.surfaceElevated,
@@ -29,6 +38,20 @@ class AppColorScheme {
     required this.glassHeaderTint,
   });
 
+  final AppStyle style;
+  // Whether this scheme is a dark one. Ask this, never compare against the
+  // [light]/[dark] constants: the minimal styles have their own instances.
+  final bool isDark;
+  // Where the classic look is orange but the minimal styles are not: the
+  // header weekday, course times, focus rings, switches, checkmarks, links,
+  // primary buttons. Classic: [accent]. Minimal: [textPrimary].
+  // [accent] itself is kept for what stays orange in every style — today
+  // markers, unread badges, the active tab, the liked heart.
+  final Color emphasis;
+  // Text/icons on an [emphasis] fill. Classic: [onAccent]. Minimal: [background].
+  final Color onEmphasis;
+  // Row separators. Classic: [divider]. Minimal: text at 15 %.
+  final Color hairline;
   final Color background;
   final Color surface;
   final Color surfaceElevated;
@@ -61,10 +84,87 @@ class AppColorScheme {
   static ValueListenable<AppColorScheme> get currentListenable =>
       _currentNotifier;
 
+  bool get isMinimal => style != AppStyle.classic;
+
+  /// The scheme for a style, palette and mode. Classic ignores [palette] and
+  /// returns [light]/[dark]. The minimal ones are built once and memoised, so
+  /// every combination is a stable, distinct instance — caches keyed on the
+  /// scheme (mail rows, the mail header) refresh on a font-only switch too.
+  static AppColorScheme resolve(
+    AppStyle style,
+    AppPalette palette, {
+    required bool isDark,
+  }) {
+    if (style == AppStyle.classic) return isDark ? dark : light;
+    return _minimalCache.putIfAbsent(
+      '${style.name}/${palette.name}/$isDark',
+      () => _minimal(style, palette, isDark),
+    );
+  }
+
+  static final Map<String, AppColorScheme> _minimalCache = {};
+
+  /// Background and text colour of each minimal palette, light then dark.
+  static const Map<AppPalette, ({Color lightBg, Color lightText, Color darkBg, Color darkText})>
+      minimalPalettes = {
+    AppPalette.grey: (
+      lightBg: Color(0xFFEDEDEB), lightText: Color(0xFF111111),
+      darkBg: Color(0xFF0C0C0C), darkText: Color(0xFFF2F2F2),
+    ),
+    AppPalette.paper: (
+      lightBg: Color(0xFFE4E1D9), lightText: Color(0xFF1F1B16),
+      darkBg: Color(0xFF141311), darkText: Color(0xFFEDE9E1),
+    ),
+    AppPalette.pure: (
+      lightBg: Color(0xFFFFFFFF), lightText: Color(0xFF111111),
+      darkBg: Color(0xFF000000), darkText: Color(0xFFF2F2F2),
+    ),
+  };
+
+  static AppColorScheme _minimal(
+      AppStyle style, AppPalette palette, bool isDark) {
+    final p = minimalPalettes[palette]!;
+    final bg = isDark ? p.darkBg : p.lightBg;
+    final text = isDark ? p.darkText : p.lightText;
+    final line = text.withValues(alpha: 0.15);
+    const orange = Color(0xFFEB5A01);
+    return AppColorScheme(
+      style:           style,
+      isDark:          isDark,
+      emphasis:        text,
+      onEmphasis:      bg,
+      hairline:        line,
+      background:      bg,
+      // Flat chrome: pills and bars sit on the page colour itself.
+      surface:         bg,
+      surfaceElevated: Color.lerp(bg, text, 0.04)!,
+      cardBackground:  bg,
+      cardBorder:      line,
+      divider:         line,
+      textPrimary:     text,
+      textSecondary:   text.withValues(alpha: 0.60),
+      textTertiary:    text.withValues(alpha: 0.40),
+      accent:          orange,
+      accentMuted:     text.withValues(alpha: 0.08),
+      onAccent:        const Color(0xFFFFFFFF),
+      success:         const Color(0xFF30D158),
+      danger:          const Color(0xFFFF453A),
+      heartActive:     orange,
+      navBarBg:        bg,
+      navBarIcon:      text,
+      // Glass stays monochrome: tinted with the page colour, not white.
+      glassHeaderTint: bg.withValues(alpha: isDark ? 0.55 : 0.60),
+    );
+  }
+
   // ── Light ──────────────────────────────────────────────────────────────────
   // Values derived from the T.0 audit of list_screen/calendar_screen light mode.
   // These are the canonical non-negotiable baseline values.
   static const light = AppColorScheme(
+    isDark:          false,
+    emphasis:        Color(0xFFEB5A01), // = accent
+    onEmphasis:      Color(0xFFFFFFFF), // = onAccent
+    hairline:        Color(0xFFE0E0E0), // = divider
     background:      Color(0xFFF5F5F5),
     surface:         Color(0xFFFFFFFF),
     surfaceElevated: Color(0xFFEFEFEF),
@@ -87,6 +187,10 @@ class AppColorScheme {
 
   // ── Dark ───────────────────────────────────────────────────────────────────
   static const dark = AppColorScheme(
+    isDark:          true,
+    emphasis:        Color(0xFFEB5A01), // = accent
+    onEmphasis:      Color(0xFFFFFFFF), // = onAccent
+    hairline:        Color(0xFF1E1E1E), // = divider
     background:      Color(0xFF000000),
     surface:         Color(0xFF141414),
     surfaceElevated: Color(0xFF1E1E1E),
@@ -271,15 +375,20 @@ class AppTextStyles {
 ThemeData buildLightTheme() => _build(AppColorScheme.light, Brightness.light);
 ThemeData buildDarkTheme()  => _build(AppColorScheme.dark,  Brightness.dark);
 
+/// The MaterialApp theme for any scheme. For the classic schemes this is
+/// exactly [buildLightTheme] / [buildDarkTheme].
+ThemeData buildTheme(AppColorScheme s) =>
+    _build(s, s.isDark ? Brightness.dark : Brightness.light);
+
 ThemeData _build(AppColorScheme s, Brightness brightness) {
   final cs = ColorScheme.fromSeed(
-    seedColor: s.accent,
+    seedColor: s.emphasis,
     brightness: brightness,
   ).copyWith(
-    primary:                 s.accent,
-    onPrimary:               s.onAccent,
-    secondary:               s.accent,
-    onSecondary:             s.onAccent,
+    primary:                 s.emphasis,
+    onPrimary:               s.onEmphasis,
+    secondary:               s.emphasis,
+    onSecondary:             s.onEmphasis,
     surface:                 s.surface,
     onSurface:               s.textPrimary,
     onSurfaceVariant:        s.textSecondary,
@@ -368,7 +477,7 @@ ThemeData _build(AppColorScheme s, Brightness brightness) {
       enabledBorder:    UnderlineInputBorder(
           borderSide: BorderSide(color: s.divider)),
       focusedBorder:    UnderlineInputBorder(
-          borderSide: BorderSide(color: s.accent, width: 1.5)),
+          borderSide: BorderSide(color: s.emphasis, width: 1.5)),
     ),
 
     snackBarTheme: SnackBarThemeData(
@@ -382,8 +491,8 @@ ThemeData _build(AppColorScheme s, Brightness brightness) {
 
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: s.accent,
-        foregroundColor: s.onAccent,
+        backgroundColor: s.emphasis,
+        foregroundColor: s.onEmphasis,
         shape:           const StadiumBorder(),
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
         textStyle: AppTextStyles.bodyBold(),
@@ -392,8 +501,8 @@ ThemeData _build(AppColorScheme s, Brightness brightness) {
 
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        foregroundColor: s.accent,
-        side:            BorderSide(color: s.accent),
+        foregroundColor: s.emphasis,
+        side:            BorderSide(color: s.emphasis),
         shape:           const StadiumBorder(),
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         textStyle: AppTextStyles.body(),
@@ -401,23 +510,23 @@ ThemeData _build(AppColorScheme s, Brightness brightness) {
     ),
 
     floatingActionButtonTheme: FloatingActionButtonThemeData(
-      backgroundColor: s.accent,
-      foregroundColor: s.onAccent,
+      backgroundColor: s.emphasis,
+      foregroundColor: s.onEmphasis,
       elevation:       0,
       shape:           const CircleBorder(),
     ),
 
     progressIndicatorTheme: ProgressIndicatorThemeData(
-      color:             s.accent,
+      color:             s.emphasis,
       circularTrackColor: s.surfaceElevated,
     ),
 
     switchTheme: SwitchThemeData(
       thumbColor: WidgetStateProperty.resolveWith((states) =>
-          states.contains(WidgetState.selected) ? s.accent : null),
+          states.contains(WidgetState.selected) ? s.emphasis : null),
       trackColor: WidgetStateProperty.resolveWith((states) =>
           states.contains(WidgetState.selected)
-              ? s.accent.withValues(alpha: 0.5)
+              ? s.emphasis.withValues(alpha: 0.5)
               : null),
     ),
 

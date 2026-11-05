@@ -369,7 +369,7 @@ class _MailScreenState extends State<MailScreen>
     super.build(context);
     return AnimatedBuilder(
       animation: Listenable.merge([
-        ThemeService.instance.currentColor,
+        AppColorScheme.currentListenable,
         ThemeService.instance.glassEnabled,
         // The filter strip's clip follows the bottom cluster's shape, so this
         // page has to rebuild when "Rounded bars" flips.

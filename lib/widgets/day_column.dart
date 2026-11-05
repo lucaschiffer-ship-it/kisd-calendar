@@ -10,6 +10,7 @@ import '../screens/store_event_sheets.dart';
 import '../services/calendar_service.dart';
 import '../services/event_store.dart';
 import '../services/theme_service.dart';
+import '../theme/tokens.dart';
 import 'event_edit_layer.dart';
 
 // ─── Overlap layout helpers ───────────────────────────────────────────────────
@@ -177,7 +178,7 @@ class _DayColumnState extends State<DayColumn> {
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: Listenable.merge([
-        ThemeService.instance.currentColor,
+        AppColorScheme.currentListenable,
         ThemeService.instance.glassEnabled,
       ]),
       builder: (context, _) => _buildContent(),

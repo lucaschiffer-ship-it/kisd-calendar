@@ -6,6 +6,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../config/app_theme.dart';
 import '../services/calendar_service.dart';
 import '../services/theme_service.dart';
+import '../theme/tokens.dart';
 
 // ─── Layout constants — shared with the week↔month morph in CalendarScreen ────
 //
@@ -192,7 +193,7 @@ class _MonthGridState extends State<MonthGrid> {
   Widget build(BuildContext context) {
     final layout = widget.layout;
     return AnimatedBuilder(
-      animation: ThemeService.instance.currentColor,
+      animation: AppColorScheme.currentListenable,
       builder: (context, _) => ListView.builder(
         controller: widget.controller,
         padding: EdgeInsets.only(

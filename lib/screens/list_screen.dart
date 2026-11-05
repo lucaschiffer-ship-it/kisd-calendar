@@ -1158,7 +1158,7 @@ class _ListScreenState extends State<ListScreen>
 
     return AnimatedBuilder(
       animation: Listenable.merge([
-        ThemeService.instance.currentColor,
+        AppColorScheme.currentListenable,
         ThemeService.instance.glassEnabled,
         Semester.overrideId,
       ]),
@@ -1402,8 +1402,8 @@ class _TodayEventRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<String>(
-      valueListenable: ThemeService.instance.currentColor,
+    return ValueListenableBuilder<AppColorScheme>(
+      valueListenable: AppColorScheme.currentListenable,
       builder: (context, _, _) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 5),
         child: Row(

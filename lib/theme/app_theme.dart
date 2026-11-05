@@ -1,7 +1,7 @@
 // Re-export theme builders and new token classes so every import site
 // that does `import 'theme/app_theme.dart'` still gets them.
 export 'tokens.dart'
-    show buildDarkTheme, buildLightTheme, AppColorScheme, AppRadius, AppGlass, AppTextStyles;
+    show buildDarkTheme, buildLightTheme, buildTheme, AppColorScheme, AppRadius, AppGlass, AppTextStyles, AppStyle, AppPalette;
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';

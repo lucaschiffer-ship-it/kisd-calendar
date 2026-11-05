@@ -13,7 +13,7 @@ import 'mail_avatar.dart';
 /// that ran for every visible row on every mail update.
 class MailListStyles {
   MailListStyles._(AppColorScheme s)
-    : dark = s == AppColorScheme.dark,
+    : dark = s.isDark,
       background = s.background,
       dot = s.accent,
       separator = s.textPrimary.withValues(alpha: 0.12),

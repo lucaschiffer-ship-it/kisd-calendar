@@ -620,7 +620,7 @@ class _ComposeScreenState extends State<ComposeScreen> {
   @override
   Widget build(BuildContext context) {
     final s = AppColorScheme.current;
-    final dark = s == AppColorScheme.dark;
+    final dark = s.isDark;
     final sheet = dark ? s.surfaceElevated : s.surface;
     final label = GoogleFonts.inter(fontSize: 16, color: s.textSecondary, height: 1.3);
     final value = GoogleFonts.inter(fontSize: 16, color: s.textPrimary, height: 1.3);
@@ -1073,7 +1073,7 @@ class _AttachmentTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = AppColorScheme.current;
-    final dark = s == AppColorScheme.dark;
+    final dark = s.isDark;
     final a = attachment;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,

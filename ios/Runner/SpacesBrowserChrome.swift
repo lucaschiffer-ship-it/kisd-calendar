@@ -14,24 +14,41 @@ struct SpacesBrowserTheme {
   var isDark = true
   var glassEnabled = true
   var roundedBars = true
+  /// One of the minimal styles (Settings › Appearance › Style). They push
+  /// their palette's colours in `colors` — 14 schemes are too many to mirror
+  /// here — and classic keeps the duplicated values below.
+  var minimal = false
+  var pushed: [String: UIColor] = [:]
 
   static func from(_ map: [String: Any]?) -> SpacesBrowserTheme {
     var theme = SpacesBrowserTheme()
     if let mode = map?["colorMode"] as? String { theme.isDark = mode != "light" }
     if let glass = map?["glassEnabled"] as? Bool { theme.glassEnabled = glass }
     if let rounded = map?["roundedBars"] as? Bool { theme.roundedBars = rounded }
+    if let style = map?["style"] as? String { theme.minimal = style != "classic" }
+    if let colors = map?["colors"] as? [String: Any] {
+      for (key, value) in colors {
+        if let argb = (value as? NSNumber)?.int64Value {
+          theme.pushed[key] = .argb(UInt32(truncatingIfNeeded: argb))
+        }
+      }
+    }
     return theme
   }
 
-  var background: UIColor { isDark ? .rgb(0x000000) : .rgb(0xF5F5F5) }
+  var background: UIColor { pushed["background"] ?? (isDark ? .rgb(0x000000) : .rgb(0xF5F5F5)) }
   /// `GlassPill`'s off-glass fill — a raised surface, not navBarBg.
-  var surface: UIColor { isDark ? .rgb(0x141414) : .rgb(0xFFFFFF) }
-  var navBarIcon: UIColor { isDark ? .rgb(0xFFFFFF) : .rgb(0x333333) }
-  var textPrimary: UIColor { isDark ? .rgb(0xFFFFFF) : .rgb(0x111111) }
-  var textTertiary: UIColor { isDark ? .rgb(0xFFFFFF, 0.35) : .rgb(0x888888) }
+  var surface: UIColor { pushed["surface"] ?? (isDark ? .rgb(0x141414) : .rgb(0xFFFFFF)) }
+  var navBarIcon: UIColor { pushed["navBarIcon"] ?? (isDark ? .rgb(0xFFFFFF) : .rgb(0x333333)) }
+  var textPrimary: UIColor { pushed["textPrimary"] ?? (isDark ? .rgb(0xFFFFFF) : .rgb(0x111111)) }
+  var textTertiary: UIColor {
+    pushed["textTertiary"] ?? (isDark ? .rgb(0xFFFFFF, 0.35) : .rgb(0x888888))
+  }
   /// dark: `AppGlass.dividerColor` (white 10 %); light: `s.cardBorder`.
-  var border: UIColor { isDark ? .rgb(0xFFFFFF, 0.10) : .rgb(0xE0E0E0) }
-  var accent: UIColor { .rgb(0xEB5A01) }
+  var border: UIColor { pushed["border"] ?? (isDark ? .rgb(0xFFFFFF, 0.10) : .rgb(0xE0E0E0)) }
+  /// `AppColorScheme.emphasis`: orange in classic, the text colour in the
+  /// minimal styles (cursor, progress bar, the attach panel's confirmation).
+  var accent: UIColor { pushed["accent"] ?? .rgb(0xEB5A01) }
 
   /// Corner radius scale — follows the "Rounded bars" setting, exactly as
   /// `GlassPill.defaultRadius()` does. `AppRadius.pill` is a stadium; the
@@ -43,6 +60,15 @@ struct SpacesBrowserTheme {
 }
 
 extension UIColor {
+  /// A Flutter `Color.toARGB32()` value.
+  static func argb(_ value: UInt32) -> UIColor {
+    return UIColor(
+      red: CGFloat((value >> 16) & 0xFF) / 255.0,
+      green: CGFloat((value >> 8) & 0xFF) / 255.0,
+      blue: CGFloat(value & 0xFF) / 255.0,
+      alpha: CGFloat((value >> 24) & 0xFF) / 255.0)
+  }
+
   static func rgb(_ hex: UInt32, _ alpha: CGFloat = 1.0) -> UIColor {
     return UIColor(
       red: CGFloat((hex >> 16) & 0xFF) / 255.0,
@@ -138,9 +164,10 @@ class GlassSurface: UIView {
       layer.borderColor = theme.border.cgColor
       // Lifts the pill off the page in light mode; in dark the hairline does
       // that work, since a black shadow on black reads as nothing. Mirrors
-      // GlassPill's non-glass branch (Flutter blurRadius 12 ≈ CALayer 6).
+      // GlassPill's non-glass branch (Flutter blurRadius 12 ≈ CALayer 6) —
+      // flat, like it, in the minimal styles.
       layer.shadowColor = UIColor.black.cgColor
-      layer.shadowOpacity = 0.3
+      layer.shadowOpacity = theme.minimal ? 0 : 0.3
       layer.shadowRadius = 6
       layer.shadowOffset = CGSize(width: 0, height: 2)
     }

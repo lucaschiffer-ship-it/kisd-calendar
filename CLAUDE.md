@@ -303,15 +303,49 @@ the five slots (`_swipeFraction` + rolling commit).
 - Its first run seeds it from the cache (hearts that differ from their default), so `ListScreen._init` loads it *before* the schema check may clear the cache.
 - The list screen still writes the cache via `scraperService.saveToCache(_shells)` on a heart tap; the card widget itself does **not** write to cache directly.
 
-### Theme system
+### Theme system (pinned by `test/app_color_scheme_test.dart`, `test/app_fonts_test.dart`)
 
-Two layers:
+Three independent settings (Settings › Appearance), all in `ThemeService`:
+mode `currentColor` (`'light'`/`'dark'`), **style** (`AppStyle.classic` /
+`minimal` / `mono`, `kisd_style`) and **palette** (`AppPalette.grey` / `paper` /
+`pure`, `kisd_palette`, minimal styles only). Minimal and Minimal Mono are
+**work in progress** (badged in Settings): monochrome, hairline rows instead of
+cards, outlined controls, Inter / IBM Plex Mono.
 
-1. **`lib/theme/app_theme.dart`** — static `AppColors`, `AppSpacing`, `AppTextStyle` (Space Grotesk + Inter via `google_fonts`), `AppCard`, `buildDarkTheme()`. These are compile-time constants used throughout.
-
-2. **`lib/config/app_theme.dart` (`AppThemeTokens`)** — dynamic tokens that read `ThemeService.instance.currentColor` and `currentStyle` at call time. Every getter is a `switch` over the color key (`'dark'` / `'light'` / `'pastel'`) or style key (`'vivid'` / `'minimal'`). Widgets that need to react to theme changes wrap with `AnimatedBuilder` or `ValueListenableBuilder` on `ThemeService.instance.currentColor`, `currentStyle`, and `glassEnabled`.
-
-`ThemeService` is a singleton with three `ValueNotifier`s (color, style, glass). `glassEnabled` activates `BackdropFilter` blur on cards and nav bars via `AppThemeTokens.glassContainer(...)`.
+- **`AppColorScheme.current`** (`lib/theme/tokens.dart`) is the one source of
+  colour. `main.dart` sets it to `AppColorScheme.resolve(style, palette, isDark:)`
+  whenever any of the three changes. Classic returns the original `light`/`dark`
+  constants; each minimal combination is its own memoised instance (caches keyed
+  on the scheme rely on that).
+- **Listen to `AppColorScheme.currentListenable`**, never to `currentColor`
+  alone — a style or palette switch doesn't change `currentColor`. Ask
+  `s.isDark` / `s.isMinimal`; never compare against `AppColorScheme.light/dark`.
+  `currentColor == 'dark'` string checks still work (it stays light/dark), but
+  they pick classic-only values — branch on `s.isMinimal` first where needed.
+- **Orange has two roles.** `s.accent` stays orange in every style and is
+  reserved for: today markers (circles, today's column label, the now-line),
+  unread/new badges, the active tab icon, the liked heart, the Spaces favicon.
+  Everything else that is orange in classic uses **`s.emphasis`** (= accent in
+  classic, the text colour in minimal; `onEmphasis` is what sits on it). Material
+  `primary` is `emphasis`, so switches, cursors and FilledButtons follow.
+- **Fonts go through `AppFonts.grotesk` / `AppFonts.inter`** (`lib/theme/app_fonts.dart`),
+  never `GoogleFonts.*` directly: classic passes straight through to Space
+  Grotesk / Inter; minimal maps both to Inter, mono to IBM Plex Mono (0.9×, no
+  tight tracking); both set ≥ 24 pt light. Runtime fetching is off — every face
+  is bundled in `google_fonts/` (a missing one silently falls back to the system
+  font). A cached `TextStyle` must be keyed by style. The opened mail has its own
+  copy of these rules: `MailHtmlFonts` in `mail_html.dart`.
+- Minimal decoration branches (`if (s.isMinimal)`) change decoration only, never
+  padding or sizes — the card→overlay morph and the Swift chrome's duplicated
+  geometry depend on them. Floating pills follow Glass/Solid: monochrome glass,
+  or flat page-coloured fill + hairline.
+- The native browser chrome gets `style` plus, for minimal, the palette's ARGB
+  colours over the channel (`SpacesBrowserTheme.pushed`); classic keeps the
+  values duplicated in Swift.
+- Legacy: `lib/theme/app_theme.dart` still has dark-only static `AppColors` and
+  `AppTextStyle`/`AppCard`; `lib/config/app_theme.dart` (`AppThemeTokens`) is a
+  facade over `AppColorScheme.current`. `glassEnabled` drives `BackdropFilter`
+  via `AppThemeTokens.glassContainer(...)` and `GlassPill`.
 
 ### `CourseShell` model
 

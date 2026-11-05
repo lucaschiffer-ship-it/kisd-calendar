@@ -109,11 +109,28 @@ class NativeSpacesBrowserState extends State<NativeSpacesBrowser> {
 
   /// The chrome mirrors the same three settings every Flutter surface reads,
   /// so "Glass" and "Rounded bars" keep working on this screen too.
-  Map<String, dynamic> _themeMap() => {
-        'colorMode': AppColorScheme.current.isDark ? 'dark' : 'light',
-        'glassEnabled': ThemeService.instance.glassEnabled.value,
-        'roundedBars': ThemeService.instance.roundedBars.value,
-      };
+  ///
+  /// The minimal styles also push their palette's colours (ARGB), since Swift
+  /// only mirrors the two classic schemes; `accent` is the chrome's emphasis.
+  Map<String, dynamic> _themeMap() {
+    final s = AppColorScheme.current;
+    return {
+      'colorMode': s.isDark ? 'dark' : 'light',
+      'glassEnabled': ThemeService.instance.glassEnabled.value,
+      'roundedBars': ThemeService.instance.roundedBars.value,
+      'style': s.style.name,
+      if (s.isMinimal)
+        'colors': <String, int>{
+          'background': s.background.toARGB32(),
+          'surface': s.surface.toARGB32(),
+          'navBarIcon': s.navBarIcon.toARGB32(),
+          'textPrimary': s.textPrimary.toARGB32(),
+          'textTertiary': s.textTertiary.toARGB32(),
+          'border': s.hairline.toARGB32(),
+          'accent': s.emphasis.toARGB32(),
+        },
+    };
+  }
 
   void _onThemeChanged() {
     _channel?.invokeMethod('setTheme', _themeMap());

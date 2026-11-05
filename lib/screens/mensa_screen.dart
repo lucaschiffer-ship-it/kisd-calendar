@@ -12,7 +12,6 @@ import '../services/mensa_service.dart';
 import '../services/page_actions.dart';
 import '../services/theme_service.dart';
 import '../services/translation_service.dart';
-import '../theme/app_theme.dart' show AppColors;
 import '../theme/tokens.dart';
 import '../widgets/glass_pill.dart';
 import '../widgets/header_date_row.dart';
@@ -406,7 +405,7 @@ class _WeekStripState extends State<_WeekStrip>
                       child: Container(
                         decoration: BoxDecoration(
                           color: todayIndex == focusIndex
-                              ? AppColors.accent
+                              ? AppColorScheme.current.accent
                               : (colorKey == 'dark' ? Colors.white : Colors.black),
                           shape: BoxShape.circle,
                         ),
@@ -433,7 +432,7 @@ class _WeekStripState extends State<_WeekStrip>
                                             ? Colors.black      // white circle (dark) → black
                                             : Colors.white))    // black circle (light) → white
                                     : (isToday
-                                        ? AppColors.accent
+                                        ? AppColorScheme.current.accent
                                         : (isWeekend
                                             ? tokens.AppThemeTokens.secondaryTextColor
                                             : tokens.AppThemeTokens.titleColor)),
@@ -637,7 +636,7 @@ class _MensaDayPageState extends State<_MensaDayPage> {
     if (_loading || _error != null || _meals.isEmpty) {
       final Widget state;
       if (_loading) {
-        state = Center(child: CircularProgressIndicator(color: s.accent));
+        state = Center(child: CircularProgressIndicator(color: s.emphasis));
       } else if (_error != null) {
         state = _ErrorState(error: _error!, onRetry: _fetchMeals);
       } else {
@@ -656,7 +655,7 @@ class _MensaDayPageState extends State<_MensaDayPage> {
         : _meals;
     final grouped = _groupByCategory(displayMeals);
     return RefreshIndicator(
-      color: s.accent,
+      color: s.emphasis,
       onRefresh: () {
         mensaService.clearCacheForDate(widget.date);
         return _fetchMeals();
@@ -696,7 +695,9 @@ class _CategoryHeader extends StatelessWidget {
       child: Text(
         label.toUpperCase(),
         style: AppTextStyles.sectionLabel(
-            color: tokens.AppThemeTokens.eventAccent),
+            color: AppColorScheme.current.isMinimal
+                ? tokens.AppThemeTokens.secondaryTextColor
+                : tokens.AppThemeTokens.eventAccent),
       ),
     );
   }
@@ -781,7 +782,7 @@ class _MealRow extends StatelessWidget {
                 style: AppFonts.grotesk(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
-                  color: tokens.AppThemeTokens.eventAccent,
+                  color: tokens.AppThemeTokens.emphasis,
                 ),
               ),
             ],
@@ -887,8 +888,8 @@ class _ErrorState extends StatelessWidget {
             FilledButton.icon(
               onPressed: onRetry,
               style: FilledButton.styleFrom(
-                backgroundColor: s.accent,
-                foregroundColor: Colors.white, // on accent — intentionally white
+                backgroundColor: s.emphasis,
+                foregroundColor: s.onEmphasis, // white on the classic orange
                 shape: const StadiumBorder(),
               ),
               icon: const Icon(Icons.refresh),

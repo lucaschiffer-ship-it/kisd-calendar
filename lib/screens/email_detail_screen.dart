@@ -171,8 +171,11 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
 
   bool get _dark => ThemeService.instance.currentColor.value != 'light';
 
+  // Light classic reads on white; the minimal styles on their palette.
   Color get _readingBackground =>
-      _dark ? AppColorScheme.current.background : Colors.white;
+      _dark || AppColorScheme.current.isMinimal
+          ? AppColorScheme.current.background
+          : Colors.white;
 
   MailHtmlColors _htmlColors() {
     final s = AppColorScheme.current;
@@ -183,9 +186,19 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
       text: _css(s.textPrimary),
       secondary: _css(s.textSecondary),
       tertiary: _css(s.textTertiary),
-      divider: dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)',
-      accent: _css(s.accent),
-      surface: dark ? _css(s.surface) : '#F2F2F2',
+      divider: s.isMinimal
+          ? _css(s.hairline)
+          : dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)',
+      // Links: orange in classic, the text colour in the minimal styles.
+      accent: _css(s.emphasis),
+      surface: s.isMinimal
+          ? _css(s.surfaceElevated)
+          : dark ? _css(s.surface) : '#F2F2F2',
+      fonts: switch (s.style) {
+        AppStyle.classic => MailHtmlFonts.classic,
+        AppStyle.minimal => MailHtmlFonts.minimal,
+        AppStyle.mono => MailHtmlFonts.mono,
+      },
     );
   }
 
@@ -612,7 +625,7 @@ class _EmailDetailScreenState extends State<EmailDetailScreen> {
                     _load();
                   },
                   child: Text('Try again',
-                      style: AppTextStyles.bodyBold(color: s.accent)),
+                      style: AppTextStyles.bodyBold(color: s.emphasis)),
                 ),
               ),
             ),
@@ -790,8 +803,11 @@ class _Placeholder extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              MailAvatar(name: name, dark: dark),
-              const SizedBox(width: 12),
+              // Mirrors the HTML header, which drops it in the minimal styles.
+              if (!s.isMinimal) ...[
+                MailAvatar(name: name, dark: dark),
+                const SizedBox(width: 12),
+              ],
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,

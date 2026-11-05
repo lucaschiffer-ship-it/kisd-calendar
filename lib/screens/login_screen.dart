@@ -133,7 +133,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           height: 20,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: AppColorScheme.current.onAccent,
+                            color: AppColorScheme.current.onEmphasis,
                           ),
                         )
                       : const Text(

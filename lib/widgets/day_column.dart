@@ -453,15 +453,15 @@ class _DayColumnState extends State<DayColumn> {
           Container(
             width: 8,
             height: 8,
-            decoration: const BoxDecoration(
-              color: Color(0xFFFF453A),
+            decoration: BoxDecoration(
+              color: _nowLineColor,
               shape: BoxShape.circle,
             ),
           ),
           Expanded(
             child: Container(
               height: 1.5,
-              color: const Color(0xFFFF453A),
+              color: _nowLineColor,
             ),
           ),
         ],
@@ -510,6 +510,37 @@ class _HourGridPainter extends CustomPainter {
 /// them rather than popping them in on one frame. Fully shown from those
 /// heights on, as before; a card resting inside the band shows the line faint.
 const double _kLineFade = 10.0;
+
+/// The current-time line: iOS red in classic; in the minimal styles one of
+/// the few orange things (a today marker).
+Color get _nowLineColor => AppColorScheme.current.isMinimal
+    ? AppColorScheme.current.accent
+    : const Color(0xFFFF453A);
+
+/// An event block's surface. Classic: tinted with the calendar's colour. The
+/// minimal styles: unfilled — the page colour, so hour lines don't run through
+/// it — with a hairline outline; only the left bar keeps the calendar colour.
+BoxDecoration _blockDecoration(Color color, BorderRadius radius) {
+  final s = AppColorScheme.current;
+  if (s.isMinimal) {
+    return BoxDecoration(
+      color: s.background,
+      borderRadius: radius,
+      border: Border.all(
+        color: s.textPrimary.withValues(alpha: 0.25),
+        width: 0.5,
+      ),
+    );
+  }
+  return BoxDecoration(
+    color: color.withValues(alpha: 0.12),
+    borderRadius: radius,
+    border: Border.all(color: color.withValues(alpha: 0.35), width: 0.5),
+  );
+}
+
+/// The calendar-colour bar on an event block's leading edge.
+double get _blockBarWidth => AppColorScheme.current.isMinimal ? 2 : 3;
 
 Widget _cardText({
   required String title,
@@ -595,20 +626,13 @@ class _StoreEventCard extends StatelessWidget {
     final color = occ.collection.color;
 
     final card = Container(
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: radius,
-        border: Border.all(
-          color: color.withValues(alpha: 0.35),
-          width: 0.5,
-        ),
-      ),
+      decoration: _blockDecoration(color, radius),
       clipBehavior: Clip.hardEdge,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Container(
-            width: 3,
+            width: _blockBarWidth,
             decoration: BoxDecoration(
               color: color,
               borderRadius: BorderRadius.only(
@@ -684,20 +708,13 @@ class _EventCard extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        decoration: BoxDecoration(
-          color: eventColor.withValues(alpha: 0.12),
-          borderRadius: radius,
-          border: Border.all(
-            color: eventColor.withValues(alpha: 0.35),
-            width: 0.5,
-          ),
-        ),
+        decoration: _blockDecoration(eventColor, radius),
         clipBehavior: Clip.hardEdge,
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Container(
-              width: 3,
+              width: _blockBarWidth,
               decoration: BoxDecoration(
                 color: eventColor,
                 borderRadius: BorderRadius.only(

@@ -44,9 +44,11 @@ class GlassPill extends StatelessWidget {
     final s = AppColorScheme.current;
     final glass = ThemeService.instance.glassEnabled.value;
     final br = BorderRadius.circular(radius ?? defaultRadius());
-    final borderColor = ThemeService.instance.currentColor.value == 'dark'
-        ? AppGlass.dividerColor
-        : s.cardBorder;
+    final borderColor = s.isMinimal
+        ? s.hairline
+        : ThemeService.instance.currentColor.value == 'dark'
+            ? AppGlass.dividerColor
+            : s.cardBorder;
 
     final surface = Container(
       decoration: BoxDecoration(
@@ -59,6 +61,9 @@ class GlassPill extends StatelessWidget {
       ),
       child: child,
     );
+
+    // Minimal, solid: flat — page-coloured fill and the hairline, no shadow.
+    if (!glass && s.isMinimal) return surface;
 
     if (!glass) {
       // Lifts the pill off the page in light mode; in dark the hairline border

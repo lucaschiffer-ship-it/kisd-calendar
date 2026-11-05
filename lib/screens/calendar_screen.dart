@@ -1254,11 +1254,14 @@ class _CalendarScreenState extends State<CalendarScreen>
     final v = _monthCurved.value;
     // Same base tint as the day view so the glass header blends identically.
     // Dark uses full black to match the app-wide background.
-    final Color baseColor = switch (colorKey) {
-      'dark'   => const Color(0xFF000000),
-      'pastel' => tokens.AppThemeTokens.backgroundColor,
-      _        => const Color(0xFFF7F4F1),
-    };
+    // The minimal styles use their palette's page colour.
+    final Color baseColor = AppColorScheme.current.isMinimal
+        ? AppColorScheme.current.background
+        : switch (colorKey) {
+            'dark'   => const Color(0xFF000000),
+            'pastel' => tokens.AppThemeTokens.backgroundColor,
+            _        => const Color(0xFFF7F4F1),
+          };
 
     return Positioned.fill(
       child: IgnorePointer(
@@ -1422,7 +1425,9 @@ class _CalendarScreenState extends State<CalendarScreen>
         final cellW    = stripW / 7.0;
         final glass    = ThemeService.instance.glassEnabled.value;
         final colorKey = ThemeService.instance.currentColor.value;
-        final pillColor = glass
+        final pillColor = AppColorScheme.current.isMinimal
+            ? AppColorScheme.current.textPrimary.withValues(alpha: 0.10)
+            : glass
             ? switch (colorKey) {
                 'dark'   => Colors.white.withValues(alpha: 0.18),
                 'pastel' => Colors.black.withValues(alpha: 0.10),
@@ -1471,7 +1476,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                       child: Container(
                         decoration: BoxDecoration(
                           color: todayIndex == focusIndex
-                              ? AppColors.accent
+                              ? AppColorScheme.current.accent
                               : (colorKey == 'dark' ? Colors.white : Colors.black),
                           shape: BoxShape.circle,
                         ),
@@ -1499,7 +1504,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                                             ? Colors.black      // white circle (dark) → black
                                             : Colors.white))    // black circle (light) → white
                                     : (isToday
-                                        ? AppColors.accent
+                                        ? AppColorScheme.current.accent
                                         : (isWeekend
                                             ? tokens.AppThemeTokens.secondaryTextColor
                                             : tokens.AppThemeTokens.titleColor)),
@@ -1662,7 +1667,7 @@ class _CalendarScreenState extends State<CalendarScreen>
                             fontSize: 11,
                             fontWeight: days[i] == _today ? FontWeight.w600 : FontWeight.w400,
                             color: days[i] == _today
-                                ? AppColors.accent
+                                ? AppColorScheme.current.accent
                                 : tokens.AppThemeTokens.secondaryTextColor,
                           ),
                         ),
@@ -1733,11 +1738,14 @@ class _CalendarScreenState extends State<CalendarScreen>
 
     // Unified base tint — the transparent DayColumn grid shows this.
     // Dark uses full black to match the app-wide background.
-    final Color baseColor = switch (colorKey) {
-      'dark'   => const Color(0xFF000000),
-      'pastel' => tokens.AppThemeTokens.backgroundColor,
-      _        => const Color(0xFFF7F4F1),
-    };
+    // The minimal styles use their palette's page colour.
+    final Color baseColor = AppColorScheme.current.isMinimal
+        ? AppColorScheme.current.background
+        : switch (colorKey) {
+            'dark'   => const Color(0xFF000000),
+            'pastel' => tokens.AppThemeTokens.backgroundColor,
+            _        => const Color(0xFFF7F4F1),
+          };
 
     // The column label bar and all-day rows used to be pinned here with their
     // own glass. They now live in the MorphingGlassHeader (see _buildBandBlock)
@@ -2041,6 +2049,45 @@ class _IconChip extends StatelessWidget {
 /// moved up to _CalendarScreenState when this became part of the pinned header:
 /// _headerHeight has to know how tall the band is in the same frame it sizes
 /// the glass surface, which a child that measures itself can't provide.
+/// An all-day capsule in the minimal styles: outlined, monochrome title after
+/// a dot in the calendar's colour.
+Widget _minimalAllDayCapsule(AllDayEvent evt) {
+  final s = AppColorScheme.current;
+  return Container(
+    decoration: BoxDecoration(
+      color: s.background,
+      borderRadius:
+          BorderRadius.circular(tokens.AppThemeTokens.cardBorderRadius),
+      border: Border.all(
+          color: s.textPrimary.withValues(alpha: 0.25), width: 0.5),
+    ),
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    child: Row(
+      children: [
+        Container(
+          width: 5,
+          height: 5,
+          decoration:
+              BoxDecoration(color: evt.calendarColor, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 5),
+        Expanded(
+          child: Text(
+            evt.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppFonts.inter(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: s.textPrimary,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
 class _AllDayBand extends StatelessWidget {
   const _AllDayBand({
     required this.focusedDay,
@@ -2114,7 +2161,9 @@ class _AllDayBand extends StatelessWidget {
                     width:  capWidth,
                     top:    capTop,
                     height: _rowH,
-                    child: Container(
+                    child: AppColorScheme.current.isMinimal
+                        ? _minimalAllDayCapsule(evt)
+                        : Container(
                       decoration: BoxDecoration(
                         color: evt.calendarColor.withValues(alpha: 0.25),
                         borderRadius: BorderRadius.circular(
@@ -2295,7 +2344,7 @@ class _EventListViewState extends State<_EventListView> {
     if (_loading) {
       return Column(children: [
         SizedBox(height: widget.topInset),
-        const Expanded(child: Center(child: CircularProgressIndicator(color: AppColors.accent))),
+        Expanded(child: Center(child: CircularProgressIndicator(color: AppColorScheme.current.emphasis))),
       ]);
     }
     if (_items.isEmpty) {
@@ -2332,7 +2381,7 @@ class _EventListViewState extends State<_EventListView> {
     final isToday = date == widget.today;
     final isPast = date.isBefore(widget.today);
     final color = isToday
-        ? AppColors.accent
+        ? AppColorScheme.current.accent
         : isPast
             ? tokens.AppThemeTokens.secondaryTextColor
             : tokens.AppThemeTokens.titleColor;
@@ -2355,8 +2404,8 @@ class _EventListViewState extends State<_EventListView> {
       color: Colors.transparent,
       child: InkWell(
         onTap: () => widget.onEventTap(event, date),
-        highlightColor: AppColors.accent.withValues(alpha: 0.06),
-        splashColor: AppColors.accent.withValues(alpha: 0.04),
+        highlightColor: AppColorScheme.current.emphasis.withValues(alpha: 0.06),
+        splashColor: AppColorScheme.current.emphasis.withValues(alpha: 0.04),
         child: DecoratedBox(
           decoration: BoxDecoration(
             border: Border(

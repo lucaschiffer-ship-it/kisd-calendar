@@ -662,7 +662,7 @@ class _ComposeScreenState extends State<ComposeScreen> {
                         : TextCapitalization.none,
                     textInputAction: TextInputAction.next,
                     style: value,
-                    cursorColor: s.accent,
+                    cursorColor: s.emphasis,
                     decoration: InputDecoration(
                       isCollapsed: true,
                       border: InputBorder.none,
@@ -802,7 +802,7 @@ class _ComposeScreenState extends State<ComposeScreen> {
                                 maxLines: null,
                                 keyboardType: TextInputType.multiline,
                                 textCapitalization: TextCapitalization.sentences,
-                                cursorColor: s.accent,
+                                cursorColor: s.emphasis,
                                 style: value.copyWith(height: 1.45),
                                 decoration: const InputDecoration(
                                   isCollapsed: true,
@@ -1080,10 +1080,17 @@ class _AttachmentTile extends StatelessWidget {
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
-        decoration: BoxDecoration(
-          color: dark ? s.surface : const Color(0xFFF2F2F2),
-          borderRadius: BorderRadius.circular(12),
-        ),
+        // Minimal: an outlined tile on the page colour instead of a grey fill.
+        decoration: s.isMinimal
+            ? BoxDecoration(
+                color: s.background,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: s.hairline, width: 0.5),
+              )
+            : BoxDecoration(
+                color: dark ? s.surface : const Color(0xFFF2F2F2),
+                borderRadius: BorderRadius.circular(12),
+              ),
         child: Row(
           children: [
             SizedBox.square(
@@ -1163,7 +1170,7 @@ class _AttachmentThumb extends StatelessWidget {
     final picture = a.thumbPath ?? (a.isImage ? a.path : null);
     final badge = DecoratedBox(
       decoration: BoxDecoration(
-        color: s.accent.withValues(alpha: 0.13),
+        color: s.emphasis.withValues(alpha: 0.13),
         borderRadius: BorderRadius.circular(9),
       ),
       child: Center(
@@ -1173,7 +1180,7 @@ class _AttachmentThumb extends StatelessWidget {
             fontSize: 11,
             fontWeight: FontWeight.w600,
             letterSpacing: 0.3,
-            color: s.accent,
+            color: s.emphasis,
           ),
         ),
       ),
@@ -1260,7 +1267,7 @@ class _SendButton extends StatelessWidget {
     final arrow = Icon(
       CupertinoIcons.arrow_up,
       size: 21,
-      color: enabled ? s.onAccent : s.textTertiary,
+      color: enabled ? s.onEmphasis : s.textTertiary,
     );
     return Semantics(
       button: true,
@@ -1275,7 +1282,7 @@ class _SendButton extends StatelessWidget {
               ? DecoratedBox(
                   key: const ValueKey('on'),
                   decoration:
-                      BoxDecoration(color: s.accent, shape: BoxShape.circle),
+                      BoxDecoration(color: s.emphasis, shape: BoxShape.circle),
                   child: SizedBox.square(
                       dimension: 44, child: Center(child: arrow)),
                 )

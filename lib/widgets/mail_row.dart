@@ -14,6 +14,7 @@ import '../theme/app_fonts.dart';
 class MailListStyles {
   MailListStyles._(AppColorScheme s)
     : dark = s.isDark,
+      minimal = s.isMinimal,
       background = s.background,
       dot = s.accent,
       separator = s.textPrimary.withValues(alpha: 0.12),
@@ -50,6 +51,8 @@ class MailListStyles {
       _cache[s] ??= MailListStyles._(s);
 
   final bool dark;
+  // The minimal styles drop the avatars; the hairline runs full width.
+  final bool minimal;
   final Color background;
   final Color dot;
   final Color separator;
@@ -199,8 +202,10 @@ class _MailRowState extends State<MailRow> {
                           )
                         : null,
                   ),
-                  MailAvatar(name: d.title, dark: st.dark),
-                  const SizedBox(width: MailRowMetrics.avatarGap),
+                  if (!st.minimal) ...[
+                    MailAvatar(name: d.title, dark: st.dark),
+                    const SizedBox(width: MailRowMetrics.avatarGap),
+                  ],
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -231,9 +236,10 @@ class _MailRowState extends State<MailRow> {
                 ],
               ),
             ),
-            // Hairline from the text column to the right inset, as Apple's.
+            // Hairline from the text column to the right inset, as Apple's;
+            // full width in the minimal styles.
             Positioned(
-              left: MailRowMetrics.textStart,
+              left: st.minimal ? 0 : MailRowMetrics.textStart,
               right: 0,
               bottom: 0,
               child: SizedBox(

@@ -349,7 +349,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           backgroundColor: s.surfaceElevated,
           action: SnackBarAction(
             label: 'Retry',
-            textColor: s.accent,
+            textColor: s.emphasis,
             onPressed: _onBrowserAuthExpired,
           ),
         ),
@@ -741,7 +741,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               height: 28,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2.5,
-                                color: s.accent,
+                                color: s.emphasis,
                               ),
                             ),
                             const SizedBox(height: 16),
@@ -835,7 +835,9 @@ class _MiniBrowserBar extends StatelessWidget {
           final glass = ThemeService.instance.glassEnabled.value;
           final rounded = ThemeService.instance.roundedBars.value;
           final s = AppColorScheme.current;
-          final fg = s.onAccent; // text on the orange bar is always on-accent
+          // Text on the bar: white on the classic orange, inverted on the
+          // minimal styles' solid text-coloured pill.
+          final fg = s.onEmphasis;
           final hasTab = lastTabTitle != null;
           final radius = rounded ? AppRadius.pill : AppRadius.chip;
           // Rounded caps eat into the ends; give the content more room.
@@ -993,9 +995,11 @@ class _MiniBrowserBar extends StatelessWidget {
             ],
           );
 
+          // Minimal: a solid inverted pill in both materials, flat; the
+          // orange Spaces favicon is its one accent.
           return SizedBox(
               height: 50,
-              child: glass
+              child: glass && !s.isMinimal
                   ? tokens.AppThemeTokens.glassContainer(
                       borderRadius: BorderRadius.circular(radius),
                       tintColor: s.accent,
@@ -1004,17 +1008,19 @@ class _MiniBrowserBar extends StatelessWidget {
                     )
                   : Container(
                       decoration: BoxDecoration(
-                        color: s.accent,
+                        color: s.emphasis,
                         borderRadius: BorderRadius.circular(radius),
                         border: Border.all(
                             color: fg.withValues(alpha: 0.15), width: 0.5),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.3),
-                            blurRadius: 8,
-                            offset: const Offset(0, -2),
-                          ),
-                        ],
+                        boxShadow: s.isMinimal
+                            ? null
+                            : [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.3),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, -2),
+                                ),
+                              ],
                       ),
                       child: morphContent,
                     ),
@@ -1274,8 +1280,10 @@ class _BottomBarState extends State<_BottomBar>
               child: Container(
                 width: 6,
                 height: 6,
-                decoration:
-                    BoxDecoration(color: s.danger, shape: BoxShape.circle),
+                // Minimal: unread badges are one of the few orange things.
+                decoration: BoxDecoration(
+                    color: s.isMinimal ? s.accent : s.danger,
+                    shape: BoxShape.circle),
               ),
             ),
           ],

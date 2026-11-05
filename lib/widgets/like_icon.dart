@@ -18,7 +18,7 @@ class LikeIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = this.color ??
         (liked
-            ? AppColors.heartActive
+            ? AppColorScheme.current.heartActive
             : tokens.AppThemeTokens.secondaryTextColor);
     return SvgPicture.asset(
       'assets/icons/like.svg',

@@ -925,24 +925,24 @@ class _ListScreenState extends State<ListScreen>
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(
+                Icon(
                   CupertinoIcons.calendar,
                   size: 13,
-                  color: AppColors.accent,
+                  color: AppColorScheme.current.emphasis,
                 ),
                 const SizedBox(width: 5),
                 Text(
                   'Viewing ${semesterLabel(Semester.activeId)}',
                   style: AppTextStyle.label.copyWith(
                     fontSize: 13,
-                    color: AppColors.accent,
+                    color: AppColorScheme.current.emphasis,
                   ),
                 ),
                 const SizedBox(width: 2),
                 Icon(
                   CupertinoIcons.chevron_right,
                   size: 11,
-                  color: AppColors.accent.withValues(alpha: 0.7),
+                  color: AppColorScheme.current.emphasis.withValues(alpha: 0.7),
                 ),
               ],
             ),
@@ -1042,7 +1042,8 @@ class _ListScreenState extends State<ListScreen>
   }
 
   Widget _buildSearchBar(Color titleColor, Color secondaryColor) {
-    final radius = tokens.AppThemeTokens.cardBorderRadius;
+    final radius = tokens.AppThemeTokens.searchRadius(
+        tokens.AppThemeTokens.cardBorderRadius);
     return SizedBox(
       height: _kSearchH,
       child: TextField(
@@ -1055,7 +1056,7 @@ class _ListScreenState extends State<ListScreen>
             color: secondaryColor.withValues(alpha: 0.45),
             fontSize: 14,
           ),
-          filled: true,
+          filled: tokens.AppThemeTokens.searchFilled,
           fillColor: secondaryColor.withValues(alpha: 0.05),
           prefixIcon: Icon(
             Icons.search,
@@ -1075,16 +1076,16 @@ class _ListScreenState extends State<ListScreen>
           isDense: true,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(radius),
-            borderSide: BorderSide.none,
+            borderSide: tokens.AppThemeTokens.searchRestBorder,
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(radius),
-            borderSide: BorderSide.none,
+            borderSide: tokens.AppThemeTokens.searchRestBorder,
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(radius),
             borderSide: BorderSide(
-              color: tokens.AppThemeTokens.accentColor,
+              color: tokens.AppThemeTokens.emphasis,
               width: 1,
             ),
           ),
@@ -1140,7 +1141,7 @@ class _ListScreenState extends State<ListScreen>
                 height: 2,
                 decoration: BoxDecoration(
                   color: isSelected
-                      ? tokens.AppThemeTokens.accentColor
+                      ? tokens.AppThemeTokens.emphasis
                       : Colors.transparent,
                   borderRadius: BorderRadius.circular(1),
                 ),
@@ -1271,7 +1272,7 @@ class _ListScreenState extends State<ListScreen>
           if (!isCustomPage && _loading && _shells.isEmpty)
             SliverFillRemaining(
               child: Center(
-                child: CircularProgressIndicator(color: AppColors.accent),
+                child: CircularProgressIndicator(color: AppColorScheme.current.emphasis),
               ),
             )
           else if (!isCustomPage && _error != null && _shells.isEmpty)

@@ -371,8 +371,38 @@ class _MonthGridState extends State<MonthGrid> {
     return events.length;
   }
 
-  /// All-day event: a one-line pill, clipped like Apple's.
-  Widget _allDayChip(DeviceCalendarEvent e) => Container(
+  /// All-day event: a one-line pill, clipped like Apple's. Minimal: no
+  /// pill — the title after a dot in the calendar's colour.
+  Widget _allDayChip(DeviceCalendarEvent e) {
+    final s = AppColorScheme.current;
+    if (s.isMinimal) {
+      return Container(
+        height: _kAllDayChipH,
+        margin: const EdgeInsets.only(left: 2, right: 2, bottom: _kChipGap),
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        alignment: Alignment.centerLeft,
+        child: Row(
+          children: [
+            _CalendarDot(color: e.calendarColor),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                e.title,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.fade,
+                style: AppFonts.inter(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: s.textPrimary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return Container(
         height: _kAllDayChipH,
         margin: const EdgeInsets.only(left: 2, right: 2, bottom: _kChipGap),
         padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -393,17 +423,28 @@ class _MonthGridState extends State<MonthGrid> {
           ),
         ),
       );
+  }
 
   /// Timed event: up to two lines of title, then the start time. Same height
-  /// for a one-line title, so the rows' capacity stays a constant.
-  Widget _timedChip(DeviceCalendarEvent e) => Container(
+  /// for a one-line title, so the rows' capacity stays a constant. Minimal:
+  /// unfilled, monochrome text, a 2 pt bar in the calendar's colour.
+  Widget _timedChip(DeviceCalendarEvent e) {
+    final s = AppColorScheme.current;
+    final minimal = s.isMinimal;
+    return Container(
         height: _kTimedChipH,
         margin: const EdgeInsets.only(left: 2, right: 2, bottom: _kChipGap),
         padding: const EdgeInsets.fromLTRB(4, 3, 3, 3),
-        decoration: BoxDecoration(
-          color: e.calendarColor.withValues(alpha: 0.22),
-          borderRadius: BorderRadius.circular(5),
-        ),
+        decoration: minimal
+            ? BoxDecoration(
+                border: Border(
+                  left: BorderSide(color: e.calendarColor, width: 2),
+                ),
+              )
+            : BoxDecoration(
+                color: e.calendarColor.withValues(alpha: 0.22),
+                borderRadius: BorderRadius.circular(5),
+              ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -414,8 +455,8 @@ class _MonthGridState extends State<MonthGrid> {
                 overflow: TextOverflow.ellipsis,
                 style: AppFonts.inter(
                   fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: e.calendarColor,
+                  fontWeight: minimal ? FontWeight.w500 : FontWeight.w600,
+                  color: minimal ? s.textPrimary : e.calendarColor,
                   height: 1.15,
                 ),
               ),
@@ -426,16 +467,33 @@ class _MonthGridState extends State<MonthGrid> {
               style: AppFonts.inter(
                 fontSize: 10,
                 fontWeight: FontWeight.w500,
-                color: e.calendarColor.withValues(alpha: 0.75),
+                color: minimal
+                    ? s.textSecondary
+                    : e.calendarColor.withValues(alpha: 0.75),
                 height: 1.15,
               ),
             ),
           ],
         ),
       );
+  }
 
   static String _fmtTime(TimeOfDay t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+}
+
+/// The calendar's colour on a minimal-style chip — the one hue it keeps.
+class _CalendarDot extends StatelessWidget {
+  const _CalendarDot({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 5,
+        height: 5,
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      );
 }
 
 // ─── Flying week row — the morphing numbers row of the week↔month transition ──
@@ -482,7 +540,9 @@ class FlyingWeekRow extends StatelessWidget {
     final title = AppThemeTokens.titleColor;
     final tFast = (v / 0.4).clamp(0.0, 1.0);
 
-    final pillColor = glass
+    final pillColor = AppColorScheme.current.isMinimal
+        ? AppColorScheme.current.textPrimary.withValues(alpha: 0.10)
+        : glass
         ? switch (colorKey) {
             'dark' => Colors.white.withValues(alpha: 0.18),
             'pastel' => Colors.black.withValues(alpha: 0.10),

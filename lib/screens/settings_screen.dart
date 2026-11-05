@@ -410,7 +410,7 @@ class _CalendarPage extends StatelessWidget {
                             .ignore();
                       }
                     },
-                    activeThumbColor: s.accent,
+                    activeThumbColor: s.emphasis,
                   ),
                   // Kept, but out of reach, while KISD events are off.
                   IgnorePointer(
@@ -578,7 +578,7 @@ class _RecurringEventsPageState extends State<_RecurringEventsPage> {
                     ),
                     value: !_hidden.contains(e.id),
                     onChanged: (v) => _set(e, v),
-                    activeThumbColor: s.accent,
+                    activeThumbColor: s.emphasis,
                   ),
               ],
             ),
@@ -644,7 +644,7 @@ class _NotificationsPageState extends State<_NotificationsPage> {
                     await CourseReminderScheduler.setEnabled(v);
                     await _checkSystem();
                   },
-                  activeThumbColor: s.accent,
+                  activeThumbColor: s.emphasis,
                 ),
               ],
             ),
@@ -682,7 +682,7 @@ class _NotificationsPageState extends State<_NotificationsPage> {
                     await MailNotifier.setEnabled(v);
                     await _checkSystem();
                   },
-                  activeThumbColor: s.accent,
+                  activeThumbColor: s.emphasis,
                 ),
                 if (on)
                   _NavRow(
@@ -1021,6 +1021,24 @@ class _Group extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = AppColorScheme.current;
+    if (s.isMinimal) {
+      // Minimal: no card — rows on the page between full-width hairlines.
+      final rule = Divider(height: 1, thickness: 0.5, color: s.hairline);
+      final rows = Material(
+        color: color ?? Colors.transparent,
+        child: Column(
+          children: [
+            rule,
+            for (var i = 0; i < children.length; i++) ...[
+              if (i > 0) rule,
+              children[i],
+            ],
+            rule,
+          ],
+        ),
+      );
+      return inset ? _Padded(rows) : rows;
+    }
     final card = ClipRRect(
       borderRadius: BorderRadius.circular(AppRadius.input),
       child: Material(
@@ -1336,7 +1354,7 @@ class _MiniToggle extends StatelessWidget {
           alignment: Alignment.centerRight,
           child: CupertinoSwitch(
             value: value,
-            activeTrackColor: s.accent,
+            activeTrackColor: s.emphasis,
             onChanged: onChanged,
           ),
         ),

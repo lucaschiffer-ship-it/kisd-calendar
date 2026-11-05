@@ -43,13 +43,75 @@ int? attachmentIndexOf(Uri url) {
   return entry == null || index == null ? null : (entry: entry, index: index);
 }
 
-/// The bundled fonts the document asks for, by file name under `google_fonts/`.
+/// The bundled fonts a document may ask for, by file name under
+/// `google_fonts/` — every face any [MailHtmlFonts] declares.
 const kMailFontFiles = [
   'SpaceGrotesk-SemiBold.ttf',
   'SpaceGrotesk-Bold.ttf',
+  'Inter-Light.ttf',
   'Inter-Regular.ttf',
   'Inter-SemiBold.ttf',
+  'IBMPlexMono-Light.ttf',
+  'IBMPlexMono-Regular.ttf',
+  'IBMPlexMono-SemiBold.ttf',
 ];
+
+/// The document's type, per app style: the two font stacks (the app's
+/// grotesk and text roles), the subject's weight, the faces to embed, and
+/// whether senders get avatars (the minimal styles drop them, as the list
+/// does).
+class MailHtmlFonts {
+  const MailHtmlFonts({
+    required this.grotesk,
+    required this.inter,
+    required this.titleWeight,
+    required this.faces,
+    required this.avatars,
+  });
+
+  final String grotesk;
+  final String inter;
+  final int titleWeight;
+  final List<(String family, String file, int weight)> faces;
+  final bool avatars;
+
+  static const classic = MailHtmlFonts(
+    grotesk: "'KISD Grotesk',-apple-system,system-ui,sans-serif",
+    inter: "'KISD Inter',-apple-system,system-ui,sans-serif",
+    titleWeight: 700,
+    faces: [
+      ('KISD Grotesk', 'SpaceGrotesk-SemiBold.ttf', 600),
+      ('KISD Grotesk', 'SpaceGrotesk-Bold.ttf', 700),
+      ('KISD Inter', 'Inter-Regular.ttf', 400),
+      ('KISD Inter', 'Inter-SemiBold.ttf', 600),
+    ],
+    avatars: true,
+  );
+
+  static const minimal = MailHtmlFonts(
+    grotesk: "'KISD Inter',-apple-system,system-ui,sans-serif",
+    inter: "'KISD Inter',-apple-system,system-ui,sans-serif",
+    titleWeight: 300,
+    faces: [
+      ('KISD Inter', 'Inter-Light.ttf', 300),
+      ('KISD Inter', 'Inter-Regular.ttf', 400),
+      ('KISD Inter', 'Inter-SemiBold.ttf', 600),
+    ],
+    avatars: false,
+  );
+
+  static const mono = MailHtmlFonts(
+    grotesk: "'KISD Mono',ui-monospace,Menlo,monospace",
+    inter: "'KISD Mono',ui-monospace,Menlo,monospace",
+    titleWeight: 300,
+    faces: [
+      ('KISD Mono', 'IBMPlexMono-Light.ttf', 300),
+      ('KISD Mono', 'IBMPlexMono-Regular.ttf', 400),
+      ('KISD Mono', 'IBMPlexMono-SemiBold.ttf', 600),
+    ],
+    avatars: false,
+  );
+}
 
 /// How a mail's own styling is treated — the "smart, like Apple" policy.
 enum MailRenderMode {
@@ -76,6 +138,7 @@ class MailHtmlColors {
     required this.divider,
     required this.accent,
     required this.surface,
+    this.fonts = MailHtmlFonts.classic,
   });
 
   final bool dark;
@@ -88,6 +151,9 @@ class MailHtmlColors {
 
   /// Attachment tiles.
   final String surface;
+
+  /// Not a colour, but travels with them into every CSS builder.
+  final MailHtmlFonts fonts;
 }
 
 class MailAttachmentTile {
@@ -1002,7 +1068,7 @@ String buildMailDocument(MailDocumentSpec spec) {
   final scheme = c.dark ? 'dark' : 'light';
 
   final css = StringBuffer()
-    ..write(_fontFaces)
+    ..write(_fontFaces(spec.colors.fonts))
     ..write('''
 html,body{margin:0!important;padding:0!important;background:${c.background}!important;-webkit-text-size-adjust:100%!important;}
 body{color-scheme:${c.dark ? 'dark' : 'light'};}
@@ -1032,21 +1098,16 @@ String _zoomed(_MailBody body) => body.zoom < 1
     ? '<div id="kisd-zoom" style="zoom:${body.zoom.toStringAsFixed(3)}">${body.content}</div>'
     : body.content;
 
-String get _fontFaces {
+String _fontFaces(MailHtmlFonts f) {
   final b = StringBuffer();
-  void face(String family, String file, int weight) => b.write(
-    "@font-face{font-family:'$family';src:url('fonts/$file');"
-    'font-weight:$weight;font-style:normal;}',
-  );
-  face('KISD Grotesk', 'SpaceGrotesk-SemiBold.ttf', 600);
-  face('KISD Grotesk', 'SpaceGrotesk-Bold.ttf', 700);
-  face('KISD Inter', 'Inter-Regular.ttf', 400);
-  face('KISD Inter', 'Inter-SemiBold.ttf', 600);
+  for (final (family, file, weight) in f.faces) {
+    b.write(
+      "@font-face{font-family:'$family';src:url('fonts/$file');"
+      'font-weight:$weight;font-style:normal;}',
+    );
+  }
   return b.toString();
 }
-
-const _grotesk = "'KISD Grotesk',-apple-system,system-ui,sans-serif";
-const _inter = "'KISD Inter',-apple-system,system-ui,sans-serif";
 
 // Every header rule is `#kisd-hdr`-scoped and !important: the mail's own CSS
 // shares this document, and a newsletter's `* { font-family: … !important }`
@@ -1055,28 +1116,29 @@ const _inter = "'KISD Inter',-apple-system,system-ui,sans-serif";
 String _headerCss(MailHtmlColors c) =>
     '''
 #kisd-hdr,#kisd-hdr *,#kisd-att,#kisd-att *{all:revert!important;box-sizing:border-box!important;-webkit-tap-highlight-color:transparent!important;}
-#kisd-hdr{display:block!important;padding:0 20px!important;font-family:$_inter!important;color:${c.text}!important;}
+#kisd-hdr{display:block!important;padding:0 20px!important;font-family:${c.fonts.inter}!important;color:${c.text}!important;}
 #kisd-hdr details{display:block!important;}
 #kisd-hdr summary{display:flex!important;align-items:flex-start!important;gap:12px!important;list-style:none!important;padding:8px 0 14px!important;cursor:pointer!important;outline:none!important;}
 #kisd-hdr summary::-webkit-details-marker{display:none!important;}
-#kisd-hdr .av{flex:none!important;display:flex!important;align-items:center!important;justify-content:center!important;width:44px!important;height:44px!important;border-radius:22px!important;font:600 19px/1 $_grotesk!important;}
+#kisd-hdr .av{flex:none!important;display:flex!important;align-items:center!important;justify-content:center!important;width:44px!important;height:44px!important;border-radius:22px!important;font:600 19px/1 ${c.fonts.grotesk}!important;}
 #kisd-hdr .who{display:block!important;flex:1!important;min-width:0!important;padding-top:1px!important;}
 #kisd-hdr .r1{display:flex!important;align-items:baseline!important;gap:10px!important;}
-#kisd-hdr .name{display:block!important;flex:1!important;min-width:0!important;font:600 17px/1.3 $_grotesk!important;letter-spacing:-0.2px!important;color:${c.text}!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}
-#kisd-hdr .time{display:block!important;flex:none!important;font:400 15px/1.3 $_inter!important;color:${c.secondary}!important;}
-#kisd-hdr .r2{display:flex!important;align-items:center!important;margin-top:3px!important;font:400 15px/1.35 $_inter!important;color:${c.secondary}!important;white-space:nowrap!important;overflow:hidden!important;}
+#kisd-hdr .name{display:block!important;flex:1!important;min-width:0!important;font:600 17px/1.3 ${c.fonts.grotesk}!important;letter-spacing:-0.2px!important;color:${c.text}!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}
+#kisd-hdr .time{display:block!important;flex:none!important;font:400 15px/1.3 ${c.fonts.inter}!important;color:${c.secondary}!important;}
+#kisd-hdr .r2{display:flex!important;align-items:center!important;margin-top:3px!important;font:400 15px/1.35 ${c.fonts.inter}!important;color:${c.secondary}!important;white-space:nowrap!important;overflow:hidden!important;}
 #kisd-hdr .r2 .lbl{color:${c.text}!important;margin-right:4px!important;}
 #kisd-hdr .r2 .to{overflow:hidden!important;text-overflow:ellipsis!important;}
 #kisd-hdr .chev{flex:none!important;display:inline-block!important;margin-left:6px!important;width:7px!important;height:7px!important;border-right:1.5px solid ${c.tertiary}!important;border-bottom:1.5px solid ${c.tertiary}!important;transform:rotate(-45deg)!important;}
 #kisd-hdr details[open] .r2{display:none!important;}
-#kisd-hdr .more{display:block!important;padding:0 0 14px 56px!important;font:400 14px/1.5 $_inter!important;color:${c.secondary}!important;animation:kisdIn .22s ease-out!important;}
+#kisd-hdr .more{display:block!important;padding:0 0 14px 56px!important;font:400 14px/1.5 ${c.fonts.inter}!important;color:${c.secondary}!important;animation:kisdIn .22s ease-out!important;}
 #kisd-hdr .kv{display:flex!important;gap:8px!important;padding:1px 0!important;}
 #kisd-hdr .k{display:block!important;flex:none!important;width:42px!important;color:${c.tertiary}!important;}
 #kisd-hdr .v{display:block!important;flex:1!important;min-width:0!important;color:${c.text}!important;overflow-wrap:anywhere!important;}
 #kisd-hdr a{color:${c.accent}!important;text-decoration:none!important;}
 #kisd-hdr .rule{display:block!important;height:0!important;border-top:0.5px solid ${c.divider}!important;margin:0!important;}
-#kisd-hdr h1{display:block!important;margin:16px 0 14px!important;font:700 24px/1.22 $_grotesk!important;letter-spacing:-0.4px!important;color:${c.text}!important;overflow-wrap:anywhere!important;}
+#kisd-hdr h1{display:block!important;margin:16px 0 14px!important;font:${c.fonts.titleWeight} 24px/1.22 ${c.fonts.grotesk}!important;letter-spacing:-0.4px!important;color:${c.text}!important;overflow-wrap:anywhere!important;}
 @keyframes kisdIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:none;}}
+${c.fonts.avatars ? '' : '#kisd-hdr .av{display:none!important;}#kisd-hdr .more{padding-left:0!important;}'}
 ''';
 
 String _bodyCss(MailHtmlColors c, MailRenderMode mode, double zoom) {
@@ -1090,7 +1152,7 @@ String _bodyCss(MailHtmlColors c, MailRenderMode mode, double zoom) {
   switch (mode) {
     case MailRenderMode.themed:
       b.write('''
-#kisd-body{padding:2px 20px 0;color:${c.text};font:400 16px/1.5 $_inter;}
+#kisd-body{padding:2px 20px 0;color:${c.text};font:400 16px/1.5 ${c.fonts.inter};}
 #kisd-body a{color:${c.accent};}
 ''');
       if (c.dark) {
@@ -1106,7 +1168,7 @@ String _bodyCss(MailHtmlColors c, MailRenderMode mode, double zoom) {
       }
     case MailRenderMode.darkNative:
       b.write(
-        '#kisd-body{padding:2px 12px 0;font:400 16px/1.5 $_inter;'
+        '#kisd-body{padding:2px 12px 0;font:400 16px/1.5 ${c.fonts.inter};'
         'color:${c.text};}',
       );
     case MailRenderMode.original:
@@ -1126,10 +1188,10 @@ String _attachmentCss(MailHtmlColors c) =>
     '''
 #kisd-att{display:block!important;padding:18px 20px 0!important;}
 #kisd-att .t{display:flex!important;align-items:center!important;gap:12px!important;margin:0 0 8px!important;padding:10px 12px!important;border-radius:12px!important;background:${c.surface}!important;text-decoration:none!important;color:inherit!important;}
-#kisd-att .ic{display:flex!important;flex:none!important;align-items:center!important;justify-content:center!important;width:38px!important;height:38px!important;border-radius:9px!important;background:${c.accent}22!important;color:${c.accent}!important;font:600 11px/1 $_inter!important;letter-spacing:0.3px!important;}
+#kisd-att .ic{display:flex!important;flex:none!important;align-items:center!important;justify-content:center!important;width:38px!important;height:38px!important;border-radius:9px!important;background:${c.accent}22!important;color:${c.accent}!important;font:600 11px/1 ${c.fonts.inter}!important;letter-spacing:0.3px!important;}
 #kisd-att .tx{display:block!important;flex:1!important;min-width:0!important;}
-#kisd-att .n{display:block!important;font:600 15px/1.3 $_inter!important;color:${c.text}!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}
-#kisd-att .s{display:block!important;font:400 13px/1.3 $_inter!important;color:${c.secondary}!important;margin-top:2px!important;}
+#kisd-att .n{display:block!important;font:600 15px/1.3 ${c.fonts.inter}!important;color:${c.text}!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}
+#kisd-att .s{display:block!important;font:400 13px/1.3 ${c.fonts.inter}!important;color:${c.secondary}!important;margin-top:2px!important;}
 ''';
 
 String _headerHtml(MailDocumentSpec s) {
@@ -1225,7 +1287,7 @@ String buildThreadDocument(ThreadDocumentSpec spec) {
   final c = spec.colors;
   final scheme = c.dark ? 'dark' : 'light';
   final css = StringBuffer()
-    ..write(_fontFaces)
+    ..write(_fontFaces(spec.colors.fonts))
     ..write('''
 html,body{margin:0!important;padding:0!important;background:${c.background}!important;-webkit-text-size-adjust:100%!important;}
 body{color-scheme:$scheme;}
@@ -1336,37 +1398,38 @@ String _threadCss(MailHtmlColors c) =>
 #kisd-th .kisd-subj,#kisd-th .kisd-rule,#kisd-th .kisd-mh,#kisd-th .kisd-mh *,#kisd-th .kisd-rcp,#kisd-th .kisd-rcp *,#kisd-th .kisd-older>summary,#kisd-th .kisd-note,#kisd-th .kisd-quote>summary,#kisd-th .kisd-att,#kisd-th .kisd-att *{all:revert!important;box-sizing:border-box!important;-webkit-tap-highlight-color:transparent!important;}
 #kisd-th{display:block;}
 #kisd-th details.kisd-m,#kisd-th details.kisd-older{display:block!important;}
-#kisd-th .kisd-subj{display:block!important;margin:8px 20px 12px!important;font:700 24px/1.22 $_grotesk!important;letter-spacing:-0.4px!important;color:${c.text}!important;overflow-wrap:anywhere!important;}
+#kisd-th .kisd-subj{display:block!important;margin:8px 20px 12px!important;font:${c.fonts.titleWeight} 24px/1.22 ${c.fonts.grotesk}!important;letter-spacing:-0.4px!important;color:${c.text}!important;overflow-wrap:anywhere!important;}
 #kisd-th .kisd-rule{display:block!important;height:0!important;margin:0 20px!important;border-top:0.5px solid ${c.divider}!important;}
 #kisd-th .kisd-mh{display:flex!important;align-items:flex-start!important;gap:12px!important;list-style:none!important;padding:14px 20px!important;cursor:pointer!important;outline:none!important;}
 #kisd-th .kisd-mh::-webkit-details-marker,#kisd-th .kisd-rcp>summary::-webkit-details-marker,#kisd-th .kisd-older>summary::-webkit-details-marker,#kisd-th .kisd-quote>summary::-webkit-details-marker{display:none!important;}
-#kisd-th .kisd-av{flex:none!important;display:flex!important;align-items:center!important;justify-content:center!important;width:40px!important;height:40px!important;border-radius:20px!important;font:600 17px/1 $_grotesk!important;}
+#kisd-th .kisd-av{flex:none!important;display:flex!important;align-items:center!important;justify-content:center!important;width:40px!important;height:40px!important;border-radius:20px!important;font:600 17px/1 ${c.fonts.grotesk}!important;}
 #kisd-th .kisd-who{display:block!important;flex:1!important;min-width:0!important;padding-top:1px!important;}
 #kisd-th .kisd-r1{display:flex!important;align-items:baseline!important;gap:10px!important;}
-#kisd-th .kisd-name{display:block!important;flex:1!important;min-width:0!important;font:600 17px/1.3 $_grotesk!important;letter-spacing:-0.2px!important;color:${c.text}!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}
-#kisd-th .kisd-time{display:block!important;flex:none!important;font:400 15px/1.3 $_inter!important;color:${c.secondary}!important;}
-#kisd-th .kisd-pv{display:block!important;margin-top:3px!important;font:400 15px/1.35 $_inter!important;color:${c.secondary}!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}
+#kisd-th .kisd-name{display:block!important;flex:1!important;min-width:0!important;font:600 17px/1.3 ${c.fonts.grotesk}!important;letter-spacing:-0.2px!important;color:${c.text}!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}
+#kisd-th .kisd-time{display:block!important;flex:none!important;font:400 15px/1.3 ${c.fonts.inter}!important;color:${c.secondary}!important;}
+#kisd-th .kisd-pv{display:block!important;margin-top:3px!important;font:400 15px/1.35 ${c.fonts.inter}!important;color:${c.secondary}!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;}
 #kisd-th details.kisd-m[open]>.kisd-mh{padding-bottom:0!important;}
 #kisd-th details.kisd-m[open]>.kisd-mh .kisd-pv{display:none!important;}
-#kisd-th .kisd-rcp{display:block!important;margin:-17px 0 0!important;padding:3px 20px 14px 72px!important;font:400 15px/1.35 $_inter!important;}
+#kisd-th .kisd-rcp{display:block!important;margin:-17px 0 0!important;padding:3px 20px 14px 72px!important;font:400 15px/1.35 ${c.fonts.inter}!important;}
 #kisd-th .kisd-rcp>summary{display:flex!important;align-items:center!important;list-style:none!important;color:${c.secondary}!important;white-space:nowrap!important;overflow:hidden!important;cursor:pointer!important;outline:none!important;}
 #kisd-th .kisd-rcp[open]>summary{display:none!important;}
 #kisd-th .kisd-lbl{display:inline!important;color:${c.text}!important;margin-right:4px!important;}
 #kisd-th .kisd-to{display:inline!important;overflow:hidden!important;text-overflow:ellipsis!important;}
 #kisd-th .kisd-chev{flex:none!important;display:inline-block!important;margin-left:6px!important;width:7px!important;height:7px!important;border-right:1.5px solid ${c.tertiary}!important;border-bottom:1.5px solid ${c.tertiary}!important;transform:rotate(-45deg)!important;}
-#kisd-th .kisd-more{display:block!important;font:400 14px/1.5 $_inter!important;color:${c.secondary}!important;animation:kisdIn .22s ease-out!important;}
+#kisd-th .kisd-more{display:block!important;font:400 14px/1.5 ${c.fonts.inter}!important;color:${c.secondary}!important;animation:kisdIn .22s ease-out!important;}
 #kisd-th .kisd-kv{display:flex!important;gap:8px!important;padding:1px 0!important;}
 #kisd-th .kisd-k{display:block!important;flex:none!important;width:42px!important;color:${c.tertiary}!important;}
 #kisd-th .kisd-v{display:block!important;flex:1!important;min-width:0!important;color:${c.text}!important;overflow-wrap:anywhere!important;}
 #kisd-th .kisd-more a{color:${c.accent}!important;text-decoration:none!important;}
 #kisd-th .kisd-sc{padding-bottom:18px;}
-#kisd-th .kisd-note{display:block!important;padding:0 20px 18px!important;font:400 15px/1.45 $_inter!important;color:${c.secondary}!important;}
-#kisd-th .kisd-older>summary{display:block!important;list-style:none!important;margin:10px 20px!important;padding:9px 12px!important;border-radius:10px!important;background:${c.surface}!important;text-align:center!important;font:600 14px/1.3 $_inter!important;color:${c.secondary}!important;cursor:pointer!important;outline:none!important;}
+#kisd-th .kisd-note{display:block!important;padding:0 20px 18px!important;font:400 15px/1.45 ${c.fonts.inter}!important;color:${c.secondary}!important;}
+#kisd-th .kisd-older>summary{display:block!important;list-style:none!important;margin:10px 20px!important;padding:9px 12px!important;border-radius:10px!important;background:${c.surface}!important;text-align:center!important;font:600 14px/1.3 ${c.fonts.inter}!important;color:${c.secondary}!important;cursor:pointer!important;outline:none!important;}
 #kisd-th .kisd-older[open]>summary{display:none!important;}
 #kisd-th details.kisd-quote{display:block!important;margin:12px 0 0!important;}
-#kisd-th .kisd-quote>summary{display:inline-block!important;list-style:none!important;padding:0 10px!important;height:20px!important;border-radius:10px!important;background:${c.surface}!important;font:700 13px/20px $_inter!important;letter-spacing:1px!important;color:${c.secondary}!important;cursor:pointer!important;outline:none!important;}
+#kisd-th .kisd-quote>summary{display:inline-block!important;list-style:none!important;padding:0 10px!important;height:20px!important;border-radius:10px!important;background:${c.surface}!important;font:700 13px/20px ${c.fonts.inter}!important;letter-spacing:1px!important;color:${c.secondary}!important;cursor:pointer!important;outline:none!important;}
 #kisd-th .kisd-quote>.kisd-qb{display:block!important;margin-top:10px!important;}
 @keyframes kisdIn{from{opacity:0;transform:translateY(-4px);}to{opacity:1;transform:none;}}
+${c.fonts.avatars ? '' : '#kisd-th .kisd-av{display:none!important;}#kisd-th .kisd-rcp{padding-left:20px!important;}'}
 ''';
 
 /// For tests and debugging: the parsed DOM of a built document.

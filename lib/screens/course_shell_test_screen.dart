@@ -81,7 +81,7 @@ class _CourseShellTestScreenState extends State<CourseShellTestScreen> {
           if (_loading)
             SliverFillRemaining(
               child: Center(
-                child: CircularProgressIndicator(color: AppColors.accent),
+                child: CircularProgressIndicator(color: AppColorScheme.current.emphasis),
               ),
             )
           else if (_shells.isEmpty)

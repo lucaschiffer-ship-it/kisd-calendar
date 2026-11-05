@@ -605,7 +605,7 @@ class _StoreEventSheetState extends State<_StoreEventSheet> {
           const Spacer(),
           Text(
             '$dateLabel · ${_fmtTime(d)}',
-            style: AppTextStyles.bodyBold(color: s.accent),
+            style: AppTextStyles.bodyBold(color: s.emphasis),
           ),
         ],
       ),

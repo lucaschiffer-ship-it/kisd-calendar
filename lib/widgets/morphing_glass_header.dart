@@ -186,7 +186,21 @@ class MorphingGlassHeader extends StatelessWidget {
               ),
             ),
             IgnorePointer(
-              child: Container(color: tint, height: AppGlass.headerOverhang),
+              child: Container(
+                height: AppGlass.headerOverhang,
+                // Minimal, solid: the header ends on a hairline instead of
+                // the blur's edge.
+                decoration: BoxDecoration(
+                  color: tint,
+                  border: !glass && AppColorScheme.current.isMinimal
+                      ? Border(
+                          bottom: BorderSide(
+                              color: AppColorScheme.current.hairline,
+                              width: 0.5),
+                        )
+                      : null,
+                ),
+              ),
             ),
           ],
         );

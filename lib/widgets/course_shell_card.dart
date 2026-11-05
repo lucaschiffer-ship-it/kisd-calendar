@@ -321,6 +321,12 @@ class _CourseShellCardState extends State<CourseShellCard>
                 ),
               ],
             );
+            if (AppColorScheme.current.isMinimal) {
+              return _minimalRow(
+                const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                body,
+              );
+            }
             final dark = ThemeService.instance.currentColor.value == 'dark';
             if (glass) {
               return tokens.AppThemeTokens.glassContainer(
@@ -356,6 +362,20 @@ class _CourseShellCardState extends State<CourseShellCard>
     ),
   );
   }
+}
+
+/// A course card in the minimal styles: no fill, no box — the same padding
+/// over a hairline. The DecoratedBox still hit-tests its whole rect, so the
+/// card stays tappable between its texts.
+Widget _minimalRow(EdgeInsets padding, Widget body) {
+  return DecoratedBox(
+    decoration: BoxDecoration(
+      border: Border(
+        bottom: BorderSide(color: AppColorScheme.current.hairline, width: 0.5),
+      ),
+    ),
+    child: Padding(padding: padding, child: body),
+  );
 }
 
 // ─── New-course card ──────────────────────────────────────────────────────────
@@ -448,6 +468,12 @@ class _NewCourseCardState extends State<NewCourseCard> {
                   ),
                 ),
               );
+              if (AppColorScheme.current.isMinimal) {
+                return _minimalRow(
+                  const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                  body,
+                );
+              }
               final dark = ThemeService.instance.currentColor.value == 'dark';
               if (glass) {
                 return tokens.AppThemeTokens.glassContainer(
@@ -796,7 +822,7 @@ class _InfoSheet extends StatelessWidget {
               child: ExpansionTile(
                 tilePadding: EdgeInsets.zero,
                 childrenPadding: const EdgeInsets.only(bottom: 16),
-                iconColor: AppColors.accent,
+                iconColor: AppColorScheme.current.emphasis,
                 collapsedIconColor: AppColors.textTertiary,
                 title: Text('DESCRIPTION', style: AppTextStyle.label),
                 children: [
@@ -858,13 +884,13 @@ class _InfoSheet extends StatelessWidget {
                               ? CupertinoIcons.rectangle_stack
                               : CupertinoIcons.globe,
                           size: 14,
-                          color: AppColors.accent,
+                          color: AppColorScheme.current.emphasis,
                         ),
                         const SizedBox(width: 8),
                         Text(
                           l.label,
                           style: AppTextStyle.body
-                              .copyWith(color: AppColors.accent),
+                              .copyWith(color: AppColorScheme.current.emphasis),
                         ),
                       ],
                     ),
@@ -1256,7 +1282,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
               TextButton(
                 onPressed: () => Navigator.pop(ctx, true),
                 child: Text('Discard',
-                    style: TextStyle(color: AppColors.accent)),
+                    style: TextStyle(color: AppColorScheme.current.emphasis)),
               ),
             ],
           ),
@@ -1283,7 +1309,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: Text('Discard',
-                style: TextStyle(color: AppColors.accent)),
+                style: TextStyle(color: AppColorScheme.current.emphasis)),
           ),
         ],
       ),
@@ -1973,8 +1999,8 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                                 children: [
                                                   TextSpan(
                                                     text: '${e.date.day.toString().padLeft(2, '0')}.${e.date.month.toString().padLeft(2, '0')}.  ',
-                                                    style: const TextStyle(
-                                                        color: AppColors.accent),
+                                                    style: TextStyle(
+                                                        color: AppColorScheme.current.emphasis),
                                                   ),
                                                   TextSpan(
                                                     text: '${CourseShellCard.fmtTime(e.startTime)}–${CourseShellCard.fmtTime(e.endTime)}  ',
@@ -2040,7 +2066,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                                       : CupertinoIcons
                                                           .globe,
                                                   size: 14,
-                                                  color: AppColors.accent,
+                                                  color: AppColorScheme.current.emphasis,
                                                 ),
                                                 const SizedBox(width: 8),
                                                 Expanded(
@@ -2048,7 +2074,7 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                                     display,
                                                     style: AppTextStyle.body
                                                         .copyWith(
-                                                      color: AppColors.accent,
+                                                      color: AppColorScheme.current.emphasis,
                                                     ),
                                                   ),
                                                 ),
@@ -2616,13 +2642,13 @@ class _ExpandedCardOverlayState extends State<_ExpandedCardOverlay>
                                                         MaterialTapTargetSize
                                                             .shrinkWrap,
                                                   ),
-                                                  child: const Text(
+                                                  child: Text(
                                                     'Save',
                                                     style: TextStyle(
                                                       fontSize: 15,
                                                       fontWeight:
                                                           FontWeight.w500,
-                                                      color: AppColors.accent,
+                                                      color: AppColorScheme.current.emphasis,
                                                     ),
                                                   ),
                                                 ),
@@ -2666,8 +2692,8 @@ InputDecoration _underlineDecoration(Color secondary) => InputDecoration(
         borderSide:
             BorderSide(color: secondary.withValues(alpha: 0.4), width: 0.5),
       ),
-      focusedBorder: const UnderlineInputBorder(
-        borderSide: BorderSide(color: AppColors.accent, width: 1.0),
+      focusedBorder: UnderlineInputBorder(
+        borderSide: BorderSide(color: AppColorScheme.current.emphasis, width: 1.0),
       ),
       contentPadding: const EdgeInsets.symmetric(vertical: 8),
       isDense: true,
@@ -2705,14 +2731,14 @@ class _AddRowButton extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.add, size: 14, color: AppColors.accent),
+            Icon(Icons.add, size: 14, color: AppColorScheme.current.emphasis),
             const SizedBox(width: 4),
             Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
-                color: AppColors.accent,
+                color: AppColorScheme.current.emphasis,
               ),
             ),
           ],

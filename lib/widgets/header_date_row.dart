@@ -2,7 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../theme/app_theme.dart' show AppColors, AppTextStyle;
+import '../theme/app_fonts.dart';
+import '../theme/tokens.dart';
 
 const _kWeekdays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 const _kMonths = [
@@ -74,8 +75,13 @@ class _HeaderDateRowState extends State<HeaderDateRow> {
 
   @override
   Widget build(BuildContext context) {
-    final style = AppTextStyle.cardTitle.copyWith(
+    // = the legacy AppTextStyle.cardTitle at 32 pt. Built through AppFonts
+    // so the minimal styles set it light (and mono scales it).
+    final style = AppFonts.grotesk(
       fontSize: 32,
+      fontWeight: FontWeight.w700,
+      letterSpacing: -0.8,
+      height: 1.0,
       color: widget.titleColor,
     );
     return Padding(
@@ -91,7 +97,7 @@ class _HeaderDateRowState extends State<HeaderDateRow> {
               children: [
                 TextSpan(
                   text: _kWeekdays[_now.weekday - 1],
-                  style: const TextStyle(color: AppColors.accent),
+                  style: TextStyle(color: AppColorScheme.current.emphasis),
                 ),
                 TextSpan(text: ', ${_kMonths[_now.month - 1]} ${_now.day}'),
               ],

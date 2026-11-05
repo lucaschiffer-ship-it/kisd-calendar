@@ -26,15 +26,29 @@ class AppThemeTokens {
   static Color get cardBorder       => _s.cardBorder;
   static Color get dividerColor     => _s.divider;
   static Color get titleColor       => _s.textPrimary;
-  static Color get timesColor       => _s.accent;
+  static Color get timesColor       => _s.emphasis;
   static Color get locationColor    => _s.textTertiary;   // de-emphasised grey
   static Color get secondaryTextColor => _s.textSecondary;
   static Color get navBarBg         => _s.navBarBg;
   static Color get navBarIcon       => _s.navBarIcon;
-  static Color get miniBrowserBackground => _s.accent;
-  static Color get miniBrowserTextColor  => _s.onAccent;
+  static Color get miniBrowserBackground => _s.emphasis;
+  static Color get miniBrowserTextColor  => _s.onEmphasis;
   static Color get eventAccent      => _s.accent;
   static Color get accentColor      => _s.accent;         // alias
+  // Orange in classic, the text colour in the minimal styles — see
+  // AppColorScheme.emphasis. accentColor/eventAccent stay orange everywhere.
+  static Color get emphasis         => _s.emphasis;
+  static Color get onEmphasis       => _s.onEmphasis;
+  static Color get hairline         => _s.hairline;
+
+  // The list/mail search field (a shared header element, so both pages use
+  // these): filled and borderless in classic, an outlined pill in minimal.
+  static bool       get searchFilled => !_s.isMinimal;
+  static BorderSide get searchRestBorder => _s.isMinimal
+      ? BorderSide(color: _s.hairline, width: 0.5)
+      : BorderSide.none;
+  static double searchRadius(double classic) =>
+      _s.isMinimal ? AppRadius.pill : classic;
 
   // ── Style tokens (constants — vivid style removed) ────────────────────────
 

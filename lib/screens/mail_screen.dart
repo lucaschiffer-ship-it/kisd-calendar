@@ -404,7 +404,8 @@ class _MailScreenState extends State<MailScreen>
 
     final titleColor = tokens.AppThemeTokens.titleColor;
     final secondaryColor = tokens.AppThemeTokens.secondaryTextColor;
-    final searchRadius = tokens.AppThemeTokens.cardBorderRadius;
+    final searchRadius = tokens.AppThemeTokens.searchRadius(
+        tokens.AppThemeTokens.cardBorderRadius);
 
     // Both pieces are shared elements: the date row with Mensa and the list,
     // the search bar with the list, so switching between those pages leaves
@@ -424,7 +425,7 @@ class _MailScreenState extends State<MailScreen>
           color: secondaryColor.withValues(alpha: 0.45),
           fontSize: 14,
         ),
-        filled: true,
+        filled: tokens.AppThemeTokens.searchFilled,
         fillColor: secondaryColor.withValues(alpha: 0.05),
         prefixIcon: Icon(
           Icons.search,
@@ -445,16 +446,16 @@ class _MailScreenState extends State<MailScreen>
         isDense: true,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(searchRadius),
-          borderSide: BorderSide.none,
+          borderSide: tokens.AppThemeTokens.searchRestBorder,
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(searchRadius),
-          borderSide: BorderSide.none,
+          borderSide: tokens.AppThemeTokens.searchRestBorder,
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(searchRadius),
           borderSide: BorderSide(
-            color: tokens.AppThemeTokens.accentColor,
+            color: tokens.AppThemeTokens.emphasis,
             width: 1,
           ),
         ),
@@ -634,7 +635,9 @@ class _MailScreenState extends State<MailScreen>
                           ? CupertinoIcons.envelope_badge
                           : CupertinoIcons.envelope_open,
                       label: seen ? 'Unread' : 'Read',
-                      color: s.accent,
+                      // Its label is always white: a neutral grey reads
+                      // in both modes where the text colour would not.
+                      color: s.isMinimal ? const Color(0xFF8E8E93) : s.accent,
                       onTriggered: () => _toggleSeen(msg),
                     ),
                     trailing: isTrashTab
@@ -973,13 +976,13 @@ class _ErrorView extends StatelessWidget {
             ),
             const SizedBox(height: 20),
             CupertinoButton(
-              color: s.accent,
+              color: s.emphasis,
               borderRadius: BorderRadius.circular(AppRadius.pill),
               padding: const EdgeInsets.symmetric(horizontal: 22),
               onPressed: onRetry,
               child: Text(
                 'Try Again',
-                style: AppTextStyles.bodyBold(color: s.onAccent),
+                style: AppTextStyles.bodyBold(color: s.onEmphasis),
               ),
             ),
           ],

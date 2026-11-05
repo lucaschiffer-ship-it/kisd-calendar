@@ -56,7 +56,81 @@ const _otpLike = '''
 <p><b>Hinweis:</b> Dieser Code ist nur für 2 Minuten gültig.</p>
 </td></tr></table></body></html>''';
 
+MailDocumentSpec _styled(MailHtmlFonts fonts) {
+  final base = _spec(plain: 'Hallo');
+  return MailDocumentSpec(
+    colors: MailHtmlColors(
+      dark: _darkColors.dark,
+      background: _darkColors.background,
+      text: _darkColors.text,
+      secondary: _darkColors.secondary,
+      tertiary: _darkColors.tertiary,
+      divider: _darkColors.divider,
+      accent: _darkColors.accent,
+      surface: _darkColors.surface,
+      fonts: fonts,
+    ),
+    senderName: base.senderName,
+    senderEmail: base.senderEmail,
+    avatarInitial: base.avatarInitial,
+    avatarTint: base.avatarTint,
+    avatarText: base.avatarText,
+    time: base.time,
+    toSummary: base.toSummary,
+    to: base.to,
+    cc: base.cc,
+    fullDate: base.fullDate,
+    subject: base.subject,
+    html: base.html,
+    plain: base.plain,
+    attachments: base.attachments,
+    viewportWidth: base.viewportWidth,
+    topPadding: base.topPadding,
+    bottomPadding: base.bottomPadding,
+  );
+}
+
 void main() {
+  group('MailHtmlFonts', () {
+    test('classic is the default and embeds the original four faces', () {
+      expect(_darkColors.fonts, same(MailHtmlFonts.classic));
+      final doc = buildMailDocument(_spec(plain: 'Hallo'));
+      expect(doc, contains("url('fonts/SpaceGrotesk-Bold.ttf')"));
+      expect(doc, contains("url('fonts/Inter-Regular.ttf')"));
+      expect(doc, isNot(contains('IBMPlexMono')));
+      expect(doc, contains('font:700 24px/1.22'));
+      expect(doc, isNot(contains('.av{display:none')));
+    });
+
+    test('minimal: Inter only, light subject, no avatars', () {
+      final doc = buildMailDocument(_styled(MailHtmlFonts.minimal));
+      expect(doc, contains("url('fonts/Inter-Light.ttf')"));
+      expect(doc, isNot(contains('SpaceGrotesk')));
+      expect(doc, contains('font:300 24px/1.22'));
+      expect(doc, contains('#kisd-hdr .av{display:none!important;}'));
+    });
+
+    test('mono: IBM Plex Mono for both roles', () {
+      final doc = buildMailDocument(_styled(MailHtmlFonts.mono));
+      expect(doc, contains("font-family:'KISD Mono'"));
+      expect(doc, contains("url('fonts/IBMPlexMono-Regular.ttf')"));
+      expect(doc, isNot(contains("'KISD Inter'")));
+      expect(doc, isNot(contains("'KISD Grotesk'")));
+    });
+
+    test('every embedded face is servable', () {
+      for (final f in [
+        MailHtmlFonts.classic,
+        MailHtmlFonts.minimal,
+        MailHtmlFonts.mono,
+      ]) {
+        for (final (_, file, _) in f.faces) {
+          expect(kMailFontFiles, contains(file));
+        }
+      }
+    });
+  });
+
   group('classifyMailHtml', () {
     test('a simple mail on white is themed', () {
       expect(classifyMailHtml(_otpLike), MailRenderMode.themed);
